@@ -55,6 +55,8 @@ func main() {
 			"create table __regions (id integer not null primary key, name text not null);",
 			"create table __nodes (id integer not null primary key, address text not null, port int not null, region_id int not null constraint __nodes___regions_id_fk references __regions);",
 			"create table __table_nodes (id integer not null primary key, owner integer not null, table_id integer not null constraint __table_nodes___table_config_id_fk references __tables, node_id integer not null constraint __table_nodes___nodes_id_fk references __nodes);",
+			"create table __table_migrations(id integer not null primary key, table_id integer not null constraint __table_migrations___tables_id_fk references __tables, migration_id integer not null constraint __table_migrations___migrations_id_fk references __migrations);",
+			"create index __table_migrations_table_id_index on __table_migrations (table_id);",
 		},
 	}, sqlitemigration.Options{
 		Flags:    sqlite.OpenReadWrite | sqlite.OpenCreate | sqlite.OpenWAL,
@@ -132,7 +134,7 @@ func replicateCommand(query string, table string, kind tableType) error {
 		return err
 	}
 
-	stmt = conn.Prep("insert into __table_config (table_name, is_owner, mode) values (:table_name, 1, :mode)")
+	stmt = conn.Prep("insert into __tables (table_name, is_owner, mode) values (:table_name, 1, :mode)")
 	stmt.SetText(":table_name", table)
 	stmt.SetText(":mode", string(kind))
 	_, err = stmt.Step()

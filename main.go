@@ -4,12 +4,16 @@ import (
 	"atlas-db/atlas"
 	"bufio"
 	"context"
+	_ "embed"
 	"fmt"
 	"os"
 	"strings"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitemigration"
 )
+
+//go:embed meta/migrations.sql
+var migrations string
 
 type authPrinter struct {
 	conn *sqlite.Conn
@@ -37,37 +41,90 @@ func (a authPrinter) Authorize(action sqlite.Action) sqlite.AuthResult {
 
 var pool *sqlitemigration.Pool
 
+type options struct {
+	dbFilename   string
+	metaFilename string
+	doReset      bool
+}
+
+var currentOptions *options
+
+func parseOptions(opts []string, defaults *options) (opt *options) {
+	if len(opts) == 0 {
+		return defaults
+	}
+
+	opt = defaults
+
+	for i, field := range opts {
+		value := ""
+		if strings.Contains(field, "=") {
+			value = strings.Split(field, "=")[1]
+			field = strings.Split(field, "=")[0]
+		} else {
+			if i+1 < len(opts) {
+				value = opts[i+1]
+			}
+		}
+		if strings.HasPrefix(field, "--") {
+			switch field {
+			case "--db":
+				opt.dbFilename = value
+			case "--meta":
+				opt.metaFilename = value
+			case "--reset":
+				opt.doReset = true
+			}
+		}
+	}
+
+	return
+}
+
 func main() {
 	fmt.Println("Simple REPL for Testing SQLite")
 	fmt.Println("Type 'exit' to quit")
 
-	filename := "/tmp/atlas.db"
+	currentOptions = parseOptions(os.Args[1:], &options{
+		dbFilename:   "/tmp/atlas.db",
+		metaFilename: "/tmp/atlas.meta",
+		doReset:      false,
+	})
 
-	if len(os.Args) > 1 {
-		filename = os.Args[1]
+	if currentOptions.doReset {
+		os.Remove(currentOptions.dbFilename)
+		os.Remove(currentOptions.metaFilename)
+		fmt.Println("Database reset")
+		return
 	}
 
-	// Initialize SQLite
-	pool = sqlitemigration.NewPool(filename, sqlitemigration.Schema{
-		Migrations: []string{
-			"create table __migrations (id integer not null primary key, command  TEXT not null, executed INT default 0 not null);",
-			"create table __tables (id integer not null primary key, table_name text not null, is_local int not null default 0, is_regional int not null default 0);",
-			"create table __regions (id integer not null primary key, name text not null);",
-			"create table __nodes (id integer not null primary key, address text not null, port int not null, region_id int not null constraint __nodes___regions_id_fk references __regions);",
-			"create table __table_nodes (id integer not null primary key, owner integer not null, table_id integer not null constraint __table_nodes___table_config_id_fk references __tables, node_id integer not null constraint __table_nodes___nodes_id_fk references __nodes);",
-			"create table __table_migrations(id integer not null primary key, table_id integer not null constraint __table_migrations___tables_id_fk references __tables, migration_id integer not null constraint __table_migrations___migrations_id_fk references __migrations);",
-			"create index __table_migrations_table_id_index on __table_migrations (table_id);",
-		},
+	// Initialize Atlas
+
+	if _, err := os.Stat(currentOptions.metaFilename); err != nil {
+		f, err := os.Create(currentOptions.metaFilename)
+		if err != nil {
+			fmt.Println("Error creating meta database:", err)
+			return
+		}
+		f.Close()
+	}
+
+	pool = sqlitemigration.NewPool(currentOptions.dbFilename, sqlitemigration.Schema{
+		Migrations: strings.Split(migrations, ";"),
 	}, sqlitemigration.Options{
 		Flags:    sqlite.OpenReadWrite | sqlite.OpenCreate | sqlite.OpenWAL,
 		PoolSize: 10,
 		PrepareConn: func(conn *sqlite.Conn) (err error) {
 			err = conn.SetAuthorizer(authPrinter{})
+			executeSQL("attach database '"+currentOptions.metaFilename+"' as atlas;", conn, false)
 			executeSQL("PRAGMA journal_mode=WAL;", conn, false)
 			if err != nil {
 				return err
 			}
 			err = atlas.InitializeSession(conn)
+			if err != nil {
+				fmt.Println("Error initializing session:", err)
+			}
 			return
 		},
 	})
@@ -127,16 +184,28 @@ func replicateCommand(query string, table string, kind tableType) error {
 		return err
 	}
 
-	stmt := conn.Prep("insert into __migrations (command, executed) values (:command, 1)")
-	stmt.SetText(":command", query)
+	isLocal := false
+	isRegional := false
+	switch kind {
+	case localTable:
+		isLocal = true
+	case regionalTable:
+		isRegional = true
+	}
+
+	stmt := conn.Prep("insert into atlas.tables (table_name, is_local, is_regional) values (:table_name, :is_local, :is_regional)")
+	stmt.SetText(":table_name", table)
+	stmt.SetBool(":is_local", isLocal)
+	stmt.SetBool(":is_regional", isRegional)
 	_, err = stmt.Step()
 	if err != nil {
 		return err
 	}
+	tableId := conn.LastInsertRowID()
 
-	stmt = conn.Prep("insert into __tables (table_name, is_owner, mode) values (:table_name, 1, :mode)")
-	stmt.SetText(":table_name", table)
-	stmt.SetText(":mode", string(kind))
+	stmt = conn.Prep("insert into atlas.migrations (command, executed, table_id) values (:command, 1, :table_id)")
+	stmt.SetText(":command", query)
+	stmt.SetInt64(":table_id", tableId)
 	_, err = stmt.Step()
 	if err != nil {
 		return err
@@ -207,7 +276,7 @@ func executeSQL(query string, conn *sqlite.Conn, output bool) {
 	// - ALTER TABLE <table> UNLOCK REGION: unlock a table, it can migrate out of the region
 	// - ALTER TABLE <table> MIGRATE REGION <region>: migrate a table to a different region
 
-	switch query {
+	switch normalized {
 	case "WRITE_PATCH":
 		atlas.WritePatchset()
 	case "APPLY_PATCH":

@@ -1,6 +1,6 @@
 # System Tables
 
-AtlasDb has a few system tables that can be queried for debugging.
+AtlasDb has a few system tables that can be queried for debugging in the `meta.db` database.
 Writing to these tables is not recommended and may cause severe and unrecoverable issues.
 
 ## `__migrations`

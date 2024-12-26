@@ -42,9 +42,10 @@ func (a authPrinter) Authorize(action sqlite.Action) sqlite.AuthResult {
 var pool *sqlitemigration.Pool
 
 type options struct {
-	dbFilename   string
-	metaFilename string
-	doReset      bool
+	dbFilename       string
+	metaFilename     string
+	doReset          bool
+	bootstrapConnect string
 }
 
 var currentOptions *options
@@ -74,6 +75,8 @@ func parseOptions(opts []string, defaults *options) (opt *options) {
 				opt.metaFilename = value
 			case "--reset":
 				opt.doReset = true
+			case "--connect":
+				opt.bootstrapConnect = value
 			}
 		}
 	}
@@ -99,6 +102,10 @@ func main() {
 	}
 
 	// Initialize Atlas
+	if currentOptions.bootstrapConnect != "" {
+		// we are connecting to a bootstrap server
+		
+	}
 
 	if _, err := os.Stat(currentOptions.metaFilename); err != nil {
 		f, err := os.Create(currentOptions.metaFilename)

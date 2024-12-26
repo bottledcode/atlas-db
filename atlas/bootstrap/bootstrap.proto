@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package atlas.bootstrap;
+
+option go_package = "/bootstrap";
+
+service Bootstrap {
+  rpc GetBootstrapData(BootstrapRequest) returns (BootstrapResponse) {}
+}
+
+message BootstrapRequest {
+  int64 version = 1;
+}
+
+message IncompatibleVersion {
+  int64 needsVersion = 1;
+}
+
+message BootstrapData {
+  int64 version = 1;
+  bytes data = 2;
+}
+
+message BootstrapResponse {
+  oneof response {
+    IncompatibleVersion incompatibleVersion = 1;
+    BootstrapData bootstrapData = 2;
+  }
+}

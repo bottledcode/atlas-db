@@ -5,6 +5,7 @@ import (
 	"github.com/bottledcode/atlas-db/atlas/bootstrap"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"os"
 	"testing"
 )
 
@@ -35,6 +36,13 @@ func TestGetBootstrapData(t *testing.T) {
 			require.NotNil(t, data)
 			require.NotEmpty(t, data.Data)
 		}
+
+		os.Remove("atlas.db")
+		os.Remove("atlas.db-shm")
+		os.Remove("atlas.db-wal")
+		os.Remove("atlas.meta")
+		os.Remove("atlas.meta-shm")
+		os.Remove("atlas.meta-wal")
 	})
 }
 

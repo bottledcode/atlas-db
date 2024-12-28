@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"github.com/bottledcode/atlas-db/atlas"
+	"github.com/bottledcode/atlas-db/atlas/test"
 	"go.uber.org/zap"
 	"io"
 	"math/big"
@@ -112,7 +113,7 @@ func TestDoBootstrap(t *testing.T) {
 	serverAddr, cleanup := startMockServer(t)
 	defer cleanup()
 
-	metaFilename, c := getTempDb(t)
+	metaFilename, c := test.GetTempDb(t)
 	defer c()
 
 	err := bootstrap.DoBootstrap(serverAddr, metaFilename)
@@ -127,21 +128,10 @@ func TestDoBootstrap(t *testing.T) {
 	require.Equal(t, []byte("test datatest datatest data"), data)
 }
 
-func getTempDb(t *testing.T) (string, func()) {
-	f, err := os.CreateTemp("", "initialize-maybe*")
-	require.NoError(t, err)
-	f.Close()
-	return f.Name(), func() {
-		os.Remove(f.Name())
-		os.Remove(f.Name() + "-wal")
-		os.Remove(f.Name() + "-shm")
-	}
-}
-
 func TestInitializeMaybe(t *testing.T) {
-	f, cleanup := getTempDb(t)
+	f, cleanup := test.GetTempDb(t)
 	defer cleanup()
-	m, cleanup2 := getTempDb(t)
+	m, cleanup2 := test.GetTempDb(t)
 	defer cleanup2()
 	atlas.CreatePool(&atlas.Options{
 		DbFilename:   f,

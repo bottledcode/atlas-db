@@ -9,6 +9,8 @@ create table regions
     id   integer not null primary key autoincrement,
     name text    not null
 );
+create index regions_name_uindex
+    on regions (name);
 create table nodes
 (
     id        integer not null primary key autoincrement,

@@ -176,7 +176,6 @@ func CaptureChanges(query string, db *sqlite.Conn, output bool, params ...Param)
 	for {
 		hasRow, err := stmt.Step()
 		if err != nil {
-			fmt.Println("SQL Step Error:", err)
 			return rows, err
 		}
 		if !hasRow {
@@ -211,8 +210,8 @@ func CaptureChanges(query string, db *sqlite.Conn, output bool, params ...Param)
 				fmt.Printf("%s: %v\t", stmt.ColumnName(i), stmt.ColumnText(i))
 				fmt.Println()
 			}
-			rows.Rows = append(rows.Rows, row)
 		}
+		rows.Rows = append(rows.Rows, row)
 	}
 
 	return rows, nil

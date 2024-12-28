@@ -50,6 +50,18 @@ func CreatePool(options *Options) {
 	})
 }
 
+func DrainPool() {
+	if Pool != nil {
+		Pool.Close()
+		Pool = nil
+	}
+
+	if MigrationsPool != nil {
+		MigrationsPool.Close()
+		MigrationsPool = nil
+	}
+}
+
 // A modified SQL query string with the new prefix
 func replaceCommand(query, command, newPrefix string) string {
 	fields := strings.Fields(command)

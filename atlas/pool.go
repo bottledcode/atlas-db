@@ -160,7 +160,6 @@ func ExecuteSQL(ctx context.Context, query string, conn *sqlite.Conn, output boo
 		query = replaceCommand(query, "CREATE LOCAL TABLE", "CREATE TABLE")
 		err := replicateCommand(query, parts[3], localTable)
 		if err != nil {
-			fmt.Println("Error replicating command:", err)
 			return nil, err
 		}
 	} else if strings.HasPrefix(normalized, "CREATE REGIONAL TABLE") {
@@ -169,14 +168,12 @@ func ExecuteSQL(ctx context.Context, query string, conn *sqlite.Conn, output boo
 		query = replaceCommand(query, "CREATE REGIONAL TABLE", "CREATE TABLE")
 		err := replicateCommand(query, parts[3], regionalTable)
 		if err != nil {
-			fmt.Println("Error replicating command:", err)
 			return nil, err
 		}
 	} else if strings.HasPrefix(normalized, "CREATE TABLE") {
 		// we are creating a table to be replicated, but the schema will be replicated
 		err := replicateCommand(query, parts[2], globalTable)
 		if err != nil {
-			fmt.Println("Error replicating command:", err)
 			return nil, err
 		}
 	}

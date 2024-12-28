@@ -3,11 +3,13 @@ package bootstrap
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"github.com/bottledcode/atlas-db/atlas"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
+	"io"
 	"os"
 )
 
@@ -43,13 +45,35 @@ func DoBootstrap(url string, metaFilename string) error {
 		return err
 	}
 
-	err = os.WriteFile(metaFilename, resp.GetBootstrapData().GetData(), 0644)
-	if err != nil {
-		return err
-	}
 	// delete the wal and shm files
 	os.Remove(metaFilename + "-wal")
 	os.Remove(metaFilename + "-shm")
+
+	// write the data to the meta file
+	f, err := os.Create(metaFilename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	for {
+		chunk, err := resp.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		if chunk.GetIncompatibleVersion() != nil {
+			return fmt.Errorf("incompatible version: needs version %d", chunk.GetIncompatibleVersion().NeedsVersion)
+		}
+
+		// todo: proper way of doing this
+		if _, err := f.Write(chunk.GetBootstrapData().Data); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }

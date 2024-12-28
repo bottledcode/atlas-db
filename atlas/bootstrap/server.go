@@ -3,52 +3,83 @@ package bootstrap
 import (
 	"context"
 	"github.com/bottledcode/atlas-db/atlas"
+	"io"
+	"os"
 )
 
 type Server struct {
 	UnimplementedBootstrapServer
 }
 
-func (b *Server) GetBootstrapData(ctx context.Context, request *BootstrapRequest) (*BootstrapResponse, error) {
+func (b *Server) GetBootstrapData(request *BootstrapRequest, stream Bootstrap_GetBootstrapDataServer) (err error) {
 	if request.GetVersion() != 1 {
-		return &BootstrapResponse{
+		return stream.Send(&BootstrapResponse{
 			Response: &BootstrapResponse_IncompatibleVersion{
 				IncompatibleVersion: &IncompatibleVersion{
 					NeedsVersion: 1,
 				},
 			},
-		}, nil
+		})
 	}
 
 	atlas.CreatePool()
 
-	conn, err := atlas.Pool.Take(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer atlas.Pool.Put(conn)
+	ctx := context.Background()
 
-	_, err = conn.Prep("begin").Step()
+	conn, err := atlas.MigrationsPool.Take(ctx)
 	if err != nil {
-		return nil, err
+		return err
+	}
+	defer atlas.MigrationsPool.Put(conn)
+
+	_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", conn, false)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_, err = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
+	}()
+
+	// create a temporary file to store the data
+	f, err := os.CreateTemp("", "atlas-*.db")
+	if err != nil {
+		return err
+	}
+	f.Close()
+	defer os.Remove(f.Name())
+
+	_, err = atlas.ExecuteSQL(ctx, "VACCUM INTO '"+f.Name()+"'", conn, false)
+	if err != nil {
+		return
 	}
 
-	data, err := conn.Serialize("atlas")
+	// stream the data to the client
+	file, err := os.Open(f.Name())
 	if err != nil {
-		return nil, err
+		return err
 	}
+	defer file.Close()
 
-	_, err = conn.Prep("rollback").Step()
-	if err != nil {
-		return nil, err
-	}
+	buf := make([]byte, 1024*1024)
+	for {
+		n, err := file.Read(buf)
+		if err != nil && err != io.EOF {
+			return err
+		}
+		if n == 0 {
+			break
+		}
 
-	return &BootstrapResponse{
-		Response: &BootstrapResponse_BootstrapData{
-			BootstrapData: &BootstrapData{
-				Version: 1,
-				Data:    data,
+		if err := stream.Send(&BootstrapResponse{
+			Response: &BootstrapResponse_BootstrapData{
+				BootstrapData: &BootstrapData{
+					Data: buf[:n],
+				},
 			},
-		},
-	}, nil
+		}); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

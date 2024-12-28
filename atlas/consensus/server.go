@@ -258,7 +258,53 @@ func (s *Server) nodeAddProposal(ctx context.Context, node *Node) (*PromiseTopol
 	}, nil
 }
 
+// AcceptTopologyChange is a gRPC handler to accept a proposed topology change
 func (s *Server) AcceptTopologyChange(ctx context.Context, accept *AcceptTopologyChangeRequest) (*AcceptedTopologyChange, error) {
-	//TODO implement me
-	panic("implement me")
+	conn, err := atlas.MigrationsPool.Take(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer atlas.MigrationsPool.Put(conn)
+
+	_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", conn, false)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
+		}
+	}()
+
+	resp := &AcceptedTopologyChange{}
+
+	switch change := accept.GetChange().(type) {
+	case *AcceptTopologyChangeRequest_Node:
+		_, err = atlas.ExecuteSQL(ctx, "update nodes set address = :address, port = :port where id = :id", conn, false, atlas.Param{
+			Name:  "address",
+			Value: change.Node.GetNodeAddress(),
+		}, atlas.Param{
+			Name:  "port",
+			Value: change.Node.GetNodePort(),
+		}, atlas.Param{
+			Name:  "id",
+			Value: change.Node.GetNodeId(),
+		})
+		if err != nil {
+			return nil, err
+		}
+		_, err = atlas.ExecuteSQL(ctx, "COMMIT", conn, false)
+		resp.Response = &AcceptedTopologyChange_Node{Node: change.Node}
+	case *AcceptTopologyChangeRequest_Region:
+		_, err = atlas.ExecuteSQL(ctx, "update regions set name = :name where id = :id", conn, false, atlas.Param{
+			Name:  "name",
+			Value: change.Region.GetRegionName(),
+		})
+		if err != nil {
+			return nil, err
+		}
+		_, err = atlas.ExecuteSQL(ctx, "COMMIT", conn, false)
+		resp.Response = &AcceptedTopologyChange_Region{Region: change.Region}
+	}
+	return resp, err
 }

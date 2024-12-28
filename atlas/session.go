@@ -120,10 +120,31 @@ type Rows struct {
 }
 
 // Each row is converted to a Row struct with corresponding ValueColumn implementations.
-func CaptureChanges(query string, db *sqlite.Conn, output bool) (*Rows, error) {
+func CaptureChanges(query string, db *sqlite.Conn, output bool, params ...Param) (*Rows, error) {
 	stmt, err := db.Prepare(query)
 	if err != nil {
 		return nil, err
+	}
+
+	for _, param := range params {
+		if v, ok := param.Value.(string); ok {
+			stmt.SetText(param.Name, v)
+		}
+		if v, ok := param.Value.(int); ok {
+			stmt.SetInt64(param.Name, int64(v))
+		}
+		if v, ok := param.Value.(float64); ok {
+			stmt.SetFloat(param.Name, v)
+		}
+		if v, ok := param.Value.([]byte); ok {
+			stmt.SetBytes(param.Name, v)
+		}
+		if v, ok := param.Value.(bool); ok {
+			stmt.SetBool(param.Name, v)
+		}
+		if param.Value == nil {
+			stmt.SetNull(param.Name)
+		}
 	}
 
 	rows := &Rows{

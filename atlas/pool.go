@@ -115,6 +115,11 @@ func replicateCommand(query string, table string, kind tableType) error {
 	return nil
 }
 
+type Param struct {
+	Name  string
+	Value interface{}
+}
+
 // ExecuteSQL executes a SQL query with special handling for different table types and migration commands.
 // It supports creating local, regional, and global tables, and handles specific commands like
 // writing/applying patches and serializing the database.
@@ -142,7 +147,7 @@ func replicateCommand(query string, table string, kind tableType) error {
 //   - SERIALIZE: Writes the entire database to a file
 //
 // Note: Some table alteration commands are placeholders and not fully implemented.
-func ExecuteSQL(ctx context.Context, query string, conn *sqlite.Conn, output bool) (*Rows, error) {
+func ExecuteSQL(ctx context.Context, query string, conn *sqlite.Conn, output bool, params ...Param) (*Rows, error) {
 	// normalize query
 	normalized := strings.ToUpper(query)
 
@@ -214,7 +219,7 @@ func ExecuteSQL(ctx context.Context, query string, conn *sqlite.Conn, output boo
 		f.Close()
 		fmt.Println("Serialized and written to file")
 	default:
-		return CaptureChanges(query, conn, output)
+		return CaptureChanges(query, conn, output, params...)
 	}
 
 	return nil, nil

@@ -1,7 +1,6 @@
 package bootstrap
 
 import (
-	"fmt"
 	"github.com/bottledcode/atlas-db/atlas"
 	"io"
 	"os"
@@ -31,17 +30,7 @@ func (b *Server) GetBootstrapData(request *BootstrapRequest, stream Bootstrap_Ge
 		return err
 	}
 	defer atlas.MigrationsPool.Put(conn)
-
-	_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", conn, false)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if _, rollbackErr := atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false); rollbackErr != nil && err == nil {
-			err = fmt.Errorf("rollback failed: %w", rollbackErr)
-		}
-	}()
-
+	
 	// create a temporary file to store the data
 	f, err := os.CreateTemp("", "atlas-*.db")
 	if err != nil {
@@ -50,7 +39,7 @@ func (b *Server) GetBootstrapData(request *BootstrapRequest, stream Bootstrap_Ge
 	f.Close()
 	defer os.Remove(f.Name())
 
-	_, err = atlas.ExecuteSQL(ctx, "VACUUM INTO :name", conn, false, atlas.Param{Name: "name", Value: f.Name()})
+	_, err = atlas.ExecuteSQL(ctx, "VACUUM INTO '"+f.Name()+"'", conn, false)
 	if err != nil {
 		return
 	}

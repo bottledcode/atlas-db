@@ -17,7 +17,7 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type BootstrapClient interface {
-	GetBootstrapData(ctx context.Context, in *BootstrapRequest, opts ...grpc.CallOption) (*BootstrapResponse, error)
+	GetBootstrapData(ctx context.Context, in *BootstrapRequest, opts ...grpc.CallOption) (Bootstrap_GetBootstrapDataClient, error)
 }
 
 type bootstrapClient struct {
@@ -28,20 +28,43 @@ func NewBootstrapClient(cc grpc.ClientConnInterface) BootstrapClient {
 	return &bootstrapClient{cc}
 }
 
-func (c *bootstrapClient) GetBootstrapData(ctx context.Context, in *BootstrapRequest, opts ...grpc.CallOption) (*BootstrapResponse, error) {
-	out := new(BootstrapResponse)
-	err := c.cc.Invoke(ctx, "/atlas.bootstrap.Bootstrap/GetBootstrapData", in, out, opts...)
+func (c *bootstrapClient) GetBootstrapData(ctx context.Context, in *BootstrapRequest, opts ...grpc.CallOption) (Bootstrap_GetBootstrapDataClient, error) {
+	stream, err := c.cc.NewStream(ctx, &_Bootstrap_serviceDesc.Streams[0], "/atlas.bootstrap.Bootstrap/GetBootstrapData", opts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &bootstrapGetBootstrapDataClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type Bootstrap_GetBootstrapDataClient interface {
+	Recv() (*BootstrapResponse, error)
+	grpc.ClientStream
+}
+
+type bootstrapGetBootstrapDataClient struct {
+	grpc.ClientStream
+}
+
+func (x *bootstrapGetBootstrapDataClient) Recv() (*BootstrapResponse, error) {
+	m := new(BootstrapResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // BootstrapServer is the server API for Bootstrap service.
 // All implementations must embed UnimplementedBootstrapServer
 // for forward compatibility
 type BootstrapServer interface {
-	GetBootstrapData(context.Context, *BootstrapRequest) (*BootstrapResponse, error)
+	GetBootstrapData(*BootstrapRequest, Bootstrap_GetBootstrapDataServer) error
 	mustEmbedUnimplementedBootstrapServer()
 }
 
@@ -49,8 +72,8 @@ type BootstrapServer interface {
 type UnimplementedBootstrapServer struct {
 }
 
-func (UnimplementedBootstrapServer) GetBootstrapData(context.Context, *BootstrapRequest) (*BootstrapResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetBootstrapData not implemented")
+func (UnimplementedBootstrapServer) GetBootstrapData(*BootstrapRequest, Bootstrap_GetBootstrapDataServer) error {
+	return status.Errorf(codes.Unimplemented, "method GetBootstrapData not implemented")
 }
 func (UnimplementedBootstrapServer) mustEmbedUnimplementedBootstrapServer() {}
 
@@ -65,33 +88,37 @@ func RegisterBootstrapServer(s *grpc.Server, srv BootstrapServer) {
 	s.RegisterService(&_Bootstrap_serviceDesc, srv)
 }
 
-func _Bootstrap_GetBootstrapData_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(BootstrapRequest)
-	if err := dec(in); err != nil {
-		return nil, err
+func _Bootstrap_GetBootstrapData_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(BootstrapRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
 	}
-	if interceptor == nil {
-		return srv.(BootstrapServer).GetBootstrapData(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/atlas.bootstrap.Bootstrap/GetBootstrapData",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(BootstrapServer).GetBootstrapData(ctx, req.(*BootstrapRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+	return srv.(BootstrapServer).GetBootstrapData(m, &bootstrapGetBootstrapDataServer{stream})
+}
+
+type Bootstrap_GetBootstrapDataServer interface {
+	Send(*BootstrapResponse) error
+	grpc.ServerStream
+}
+
+type bootstrapGetBootstrapDataServer struct {
+	grpc.ServerStream
+}
+
+func (x *bootstrapGetBootstrapDataServer) Send(m *BootstrapResponse) error {
+	return x.ServerStream.SendMsg(m)
 }
 
 var _Bootstrap_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "atlas.bootstrap.Bootstrap",
 	HandlerType: (*BootstrapServer)(nil),
-	Methods: []grpc.MethodDesc{
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{
 		{
-			MethodName: "GetBootstrapData",
-			Handler:    _Bootstrap_GetBootstrapData_Handler,
+			StreamName:    "GetBootstrapData",
+			Handler:       _Bootstrap_GetBootstrapData_Handler,
+			ServerStreams: true,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
 	Metadata: "bootstrap/bootstrap.proto",
 }

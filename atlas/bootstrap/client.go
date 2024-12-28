@@ -136,20 +136,18 @@ func DoBootstrap(url string, metaFilename string) error {
 			return fmt.Errorf("incompatible version: needs version %d", chunk.GetIncompatibleVersion().NeedsVersion)
 		}
 
-		for {
-			data := chunk.GetBootstrapData().GetData()
-			if len(data) == 0 {
-				break
-			}
-		writeRest:
-			n, err := f.Write(data)
-			if err != nil {
-				return err
-			}
-			if n != len(data) {
-				data = data[n:]
-				goto writeRest
-			}
+		data := chunk.GetBootstrapData().GetData()
+		if len(data) == 0 {
+			break
+		}
+	writeRest:
+		n, err := f.Write(data)
+		if err != nil {
+			return err
+		}
+		if n != len(data) {
+			data = data[n:]
+			goto writeRest
 		}
 	}
 

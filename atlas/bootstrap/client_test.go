@@ -112,8 +112,8 @@ func TestDoBootstrap(t *testing.T) {
 	serverAddr, cleanup := startMockServer(t)
 	defer cleanup()
 
-	metaFilename := "test_meta.db"
-	defer os.Remove(metaFilename)
+	metaFilename, c := getTempDb(t)
+	defer c()
 
 	err := bootstrap.DoBootstrap(serverAddr, metaFilename)
 	require.NoError(t, err)

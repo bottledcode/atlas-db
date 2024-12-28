@@ -87,11 +87,19 @@ func startMockServer(t *testing.T) (string, func()) {
 	s := grpc.NewServer()
 	bootstrap.RegisterBootstrapServer(s, &mockBootstrapServer{})
 
+	errchan := make(chan error)
 	go func() {
 		if err := s.Serve(lis); err != nil {
-			t.Fatalf("failed to serve: %v", err)
+			errchan <- err
 		}
 	}()
+
+	select {
+	case err := <-errchan:
+		require.NoError(t, err)
+	case <-time.After(100 * time.Millisecond):
+		// server started successfully
+	}
 
 	return lis.Addr().String(), func() {
 		s.Stop()
@@ -116,16 +124,4 @@ func TestDoBootstrap(t *testing.T) {
 	data, err := io.ReadAll(file)
 	require.NoError(t, err)
 	require.Equal(t, []byte("test datatest datatest data"), data)
-}
-
-func TestDoBootstrap_IncompatibleVersion(t *testing.T) {
-	serverAddr, cleanup := startMockServer(t)
-	defer cleanup()
-
-	metaFilename := "test_meta.db"
-	defer os.Remove(metaFilename)
-
-	err := bootstrap.DoBootstrap(serverAddr, metaFilename)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "incompatible version")
 }

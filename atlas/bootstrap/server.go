@@ -1,7 +1,6 @@
 package bootstrap
 
 import (
-	"context"
 	"fmt"
 	"github.com/bottledcode/atlas-db/atlas"
 	"io"
@@ -25,7 +24,7 @@ func (b *Server) GetBootstrapData(request *BootstrapRequest, stream Bootstrap_Ge
 
 	atlas.CreatePool()
 
-	ctx := context.Background()
+	ctx := stream.Context()
 
 	conn, err := atlas.MigrationsPool.Take(ctx)
 	if err != nil {

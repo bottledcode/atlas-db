@@ -25,13 +25,13 @@ const (
 	globalTable   tableType = "globalTable"
 )
 
-// If a pool already exists, the function returns immediately without creating a new one.
-func CreatePool() {
+// CreatePool creates a new connection pool for the database and the migrations database.
+func CreatePool(options *Options) {
 	if Pool != nil {
 		return
 	}
 
-	Pool = sqlitemigration.NewPool(CurrentOptions.DbFilename, sqlitemigration.Schema{
+	Pool = sqlitemigration.NewPool(options.DbFilename, sqlitemigration.Schema{
 		Migrations: strings.Split(migrations, ";"),
 	}, sqlitemigration.Options{
 		Flags:    sqlite.OpenReadWrite | sqlite.OpenCreate | sqlite.OpenWAL,
@@ -42,7 +42,7 @@ func CreatePool() {
 		},
 	})
 
-	MigrationsPool = sqlitemigration.NewPool(CurrentOptions.MetaFilename, sqlitemigration.Schema{
+	MigrationsPool = sqlitemigration.NewPool(options.MetaFilename, sqlitemigration.Schema{
 		Migrations: strings.Split(migrations, ";"),
 	}, sqlitemigration.Options{
 		Flags:    sqlite.OpenReadWrite | sqlite.OpenCreate | sqlite.OpenWAL,
@@ -50,7 +50,7 @@ func CreatePool() {
 	})
 }
 
-//   A modified SQL query string with the new prefix
+// A modified SQL query string with the new prefix
 func replaceCommand(query, command, newPrefix string) string {
 	fields := strings.Fields(command)
 	if len(fields) == 0 {

@@ -5,7 +5,8 @@
 
 https://localhost:4444 {
 	atlas {
-		server_id 2
+		advertise localhost:4444
+		region local
 		credentials mySecret
 		db_path /tmp/atlas2/
 	}

@@ -21,7 +21,7 @@ func (b *Server) GetBootstrapData(request *BootstrapRequest, stream Bootstrap_Ge
 		})
 	}
 
-	atlas.CreatePool()
+	atlas.CreatePool(atlas.CurrentOptions)
 
 	ctx := stream.Context()
 
@@ -30,7 +30,7 @@ func (b *Server) GetBootstrapData(request *BootstrapRequest, stream Bootstrap_Ge
 		return err
 	}
 	defer atlas.MigrationsPool.Put(conn)
-	
+
 	// create a temporary file to store the data
 	f, err := os.CreateTemp("", "atlas-*.db")
 	if err != nil {

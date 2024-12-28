@@ -1,6 +1,7 @@
 package bootstrap_test
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -124,4 +125,51 @@ func TestDoBootstrap(t *testing.T) {
 	data, err := io.ReadAll(file)
 	require.NoError(t, err)
 	require.Equal(t, []byte("test datatest datatest data"), data)
+}
+
+func getTempDb(t *testing.T) (string, func()) {
+	f, err := os.CreateTemp("", "initialize-maybe*")
+	require.NoError(t, err)
+	f.Close()
+	return f.Name(), func() {
+		os.Remove(f.Name())
+		os.Remove(f.Name() + "-wal")
+		os.Remove(f.Name() + "-shm")
+	}
+}
+
+func TestInitializeMaybe(t *testing.T) {
+	f, cleanup := getTempDb(t)
+	defer cleanup()
+	m, cleanup2 := getTempDb(t)
+	defer cleanup2()
+	atlas.CreatePool(&atlas.Options{
+		DbFilename:   f,
+		MetaFilename: m,
+	})
+	ctx := context.Background()
+
+	// Mock the database state
+	conn, err := atlas.MigrationsPool.Take(ctx)
+	require.NoError(t, err)
+	defer atlas.MigrationsPool.Put(conn)
+
+	_, err = atlas.ExecuteSQL(ctx, "DELETE FROM nodes", conn, false)
+	require.NoError(t, err)
+
+	// Test with an empty database
+	err = bootstrap.InitializeMaybe()
+	require.NoError(t, err)
+
+	results, err := atlas.ExecuteSQL(ctx, "SELECT count(*) as c FROM nodes", conn, false)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), results.GetIndex(0).GetColumn("c").GetInt())
+
+	// Test with a non-empty database
+	err = bootstrap.InitializeMaybe()
+	require.NoError(t, err)
+
+	results, err = atlas.ExecuteSQL(ctx, "SELECT count(*) FROM nodes", conn, false)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), results.GetIndex(0).GetColumn("count(*)").GetInt())
 }

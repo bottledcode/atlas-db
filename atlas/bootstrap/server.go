@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"fmt"
 	"github.com/bottledcode/atlas-db/atlas"
 	"io"
 	"os"
@@ -37,7 +38,9 @@ func (b *Server) GetBootstrapData(request *BootstrapRequest, stream Bootstrap_Ge
 		return err
 	}
 	defer func() {
-		_, err = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
+		if _, rollbackErr := atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false); rollbackErr != nil && err == nil {
+			err = fmt.Errorf("rollback failed: %w", rollbackErr)
+		}
 	}()
 
 	// create a temporary file to store the data

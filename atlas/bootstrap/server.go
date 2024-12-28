@@ -51,7 +51,7 @@ func (b *Server) GetBootstrapData(request *BootstrapRequest, stream Bootstrap_Ge
 	f.Close()
 	defer os.Remove(f.Name())
 
-	_, err = atlas.ExecuteSQL(ctx, "VACCUM INTO :name", conn, false, atlas.Param{Name: "name", Value: f.Name()})
+	_, err = atlas.ExecuteSQL(ctx, "VACUUM INTO :name", conn, false, atlas.Param{Name: "name", Value: f.Name()})
 	if err != nil {
 		return
 	}

@@ -28,12 +28,77 @@ func (s *Server) nodeProposal(ctx context.Context, node *ProposeNodeTopologyChan
 	case TopologyChange_ADD:
 		return s.nodeAddProposal(ctx, node.GetNode())
 	case TopologyChange_REMOVE:
-		panic("implement me")
+		return s.nodeRemoveProposal(ctx, node.GetNode())
 	default:
 		return nil, ErrInvalidTopologyChange
 	}
 }
 
+// nodeRemoveProposal is a helper function to handle the REMOVE node topology change
+func (s *Server) nodeRemoveProposal(ctx context.Context, node *Node) (*PromiseTopologyChange, error) {
+	conn, err := atlas.MigrationsPool.Take(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer atlas.MigrationsPool.Put(conn)
+
+	_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", conn, false)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
+	}()
+
+	regionId, err := atlas.GetRegionIdFromName(ctx, conn, node.GetNodeRegion())
+	if err != nil {
+		return nil, err
+	}
+	if regionId == 0 {
+		return nil, fmt.Errorf("region %s not found: %w", node.GetNodeRegion(), ErrInvalidTopologyChange)
+	}
+
+	results, err := atlas.ExecuteSQL(ctx, "select id, address, region_id, port from nodes where id = :id", conn, false, atlas.Param{
+		Name:  "id",
+		Value: node.GetNodeId(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(results.Rows) == 0 {
+		return &PromiseTopologyChange{
+			Promise:  false,
+			Response: nil,
+		}, nil
+	}
+	original := results.GetIndex(0)
+
+	// check that the node is an expected change
+	if original.GetColumn("address").GetString() == "placeholder" {
+		return nil, ErrInvalidTopologyChange
+	}
+
+	former := &Node{
+		NodeId:      original.GetColumn("id").GetInt(),
+		NodeAddress: original.GetColumn("address").GetString(),
+		NodeRegion:  node.GetNodeRegion(),
+		NodePort:    original.GetColumn("port").GetInt(),
+	}
+
+	if former.GetNodeAddress() == node.GetNodeAddress() && former.GetNodePort() == node.GetNodePort() {
+		return &PromiseTopologyChange{
+			Promise:  true,
+			Response: &PromiseTopologyChange_Node{Node: former},
+		}, nil
+	}
+
+	return &PromiseTopologyChange{
+		Promise:  false,
+		Response: &PromiseTopologyChange_Node{Node: former},
+	}, nil
+}
+
+// nodeAddProposal is a helper function to handle the ADD node topology change
 func (s *Server) nodeAddProposal(ctx context.Context, node *Node) (*PromiseTopologyChange, error) {
 	conn, err := atlas.MigrationsPool.Take(ctx)
 	if err != nil {
@@ -67,7 +132,8 @@ func (s *Server) nodeAddProposal(ctx context.Context, node *Node) (*PromiseTopol
 		Value: regionId,
 	})
 	if err != nil {
-		results, err := atlas.ExecuteSQL(ctx, "select id, address, region_id, port from nodes where id = :id", conn, false, atlas.Param{
+		var results *atlas.Rows
+		results, err = atlas.ExecuteSQL(ctx, "select id, address, region_id, port from nodes where id = :id", conn, false, atlas.Param{
 			Name:  "id",
 			Value: node.GetNodeId(),
 		})

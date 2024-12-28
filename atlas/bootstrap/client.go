@@ -70,6 +70,9 @@ func InitializeMaybe() error {
 			Name:  "region",
 			Value: regionId,
 		})
+		if err != nil {
+			return err
+		}
 	}
 
 	_, err = atlas.ExecuteSQL(ctx, "COMMIT", conn, false)

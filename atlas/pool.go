@@ -4,8 +4,8 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
-	"go.uber.org/zap"
 	"os"
+	"runtime"
 	"strings"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitemigration"
@@ -15,6 +15,7 @@ import (
 var migrations string
 
 var Pool *sqlitemigration.Pool
+var MigrationsPool *sqlitemigration.Pool
 
 type tableType string
 
@@ -29,33 +30,22 @@ func CreatePool() {
 		return
 	}
 
-	if _, err := os.Stat(CurrentOptions.MetaFilename); err != nil {
-		f, err := os.Create(CurrentOptions.MetaFilename)
-		if err != nil {
-			Logger.Error("Error creating meta database", zap.Error(err))
-			return
-		}
-		f.Close()
-	}
-
 	Pool = sqlitemigration.NewPool(CurrentOptions.DbFilename, sqlitemigration.Schema{
 		Migrations: strings.Split(migrations, ";"),
 	}, sqlitemigration.Options{
 		Flags:    sqlite.OpenReadWrite | sqlite.OpenCreate | sqlite.OpenWAL,
-		PoolSize: 10,
+		PoolSize: runtime.NumCPU() * 2,
 		PrepareConn: func(conn *sqlite.Conn) (err error) {
 			// todo: err = conn.SetAuthorizer(authPrinter{})
-			ctx := context.Background()
-			ExecuteSQL(ctx, "attach database '"+CurrentOptions.MetaFilename+"' as atlas;", conn, false)
-			ExecuteSQL(ctx, "PRAGMA journal_mode=WAL;", conn, false)
-			if err != nil {
-				return err
-			}
-			if err != nil {
-				Logger.Error("Error initializing session", zap.Error(err))
-			}
 			return
 		},
+	})
+
+	MigrationsPool = sqlitemigration.NewPool(CurrentOptions.MetaFilename, sqlitemigration.Schema{
+		Migrations: strings.Split(migrations, ";"),
+	}, sqlitemigration.Options{
+		Flags:    sqlite.OpenReadWrite | sqlite.OpenCreate | sqlite.OpenWAL,
+		PoolSize: 10,
 	})
 }
 

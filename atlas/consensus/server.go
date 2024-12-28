@@ -258,7 +258,7 @@ func (s *Server) nodeAddProposal(ctx context.Context, node *Node) (*PromiseTopol
 	}, nil
 }
 
-func (s *Server) AcceptTopologyChange(ctx context.Context, node *Node) (*Node, error) {
+func (s *Server) AcceptTopologyChange(ctx context.Context, accept *AcceptTopologyChangeRequest) (*AcceptedTopologyChange, error) {
 	//TODO implement me
 	panic("implement me")
 }

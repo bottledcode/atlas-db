@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/bottledcode/atlas-db/atlas"
 	"github.com/bottledcode/atlas-db/atlas/bootstrap"
+	"github.com/bottledcode/atlas-db/atlas/consensus"
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
@@ -50,6 +51,7 @@ func (m *Module) Provision(ctx caddy.Context) (err error) {
 
 	m.bootstrapServer = grpc.NewServer()
 	bootstrap.RegisterBootstrapServer(m.bootstrapServer, &bootstrap.Server{})
+	consensus.RegisterConsensusServer(m.bootstrapServer, &consensus.Server{})
 
 	atlas.Logger.Info("🌐 Atlas Started")
 
@@ -69,6 +71,8 @@ func (m *Module) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhtt
 		serviceHeader := r.Header.Get("Atlas-Service")
 		switch serviceHeader {
 		case "Bootstrap":
+			fallthrough
+		case "Consensus":
 			m.bootstrapServer.ServeHTTP(w, r)
 		default:
 			http.Error(w, "unknown Atlas service", http.StatusNotFound)

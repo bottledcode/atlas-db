@@ -6,7 +6,7 @@ option go_package = "/consensus";
 
 service Consensus {
   rpc ProposeTopologyChange(ProposeTopologyChangeRequest) returns (PromiseTopologyChange) {}
-  rpc AcceptTopologyChange(Node) returns (Node) {}
+  rpc AcceptTopologyChange(AcceptTopologyChangeRequest) returns (AcceptedTopologyChange) {}
 }
 
 message Node {
@@ -46,6 +46,20 @@ message ProposeNodeTopologyChange {
 
 message PromiseTopologyChange {
   bool promise = 1;
+  oneof response {
+    Node node = 2;
+    Region region = 3;
+  }
+}
+
+message AcceptTopologyChangeRequest {
+  oneof change {
+    Node node = 1;
+    Region region = 2;
+  }
+}
+
+message AcceptedTopologyChange {
   oneof response {
     Node node = 2;
     Region region = 3;

@@ -18,7 +18,7 @@ const _ = grpc.SupportPackageIsVersion7
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ConsensusClient interface {
 	ProposeTopologyChange(ctx context.Context, in *ProposeTopologyChangeRequest, opts ...grpc.CallOption) (*PromiseTopologyChange, error)
-	AcceptTopologyChange(ctx context.Context, in *Node, opts ...grpc.CallOption) (*Node, error)
+	AcceptTopologyChange(ctx context.Context, in *AcceptTopologyChangeRequest, opts ...grpc.CallOption) (*AcceptedTopologyChange, error)
 }
 
 type consensusClient struct {
@@ -38,8 +38,8 @@ func (c *consensusClient) ProposeTopologyChange(ctx context.Context, in *Propose
 	return out, nil
 }
 
-func (c *consensusClient) AcceptTopologyChange(ctx context.Context, in *Node, opts ...grpc.CallOption) (*Node, error) {
-	out := new(Node)
+func (c *consensusClient) AcceptTopologyChange(ctx context.Context, in *AcceptTopologyChangeRequest, opts ...grpc.CallOption) (*AcceptedTopologyChange, error) {
+	out := new(AcceptedTopologyChange)
 	err := c.cc.Invoke(ctx, "/atlas.consensus.Consensus/AcceptTopologyChange", in, out, opts...)
 	if err != nil {
 		return nil, err
@@ -52,7 +52,7 @@ func (c *consensusClient) AcceptTopologyChange(ctx context.Context, in *Node, op
 // for forward compatibility
 type ConsensusServer interface {
 	ProposeTopologyChange(context.Context, *ProposeTopologyChangeRequest) (*PromiseTopologyChange, error)
-	AcceptTopologyChange(context.Context, *Node) (*Node, error)
+	AcceptTopologyChange(context.Context, *AcceptTopologyChangeRequest) (*AcceptedTopologyChange, error)
 	mustEmbedUnimplementedConsensusServer()
 }
 
@@ -63,7 +63,7 @@ type UnimplementedConsensusServer struct {
 func (UnimplementedConsensusServer) ProposeTopologyChange(context.Context, *ProposeTopologyChangeRequest) (*PromiseTopologyChange, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ProposeTopologyChange not implemented")
 }
-func (UnimplementedConsensusServer) AcceptTopologyChange(context.Context, *Node) (*Node, error) {
+func (UnimplementedConsensusServer) AcceptTopologyChange(context.Context, *AcceptTopologyChangeRequest) (*AcceptedTopologyChange, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AcceptTopologyChange not implemented")
 }
 func (UnimplementedConsensusServer) mustEmbedUnimplementedConsensusServer() {}
@@ -98,7 +98,7 @@ func _Consensus_ProposeTopologyChange_Handler(srv interface{}, ctx context.Conte
 }
 
 func _Consensus_AcceptTopologyChange_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(Node)
+	in := new(AcceptTopologyChangeRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -110,7 +110,7 @@ func _Consensus_AcceptTopologyChange_Handler(srv interface{}, ctx context.Contex
 		FullMethod: "/atlas.consensus.Consensus/AcceptTopologyChange",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ConsensusServer).AcceptTopologyChange(ctx, req.(*Node))
+		return srv.(ConsensusServer).AcceptTopologyChange(ctx, req.(*AcceptTopologyChangeRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }

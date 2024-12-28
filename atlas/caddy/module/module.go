@@ -104,6 +104,8 @@ func (m *Module) UnmarshalCaddyfile(d *caddyfile.Dispenser) (err error) {
 				err = os.Mkdir(path, 0755)
 				if err != nil && !os.IsExist(err) {
 					return d.Errf("db_path: %v", err)
+				} else if err != nil && os.IsExist(err) {
+					err = nil
 				}
 
 				atlas.CurrentOptions.DbFilename = path + atlas.CurrentOptions.DbFilename

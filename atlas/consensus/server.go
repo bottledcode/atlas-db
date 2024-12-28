@@ -13,14 +13,89 @@ type Server struct {
 
 var ErrInvalidTopologyChange = errors.New("invalid topology change")
 
+const PlaceholderName = "--PLACEHOLDER--"
+
 func (s *Server) ProposeTopologyChange(ctx context.Context, request *ProposeTopologyChangeRequest) (*PromiseTopologyChange, error) {
 	switch m := request.GetChange().(type) {
 	case *ProposeTopologyChangeRequest_NodeChange:
 		return s.nodeProposal(ctx, m.NodeChange)
 	case *ProposeTopologyChangeRequest_RegionChange:
-		panic("implement me")
+		return s.regionProposal(ctx, m.RegionChange)
 	}
 	return nil, ErrInvalidTopologyChange
+}
+
+func (s *Server) regionProposal(ctx context.Context, region *ProposeRegionTopologyChange) (*PromiseTopologyChange, error) {
+	switch region.GetKind() {
+	case TopologyChange_ADD:
+		return s.regionAddProposal(ctx, region.GetRegion())
+	// note: cannot delete regions
+	default:
+		return nil, ErrInvalidTopologyChange
+	}
+}
+
+func (s *Server) regionAddProposal(ctx context.Context, region *Region) (*PromiseTopologyChange, error) {
+	conn, err := atlas.MigrationsPool.Take(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer atlas.MigrationsPool.Put(conn)
+
+	_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", conn, false)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
+		}
+	}()
+
+	_, err = atlas.ExecuteSQL(ctx, "insert into regions values (:id, :name)", conn, false, atlas.Param{
+		Name:  "id",
+		Value: region.GetRegionId(),
+	}, atlas.Param{
+		Name:  "name",
+		Value: PlaceholderName,
+	})
+	if err != nil {
+		var results *atlas.Rows
+		results, err = atlas.ExecuteSQL(ctx, "select id, name from regions where id = :id", conn, false, atlas.Param{
+			Name:  "id",
+			Value: region.GetRegionId(),
+		})
+		if err != nil {
+			return nil, err
+		}
+		first := results.GetIndex(0)
+		actualRegion := &Region{
+			RegionId:   first.GetColumn("id").GetInt(),
+			RegionName: first.GetColumn("name").GetString(),
+		}
+
+		if actualRegion.GetRegionName() == PlaceholderName {
+			return nil, ErrInvalidTopologyChange
+		}
+
+		return &PromiseTopologyChange{
+			Promise:  false,
+			Response: &PromiseTopologyChange_Region{Region: actualRegion},
+		}, nil
+	}
+	if conn.LastInsertRowID() != region.GetRegionId() {
+		return nil, ErrInvalidTopologyChange
+	}
+
+	_, err = atlas.ExecuteSQL(ctx, "COMMIT", conn, false)
+	if err != nil {
+		return nil, err
+	}
+
+	return &PromiseTopologyChange{
+		Promise:  true,
+		Response: &PromiseTopologyChange_Region{Region: region},
+	}, nil
 }
 
 func (s *Server) nodeProposal(ctx context.Context, node *ProposeNodeTopologyChange) (*PromiseTopologyChange, error) {
@@ -74,7 +149,7 @@ func (s *Server) nodeRemoveProposal(ctx context.Context, node *Node) (*PromiseTo
 	original := results.GetIndex(0)
 
 	// check that the node is an expected change
-	if original.GetColumn("address").GetString() == "placeholder" {
+	if original.GetColumn("address").GetString() == PlaceholderName {
 		return nil, ErrInvalidTopologyChange
 	}
 
@@ -124,12 +199,15 @@ func (s *Server) nodeAddProposal(ctx context.Context, node *Node) (*PromiseTopol
 		return nil, fmt.Errorf("region %s not found: %w", node.GetNodeRegion(), ErrInvalidTopologyChange)
 	}
 
-	_, err = atlas.ExecuteSQL(ctx, "insert into nodes values (:id, 'placeholder', 1234, :region)", conn, false, atlas.Param{
+	_, err = atlas.ExecuteSQL(ctx, "insert into nodes values (:id, :name, 0, :region)", conn, false, atlas.Param{
 		Name:  "id",
 		Value: node.GetNodeId(),
 	}, atlas.Param{
 		Name:  "region",
 		Value: regionId,
+	}, atlas.Param{
+		Name:  "name",
+		Value: PlaceholderName,
 	})
 	if err != nil {
 		var results *atlas.Rows
@@ -152,7 +230,7 @@ func (s *Server) nodeAddProposal(ctx context.Context, node *Node) (*PromiseTopol
 			NodePort:    first.GetColumn("port").GetInt(),
 		}
 
-		if actualNode.NodeAddress == "placeholder" {
+		if actualNode.NodeAddress == PlaceholderName {
 			return nil, ErrInvalidTopologyChange
 		}
 

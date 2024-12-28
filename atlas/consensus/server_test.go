@@ -197,3 +197,60 @@ func TestNodeRemoveProposal_NodeNotFound(t *testing.T) {
 	assert.False(t, promise.Promise)
 	assert.Nil(t, promise.GetNode())
 }
+
+func TestRegionAddProposal_Success(t *testing.T) {
+	server := &Server{}
+	ctx := context.Background()
+	region := &Region{
+		RegionId: 1,
+	}
+
+	f, cleanup := test.GetTempDb(t)
+	defer cleanup()
+	m, cleanup2 := test.GetTempDb(t)
+	defer cleanup2()
+	atlas.CreatePool(&atlas.Options{
+		DbFilename:   f,
+		MetaFilename: m,
+	})
+	defer atlas.DrainPool()
+
+	promise, err := server.regionAddProposal(ctx, region)
+	assert.NoError(t, err)
+	assert.NotNil(t, promise)
+	assert.True(t, promise.Promise)
+	assert.Equal(t, region, promise.GetRegion())
+}
+
+func TestRegionAddProposal_AtlasError(t *testing.T) {
+	server := &Server{}
+	ctx := context.Background()
+	region := &Region{
+		RegionId:   1,
+		RegionName: "region21",
+	}
+
+	f, cleanup := test.GetTempDb(t)
+	defer cleanup()
+	m, cleanup2 := test.GetTempDb(t)
+	defer cleanup2()
+	atlas.CreatePool(&atlas.Options{
+		DbFilename:   f,
+		MetaFilename: m,
+	})
+	defer atlas.DrainPool()
+
+	conn, err := atlas.MigrationsPool.Take(ctx)
+	assert.NoError(t, err)
+
+	_, err = atlas.ExecuteSQL(ctx, "INSERT INTO regions (id, name) VALUES (1, 'region1')", conn, false)
+	assert.NoError(t, err)
+
+	atlas.MigrationsPool.Put(conn)
+
+	promise, err := server.regionAddProposal(ctx, region)
+	assert.NoError(t, err)
+	assert.False(t, promise.Promise)
+	region.RegionName = "region1"
+	assert.Equal(t, region, promise.GetRegion())
+}

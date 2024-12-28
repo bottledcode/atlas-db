@@ -44,6 +44,21 @@ func InitializeMaybe() error {
 			return err
 		}
 
+		if atlas.CurrentOptions.Region == "" {
+			atlas.Logger.Warn("No region specified, using default region", zap.String("region", atlas.CurrentOptions.Region))
+			atlas.CurrentOptions.Region = "default"
+		}
+
+		if atlas.CurrentOptions.AdvertisePort == 0 {
+			atlas.Logger.Warn("No port specified, using default port", zap.Uint("port", atlas.CurrentOptions.AdvertisePort))
+			atlas.CurrentOptions.AdvertisePort = 8080
+		}
+
+		if atlas.CurrentOptions.AdvertiseAddress == "" {
+			atlas.Logger.Warn("No address specified, using default address", zap.String("address", atlas.CurrentOptions.AdvertiseAddress))
+			atlas.CurrentOptions.AdvertiseAddress = "localhost"
+		}
+
 		// No nodes currently exist, and we didn't bootstrap. So, start writing!
 		_, err = atlas.ExecuteSQL(ctx, "insert into nodes (address, port, region_id) values (:address, :port, :region)", conn, false, atlas.Param{
 			Name:  "address",

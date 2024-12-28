@@ -25,6 +25,7 @@ const (
 	globalTable   tableType = "globalTable"
 )
 
+// If a pool already exists, the function returns immediately without creating a new one.
 func CreatePool() {
 	if Pool != nil {
 		return
@@ -49,6 +50,7 @@ func CreatePool() {
 	})
 }
 
+//   A modified SQL query string with the new prefix
 func replaceCommand(query, command, newPrefix string) string {
 	fields := strings.Fields(command)
 	if len(fields) == 0 {
@@ -64,6 +66,7 @@ func replaceCommand(query, command, newPrefix string) string {
 	return newPrefix + query
 }
 
+// of migration-related operations.
 func replicateCommand(query string, table string, kind tableType) error {
 	// todo: actually replicate
 	conn, err := MigrationsPool.Take(context.Background())
@@ -112,6 +115,33 @@ func replicateCommand(query string, table string, kind tableType) error {
 	return nil
 }
 
+// ExecuteSQL executes a SQL query with special handling for different table types and migration commands.
+// It supports creating local, regional, and global tables, and handles specific commands like
+// writing/applying patches and serializing the database.
+//
+// The function normalizes the input query, processes table creation commands by replicating
+// table schemas, and supports special commands such as WRITE_PATCH, APPLY_PATCH, and SERIALIZE.
+// For unrecognized commands, it calls CaptureChanges to process the query.
+//
+// Parameters:
+//   - ctx: Context for controlling the execution
+//   - query: SQL query to be executed
+//   - conn: SQLite database connection
+//   - output: Flag to control output generation
+//
+// Returns:
+//   - *Rows: Potential query result rows
+//   - error: Any error encountered during query execution
+//
+// Supported special commands:
+//   - CREATE LOCAL TABLE: Creates a non-persisted table with replicated schema
+//   - CREATE REGIONAL TABLE: Creates a persisted table with replicated schema
+//   - CREATE TABLE: Creates a table to be replicated
+//   - WRITE_PATCH: Writes current database state as a patchset
+//   - APPLY_PATCH: Applies a previously written patchset
+//   - SERIALIZE: Writes the entire database to a file
+//
+// Note: Some table alteration commands are placeholders and not fully implemented.
 func ExecuteSQL(ctx context.Context, query string, conn *sqlite.Conn, output bool) (*Rows, error) {
 	// normalize query
 	normalized := strings.ToUpper(query)

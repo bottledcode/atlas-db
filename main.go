@@ -132,5 +132,5 @@ func repl(conn *sqlitemigration.Pool) {
 }
 
 func processInput(input string, conn *sqlite.Conn) {
-	atlas.ExecuteSQL(input, conn, true)
+	atlas.ExecuteSQL(context.Background(), input, conn, true)
 }

@@ -15,8 +15,6 @@ import (
 
 // InitializeMaybe checks if the database is empty and initializes it if it is
 func InitializeMaybe() error {
-	atlas.CreatePool()
-
 	ctx := context.Background()
 
 	conn, err := atlas.MigrationsPool.Take(ctx)
@@ -28,13 +26,18 @@ func InitializeMaybe() error {
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if err != nil {
+			_, _ = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
+		}
+	}()
 
 	// are we dealing with an empty database?
-	results, err := atlas.ExecuteSQL(ctx, "select count(*) from nodes", conn, false)
+	results, err := atlas.ExecuteSQL(ctx, "select count(*) as c from nodes", conn, false)
 	if err != nil {
 		return err
 	}
-	if len(results.Rows) == 0 {
+	if results.GetIndex(0).GetColumn("c").GetInt() == 0 {
 		// see if there is a region
 		regionId, err := atlas.GetOrAddRegion(ctx, conn, atlas.CurrentOptions.Region)
 		if err != nil {
@@ -55,7 +58,7 @@ func InitializeMaybe() error {
 	}
 
 	_, err = atlas.ExecuteSQL(ctx, "COMMIT", conn, false)
-	return nil
+	return err
 }
 
 // DoBootstrap connects to the bootstrap server and writes the data to the meta file

@@ -32,6 +32,8 @@ func (m *Module) CaddyModule() caddy.ModuleInfo {
 func (m *Module) Provision(ctx caddy.Context) (err error) {
 	atlas.Logger = caddy.Log()
 
+	atlas.CreatePool(atlas.CurrentOptions)
+
 	if atlas.CurrentOptions.BootstrapConnect != "" {
 		atlas.Logger.Info("🚀 Bootstrapping Atlas...")
 		err = bootstrap.DoBootstrap(atlas.CurrentOptions.BootstrapConnect, atlas.CurrentOptions.MetaFilename)

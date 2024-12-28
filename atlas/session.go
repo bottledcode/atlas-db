@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go.uber.org/zap"
 	"os"
+	"strings"
 	"zombiezen.com/go/sqlite"
 )
 
@@ -141,28 +142,24 @@ func CaptureChanges(query string, db *sqlite.Conn, output bool, params ...Param)
 	}
 
 	for _, param := range params {
+		if !strings.HasPrefix(param.Name, ":") {
+			param.Name = ":" + param.Name
+		}
 		if v, ok := param.Value.(string); ok {
 			stmt.SetText(param.Name, v)
-		}
-		if v, ok := param.Value.(int); ok {
+		} else if v, ok := param.Value.(int); ok {
 			stmt.SetInt64(param.Name, int64(v))
-		}
-		if v, ok := param.Value.(int64); ok {
+		} else if v, ok := param.Value.(int64); ok {
 			stmt.SetInt64(param.Name, v)
-		}
-		if v, ok := param.Value.(uint); ok {
+		} else if v, ok := param.Value.(uint); ok {
 			stmt.SetInt64(param.Name, int64(v))
-		}
-		if v, ok := param.Value.(float64); ok {
+		} else if v, ok := param.Value.(float64); ok {
 			stmt.SetFloat(param.Name, v)
-		}
-		if v, ok := param.Value.([]byte); ok {
+		} else if v, ok := param.Value.([]byte); ok {
 			stmt.SetBytes(param.Name, v)
-		}
-		if v, ok := param.Value.(bool); ok {
+		} else if v, ok := param.Value.(bool); ok {
 			stmt.SetBool(param.Name, v)
-		}
-		if param.Value == nil {
+		} else if param.Value == nil {
 			stmt.SetNull(param.Name)
 		}
 	}

@@ -1,18 +1,8 @@
-create table atlas.migrations
-(
-    id       integer       not null primary key autoincrement,
-    command  TEXT          not null,
-    executed INT default 0 not null,
-    table_id integer
-        constraint migrations_tables_id_fk
-            references tables
-);
 create table atlas.tables
 (
-    id          integer not null primary key autoincrement,
-    table_name  text    not null,
-    is_local    int     not null default 0,
-    is_regional int     not null default 0
+    id         integer not null primary key autoincrement,
+    table_name text    not null,
+    mode       text    not null default 'global'
 );
 create table atlas.regions
 (

@@ -1,0 +1,13 @@
+{
+    auto_https disable_redirects
+}
+
+https://localhost:4434 {
+    atlas {
+        server_id 1
+        connect localhost:4444
+        credentials mySecret
+        db_path /tmp/atlas2/
+    }
+    tls internal
+}

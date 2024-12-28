@@ -1,0 +1,13 @@
+{
+	admin off
+	auto_https disable_redirects
+}
+
+https://localhost:4444 {
+	atlas {
+		server_id 2
+		credentials mySecret
+		db_path /tmp/atlas2/
+	}
+	#tls internal
+}

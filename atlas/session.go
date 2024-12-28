@@ -1,20 +1,27 @@
 package atlas
 
 import (
+	"context"
 	"fmt"
+	"go.uber.org/zap"
 	"os"
 	"zombiezen.com/go/sqlite"
 )
 
-var session *sqlite.Session
+var Logger *zap.Logger
 
-func InitializeSession(conn *sqlite.Conn) error {
+func GetCurrentSession(ctx context.Context) *sqlite.Session {
+	return ctx.Value("atlas-session").(*sqlite.Session)
+}
+
+func InitializeSession(ctx context.Context, conn *sqlite.Conn) (context.Context, error) {
 	var err error
-	session, err = conn.CreateSession("")
+	session, err := conn.CreateSession("")
 	if err != nil {
-		return err
+		return ctx, err
 	}
-	return session.Attach("")
+	sess := session.Attach("")
+	return context.WithValue(ctx, "atlas-session", sess), nil
 }
 
 func CaptureChanges(query string, db *sqlite.Conn, output bool) {
@@ -44,12 +51,15 @@ func CaptureChanges(query string, db *sqlite.Conn, output bool) {
 	}
 }
 
-func WritePatchset() {
+func WritePatchset(ctx context.Context) {
 	file, err := os.Create("patchset.txt")
 	if err != nil {
 		panic(err)
 	}
 	defer file.Close()
+
+	session := GetCurrentSession(ctx)
+
 	if err := session.WriteChangeset(file); err != nil {
 		fmt.Println("Error writing patchset:", err)
 		return

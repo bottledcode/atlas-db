@@ -2,11 +2,10 @@ package bootstrap
 
 import (
 	"context"
-	"zombiezen.com/go/sqlite/sqlitemigration"
+	"github.com/bottledcode/atlas-db/atlas"
 )
 
 type Server struct {
-	Pool *sqlitemigration.Pool
 	UnimplementedBootstrapServer
 }
 
@@ -21,11 +20,13 @@ func (b *Server) GetBootstrapData(ctx context.Context, request *BootstrapRequest
 		}, nil
 	}
 
-	conn, err := b.Pool.Take(ctx)
+	atlas.CreatePool()
+
+	conn, err := atlas.Pool.Take(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer b.Pool.Put(conn)
+	defer atlas.Pool.Put(conn)
 
 	_, err = conn.Prep("begin").Step()
 	if err != nil {

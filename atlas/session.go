@@ -14,7 +14,7 @@ func GetCurrentSession(ctx context.Context) *sqlite.Session {
 	return ctx.Value("atlas-session").(*sqlite.Session)
 }
 
-//   - An error if session creation or attachment fails
+// - An error if session creation or attachment fails
 func InitializeSession(ctx context.Context, conn *sqlite.Conn) (context.Context, error) {
 	var err error
 	session, err := conn.CreateSession("")
@@ -27,7 +27,7 @@ func InitializeSession(ctx context.Context, conn *sqlite.Conn) (context.Context,
 
 type ValueColumn interface {
 	GetString() string
-	GetInt() int
+	GetInt() int64
 	GetFloat() float64
 	GetBool() bool
 	GetBlob() []byte
@@ -41,7 +41,7 @@ func (u *UnknownValueColumn) GetString() string {
 	panic("not a string")
 }
 
-func (u *UnknownValueColumn) GetInt() int {
+func (u *UnknownValueColumn) GetInt() int64 {
 	panic("not an int")
 }
 
@@ -72,10 +72,10 @@ func (v *ValueColumnString) GetString() string {
 
 type ValueColumnInt struct {
 	UnknownValueColumn
-	Value int
+	Value int64
 }
 
-func (v *ValueColumnInt) GetInt() int {
+func (v *ValueColumnInt) GetInt() int64 {
 	return v.Value
 }
 
@@ -114,9 +114,23 @@ type Row struct {
 	headers *map[string]int
 }
 
+func (r *Row) GetColumn(name string) ValueColumn {
+	if idx, ok := (*r.headers)[name]; ok {
+		return r.Columns[idx]
+	}
+	return &UnknownValueColumn{}
+}
+
 type Rows struct {
 	Rows    []Row
 	Headers map[string]int
+}
+
+func (r *Rows) GetIndex(idx int) *Row {
+	if idx < 0 || idx >= len(r.Rows) {
+		return nil
+	}
+	return &r.Rows[idx]
 }
 
 // Each row is converted to a Row struct with corresponding ValueColumn implementations.
@@ -131,6 +145,12 @@ func CaptureChanges(query string, db *sqlite.Conn, output bool, params ...Param)
 			stmt.SetText(param.Name, v)
 		}
 		if v, ok := param.Value.(int); ok {
+			stmt.SetInt64(param.Name, int64(v))
+		}
+		if v, ok := param.Value.(int64); ok {
+			stmt.SetInt64(param.Name, v)
+		}
+		if v, ok := param.Value.(uint); ok {
 			stmt.SetInt64(param.Name, int64(v))
 		}
 		if v, ok := param.Value.(float64); ok {
@@ -178,7 +198,7 @@ func CaptureChanges(query string, db *sqlite.Conn, output bool, params ...Param)
 				})
 			case sqlite.TypeInteger:
 				row.Columns = append(row.Columns, &ValueColumnInt{
-					Value: stmt.ColumnInt(i),
+					Value: stmt.ColumnInt64(i),
 				})
 			case sqlite.TypeFloat:
 				row.Columns = append(row.Columns, &ValueColumnFloat{

@@ -13,7 +13,52 @@ import (
 	"os"
 )
 
-// Note: Uses an insecure TLS configuration with certificate verification skipped
+// InitializeMaybe checks if the database is empty and initializes it if it is
+func InitializeMaybe() error {
+	atlas.CreatePool()
+
+	ctx := context.Background()
+
+	conn, err := atlas.MigrationsPool.Take(ctx)
+	if err != nil {
+		return err
+	}
+	defer atlas.MigrationsPool.Put(conn)
+	_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", conn, false)
+	if err != nil {
+		return err
+	}
+
+	// are we dealing with an empty database?
+	results, err := atlas.ExecuteSQL(ctx, "select count(*) from nodes", conn, false)
+	if err != nil {
+		return err
+	}
+	if len(results.Rows) == 0 {
+		// see if there is a region
+		regionId, err := atlas.GetOrAddRegion(ctx, conn, atlas.CurrentOptions.Region)
+		if err != nil {
+			return err
+		}
+
+		// No nodes currently exist, and we didn't bootstrap. So, start writing!
+		_, err = atlas.ExecuteSQL(ctx, "insert into nodes (address, port, region_id) values (:address, :port, :region)", conn, false, atlas.Param{
+			Name:  "address",
+			Value: atlas.CurrentOptions.AdvertiseAddress,
+		}, atlas.Param{
+			Name:  "port",
+			Value: atlas.CurrentOptions.AdvertisePort,
+		}, atlas.Param{
+			Name:  "region",
+			Value: regionId,
+		})
+	}
+
+	_, err = atlas.ExecuteSQL(ctx, "COMMIT", conn, false)
+	return nil
+}
+
+// DoBootstrap connects to the bootstrap server and writes the data to the meta file
 func DoBootstrap(url string, metaFilename string) error {
 
 	atlas.Logger.Info("Connecting to bootstrap server", zap.String("url", url))

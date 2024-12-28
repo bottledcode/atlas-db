@@ -6,6 +6,9 @@ type Options struct {
 	DoReset          bool
 	BootstrapConnect string
 	ServerId         int
+	Region           string
+	AdvertiseAddress string
+	AdvertisePort    uint
 	ApiKey           string
 }
 
@@ -18,5 +21,8 @@ func init() {
 		DoReset:          false,
 		BootstrapConnect: "",
 		ServerId:         0,
+		Region:           "local",
+		AdvertiseAddress: "localhost",
+		AdvertisePort:    8080,
 	}
 }

@@ -1,6 +1,7 @@
 package bootstrap_test
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -124,4 +125,33 @@ func TestDoBootstrap(t *testing.T) {
 	data, err := io.ReadAll(file)
 	require.NoError(t, err)
 	require.Equal(t, []byte("test datatest datatest data"), data)
+}
+
+func TestInitializeMaybe(t *testing.T) {
+	atlas.CreatePool()
+	ctx := context.Background()
+
+	// Mock the database state
+	conn, err := atlas.MigrationsPool.Take(ctx)
+	require.NoError(t, err)
+	defer atlas.MigrationsPool.Put(conn)
+
+	_, err = atlas.ExecuteSQL(ctx, "DELETE FROM nodes", conn, false)
+	require.NoError(t, err)
+
+	// Test with an empty database
+	err = bootstrap.InitializeMaybe()
+	require.NoError(t, err)
+
+	results, err := atlas.ExecuteSQL(ctx, "SELECT count(*) FROM nodes", conn, false)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(results.Rows))
+
+	// Test with a non-empty database
+	err = bootstrap.InitializeMaybe()
+	require.NoError(t, err)
+
+	results, err = atlas.ExecuteSQL(ctx, "SELECT count(*) FROM nodes", conn, false)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(results.Rows))
 }

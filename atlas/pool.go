@@ -25,7 +25,7 @@ const (
 	globalTable   tableType = "globalTable"
 )
 
-// If a pool already exists, the function returns immediately without creating a new one.
+// CreatePool creates a new connection pool for the database and the migrations database.
 func CreatePool() {
 	if Pool != nil {
 		return
@@ -50,7 +50,7 @@ func CreatePool() {
 	})
 }
 
-//   A modified SQL query string with the new prefix
+// A modified SQL query string with the new prefix
 func replaceCommand(query, command, newPrefix string) string {
 	fields := strings.Fields(command)
 	if len(fields) == 0 {

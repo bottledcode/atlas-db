@@ -11,7 +11,6 @@ import (
 	"google.golang.org/grpc"
 	"net/http"
 	"os"
-	"strconv"
 )
 
 type Module struct {
@@ -40,6 +39,11 @@ func (m *Module) Provision(ctx caddy.Context) (err error) {
 			return
 		}
 		atlas.Logger.Info("🚀 Bootstrapping Complete")
+	} else {
+		err = bootstrap.InitializeMaybe()
+		if err != nil {
+			return
+		}
 	}
 
 	m.bootstrapServer = grpc.NewServer()
@@ -75,15 +79,6 @@ func (m *Module) UnmarshalCaddyfile(d *caddyfile.Dispenser) (err error) {
 	for d.Next() {
 		for d.NextBlock(0) {
 			switch d.Val() {
-			case "server_id":
-				var id string
-				if !d.Args(&id) {
-					return d.ArgErr()
-				}
-				atlas.CurrentOptions.ServerId, err = strconv.Atoi(id)
-				if err != nil {
-					return d.Errf("server_id: %v", err)
-				}
 			case "connect":
 				var url string
 				if !d.Args(&url) {
@@ -110,6 +105,23 @@ func (m *Module) UnmarshalCaddyfile(d *caddyfile.Dispenser) (err error) {
 
 				atlas.CurrentOptions.DbFilename = path + atlas.CurrentOptions.DbFilename
 				atlas.CurrentOptions.MetaFilename = path + atlas.CurrentOptions.MetaFilename
+			case "region":
+				var region string
+				if !d.Args(&region) {
+					return d.ArgErr()
+				}
+				atlas.CurrentOptions.Region = region
+			case "advertise":
+				var address string
+				if !d.Args(&address) {
+					return d.ArgErr()
+				}
+				parts, err := caddy.ParseNetworkAddressWithDefaults(address, "tcp", 443)
+				if err != nil {
+					return d.Errf("advertise: %v", err)
+				}
+				atlas.CurrentOptions.AdvertiseAddress = parts.Host
+				atlas.CurrentOptions.AdvertisePort = parts.StartPort
 			default:
 				return d.Errf("unknown option: %s", d.Val())
 			}

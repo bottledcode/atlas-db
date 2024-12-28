@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package atlas.consensus;
+
+option go_package = "/consensus";
+
+service Consensus {
+  rpc ProposeTopologyChange(ProposeTopologyChangeRequest) returns (PromiseTopologyChange) {}
+  rpc AcceptTopologyChange(Node) returns (Node) {}
+}
+
+message Node {
+  int64 nodeId = 1;
+  string nodeAddress = 2;
+  string nodeRegion = 3;
+  int64 nodePort = 4;
+}
+
+message ProposeTopologyChangeRequest {
+  Node node = 1;
+}
+
+message PromiseTopologyChange {
+  bool promise = 1;
+  Node node = 2;
+}

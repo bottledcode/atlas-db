@@ -13,6 +13,7 @@ import (
 	"os"
 )
 
+// Note: Uses an insecure TLS configuration with certificate verification skipped
 func DoBootstrap(url string, metaFilename string) error {
 
 	atlas.Logger.Info("Connecting to bootstrap server", zap.String("url", url))

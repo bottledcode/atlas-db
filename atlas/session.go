@@ -14,6 +14,7 @@ func GetCurrentSession(ctx context.Context) *sqlite.Session {
 	return ctx.Value("atlas-session").(*sqlite.Session)
 }
 
+//   - An error if session creation or attachment fails
 func InitializeSession(ctx context.Context, conn *sqlite.Conn) (context.Context, error) {
 	var err error
 	session, err := conn.CreateSession("")
@@ -118,6 +119,7 @@ type Rows struct {
 	Headers map[string]int
 }
 
+// Each row is converted to a Row struct with corresponding ValueColumn implementations.
 func CaptureChanges(query string, db *sqlite.Conn, output bool) (*Rows, error) {
 	stmt, err := db.Prepare(query)
 	if err != nil {
@@ -178,6 +180,7 @@ func CaptureChanges(query string, db *sqlite.Conn, output bool) (*Rows, error) {
 	return rows, nil
 }
 
+// WritePatchset creates a file named "patchset.txt" and writes the current SQLite session's changeset to it. It retrieves the session from the provided context and handles potential errors during file creation or changeset writing. If an error occurs during file creation or writing the changeset, it prints an error message and returns.
 func WritePatchset(ctx context.Context) {
 	file, err := os.Create("patchset.txt")
 	if err != nil {

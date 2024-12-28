@@ -1,6 +1,8 @@
 package bootstrap_test
 
 import (
+	"github.com/bottledcode/atlas-db/atlas"
+	"go.uber.org/zap"
 	"io"
 	"net"
 	"os"
@@ -42,6 +44,10 @@ func (m *mockBootstrapServer) GetBootstrapData(req *bootstrap.BootstrapRequest, 
 }
 
 func startMockServer(t *testing.T) (string, func()) {
+	if atlas.Logger == nil {
+		atlas.Logger, _ = zap.NewDevelopment()
+	}
+
 	lis, err := net.Listen("tcp", "localhost:0")
 	require.NoError(t, err)
 

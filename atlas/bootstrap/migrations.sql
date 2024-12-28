@@ -1,15 +1,15 @@
-create table atlas.tables
+create table tables
 (
     id         integer not null primary key autoincrement,
     table_name text    not null,
     mode       text    not null default 'global'
 );
-create table atlas.regions
+create table regions
 (
     id   integer not null primary key autoincrement,
     name text    not null
 );
-create table atlas.nodes
+create table nodes
 (
     id        integer not null primary key autoincrement,
     address   text    not null,
@@ -27,4 +27,13 @@ create table table_nodes
     node_id  integer
         constraint table_nodes_nodes_id_fk
             references nodes
+);
+create table table_migrations
+(
+    id integer not null primary key autoincrement,
+    table_id integer not null
+        constraint table_migrations_tables_id_fk references tables,
+    command text,
+    patch blob,
+    snapshot blob
 );

@@ -4,8 +4,8 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
-	"go.uber.org/zap"
 	"os"
+	"runtime"
 	"strings"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitemigration"
@@ -15,6 +15,7 @@ import (
 var migrations string
 
 var Pool *sqlitemigration.Pool
+var MigrationsPool *sqlitemigration.Pool
 
 type tableType string
 
@@ -24,41 +25,32 @@ const (
 	globalTable   tableType = "globalTable"
 )
 
+// If a pool already exists, the function returns immediately without creating a new one.
 func CreatePool() {
 	if Pool != nil {
 		return
-	}
-
-	if _, err := os.Stat(CurrentOptions.MetaFilename); err != nil {
-		f, err := os.Create(CurrentOptions.MetaFilename)
-		if err != nil {
-			Logger.Error("Error creating meta database", zap.Error(err))
-			return
-		}
-		f.Close()
 	}
 
 	Pool = sqlitemigration.NewPool(CurrentOptions.DbFilename, sqlitemigration.Schema{
 		Migrations: strings.Split(migrations, ";"),
 	}, sqlitemigration.Options{
 		Flags:    sqlite.OpenReadWrite | sqlite.OpenCreate | sqlite.OpenWAL,
-		PoolSize: 10,
+		PoolSize: runtime.NumCPU() * 2,
 		PrepareConn: func(conn *sqlite.Conn) (err error) {
 			// todo: err = conn.SetAuthorizer(authPrinter{})
-			ctx := context.Background()
-			ExecuteSQL(ctx, "attach database '"+CurrentOptions.MetaFilename+"' as atlas;", conn, false)
-			ExecuteSQL(ctx, "PRAGMA journal_mode=WAL;", conn, false)
-			if err != nil {
-				return err
-			}
-			if err != nil {
-				Logger.Error("Error initializing session", zap.Error(err))
-			}
 			return
 		},
 	})
+
+	MigrationsPool = sqlitemigration.NewPool(CurrentOptions.MetaFilename, sqlitemigration.Schema{
+		Migrations: strings.Split(migrations, ";"),
+	}, sqlitemigration.Options{
+		Flags:    sqlite.OpenReadWrite | sqlite.OpenCreate | sqlite.OpenWAL,
+		PoolSize: 10,
+	})
 }
 
+//   A modified SQL query string with the new prefix
 func replaceCommand(query, command, newPrefix string) string {
 	fields := strings.Fields(command)
 	if len(fields) == 0 {
@@ -74,13 +66,14 @@ func replaceCommand(query, command, newPrefix string) string {
 	return newPrefix + query
 }
 
+// of migration-related operations.
 func replicateCommand(query string, table string, kind tableType) error {
 	// todo: actually replicate
-	conn, err := Pool.Take(context.Background())
+	conn, err := MigrationsPool.Take(context.Background())
 	if err != nil {
 		return err
 	}
-	defer Pool.Put(conn)
+	defer MigrationsPool.Put(conn)
 
 	_, err = conn.Prep("begin").Step()
 	if err != nil {
@@ -96,7 +89,7 @@ func replicateCommand(query string, table string, kind tableType) error {
 		isRegional = true
 	}
 
-	stmt := conn.Prep("insert into atlas.tables (table_name, is_local, is_regional) values (:table_name, :is_local, :is_regional)")
+	stmt := conn.Prep("insert into tables (table_name, is_local, is_regional) values (:table_name, :is_local, :is_regional)")
 	stmt.SetText(":table_name", table)
 	stmt.SetBool(":is_local", isLocal)
 	stmt.SetBool(":is_regional", isRegional)
@@ -106,7 +99,7 @@ func replicateCommand(query string, table string, kind tableType) error {
 	}
 	tableId := conn.LastInsertRowID()
 
-	stmt = conn.Prep("insert into atlas.migrations (command, executed, table_id) values (:command, 1, :table_id)")
+	stmt = conn.Prep("insert into table_migrations (command, executed, table_id) values (:command, 1, :table_id)")
 	stmt.SetText(":command", query)
 	stmt.SetInt64(":table_id", tableId)
 	_, err = stmt.Step()
@@ -122,7 +115,39 @@ func replicateCommand(query string, table string, kind tableType) error {
 	return nil
 }
 
-func ExecuteSQL(ctx context.Context, query string, conn *sqlite.Conn, output bool) {
+type Param struct {
+	Name  string
+	Value interface{}
+}
+
+// ExecuteSQL executes a SQL query with special handling for different table types and migration commands.
+// It supports creating local, regional, and global tables, and handles specific commands like
+// writing/applying patches and serializing the database.
+//
+// The function normalizes the input query, processes table creation commands by replicating
+// table schemas, and supports special commands such as WRITE_PATCH, APPLY_PATCH, and SERIALIZE.
+// For unrecognized commands, it calls CaptureChanges to process the query.
+//
+// Parameters:
+//   - ctx: Context for controlling the execution
+//   - query: SQL query to be executed
+//   - conn: SQLite database connection
+//   - output: Flag to control output generation
+//
+// Returns:
+//   - *Rows: Potential query result rows
+//   - error: Any error encountered during query execution
+//
+// Supported special commands:
+//   - CREATE LOCAL TABLE: Creates a non-persisted table with replicated schema
+//   - CREATE REGIONAL TABLE: Creates a persisted table with replicated schema
+//   - CREATE TABLE: Creates a table to be replicated
+//   - WRITE_PATCH: Writes current database state as a patchset
+//   - APPLY_PATCH: Applies a previously written patchset
+//   - SERIALIZE: Writes the entire database to a file
+//
+// Note: Some table alteration commands are placeholders and not fully implemented.
+func ExecuteSQL(ctx context.Context, query string, conn *sqlite.Conn, output bool, params ...Param) (*Rows, error) {
 	// normalize query
 	normalized := strings.ToUpper(query)
 
@@ -135,8 +160,7 @@ func ExecuteSQL(ctx context.Context, query string, conn *sqlite.Conn, output boo
 		query = replaceCommand(query, "CREATE LOCAL TABLE", "CREATE TABLE")
 		err := replicateCommand(query, parts[3], localTable)
 		if err != nil {
-			fmt.Println("Error replicating command:", err)
-			return
+			return nil, err
 		}
 	} else if strings.HasPrefix(normalized, "CREATE REGIONAL TABLE") {
 		// we are creating a regional table to be persisted, and the schema will be replicated
@@ -144,15 +168,13 @@ func ExecuteSQL(ctx context.Context, query string, conn *sqlite.Conn, output boo
 		query = replaceCommand(query, "CREATE REGIONAL TABLE", "CREATE TABLE")
 		err := replicateCommand(query, parts[3], regionalTable)
 		if err != nil {
-			fmt.Println("Error replicating command:", err)
-			return
+			return nil, err
 		}
 	} else if strings.HasPrefix(normalized, "CREATE TABLE") {
 		// we are creating a table to be replicated, but the schema will be replicated
 		err := replicateCommand(query, parts[2], globalTable)
 		if err != nil {
-			fmt.Println("Error replicating command:", err)
-			return
+			return nil, err
 		}
 	}
 
@@ -194,6 +216,8 @@ func ExecuteSQL(ctx context.Context, query string, conn *sqlite.Conn, output boo
 		f.Close()
 		fmt.Println("Serialized and written to file")
 	default:
-		CaptureChanges(query, conn, output)
+		return CaptureChanges(query, conn, output, params...)
 	}
+
+	return nil, nil
 }

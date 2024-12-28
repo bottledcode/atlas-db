@@ -5,7 +5,7 @@ package atlas.bootstrap;
 option go_package = "/bootstrap";
 
 service Bootstrap {
-  rpc GetBootstrapData(BootstrapRequest) returns (BootstrapResponse) {}
+  rpc GetBootstrapData(BootstrapRequest) returns (stream BootstrapResponse) {}
 }
 
 message BootstrapRequest {

@@ -24,31 +24,158 @@ func InitializeSession(ctx context.Context, conn *sqlite.Conn) (context.Context,
 	return context.WithValue(ctx, "atlas-session", sess), nil
 }
 
-func CaptureChanges(query string, db *sqlite.Conn, output bool) {
+type ValueColumn interface {
+	GetString() string
+	GetInt() int
+	GetFloat() float64
+	GetBool() bool
+	GetBlob() []byte
+	IsNull() bool
+}
+
+type UnknownValueColumn struct {
+}
+
+func (u *UnknownValueColumn) GetString() string {
+	panic("not a string")
+}
+
+func (u *UnknownValueColumn) GetInt() int {
+	panic("not an int")
+}
+
+func (u *UnknownValueColumn) GetFloat() float64 {
+	panic("not a float")
+}
+
+func (u *UnknownValueColumn) GetBool() bool {
+	panic("not a boolean")
+}
+
+func (u *UnknownValueColumn) GetBlob() []byte {
+	panic("not a blob")
+}
+
+func (u *UnknownValueColumn) IsNull() bool {
+	return false
+}
+
+type ValueColumnString struct {
+	UnknownValueColumn
+	Value string
+}
+
+func (v *ValueColumnString) GetString() string {
+	return v.Value
+}
+
+type ValueColumnInt struct {
+	UnknownValueColumn
+	Value int
+}
+
+func (v *ValueColumnInt) GetInt() int {
+	return v.Value
+}
+
+func (v *ValueColumnInt) GetBool() bool {
+	return v.Value != 0
+}
+
+type ValueColumnFloat struct {
+	UnknownValueColumn
+	Value float64
+}
+
+func (v *ValueColumnFloat) GetFloat() float64 {
+	return v.Value
+}
+
+type ValueColumnBlob struct {
+	UnknownValueColumn
+}
+
+func (v *ValueColumnBlob) GetBlob() []byte {
+	panic("attempted to read blob from select, use open blob")
+}
+
+type ValueColumnNull struct {
+	UnknownValueColumn
+}
+
+func (v *ValueColumnNull) IsNull() bool {
+	return true
+}
+
+type Row struct {
+	Id      int
+	Columns []ValueColumn
+	headers *map[string]int
+}
+
+type Rows struct {
+	Rows    []Row
+	Headers map[string]int
+}
+
+func CaptureChanges(query string, db *sqlite.Conn, output bool) (*Rows, error) {
 	stmt, err := db.Prepare(query)
 	if err != nil {
-		fmt.Println("SQL Prepare Error:", err)
-		return
+		return nil, err
+	}
+
+	rows := &Rows{
+		Rows:    make([]Row, 0),
+		Headers: make(map[string]int),
+	}
+
+	for i := 0; i < stmt.ColumnCount(); i++ {
+		rows.Headers[stmt.ColumnName(i)] = i
 	}
 
 	for {
 		hasRow, err := stmt.Step()
 		if err != nil {
 			fmt.Println("SQL Step Error:", err)
-			return
+			return rows, err
 		}
 		if !hasRow {
 			break
 		}
-		if !output {
-			continue
+		row := Row{
+			Columns: make([]ValueColumn, 0),
+			headers: &rows.Headers,
 		}
 		cols := stmt.ColumnCount()
 		for i := 0; i < cols; i++ {
-			fmt.Printf("%s: %v\t", stmt.ColumnName(i), stmt.ColumnText(i))
+			switch stmt.ColumnType(i) {
+			case sqlite.TypeText:
+				row.Columns = append(row.Columns, &ValueColumnString{
+					Value: stmt.ColumnText(i),
+				})
+			case sqlite.TypeInteger:
+				row.Columns = append(row.Columns, &ValueColumnInt{
+					Value: stmt.ColumnInt(i),
+				})
+			case sqlite.TypeFloat:
+				row.Columns = append(row.Columns, &ValueColumnFloat{
+					Value: stmt.ColumnFloat(i),
+				})
+			case sqlite.TypeBlob:
+				row.Columns = append(row.Columns, &ValueColumnBlob{})
+			case sqlite.TypeNull:
+				row.Columns = append(row.Columns, &ValueColumnNull{})
+			}
+
+			if output {
+				fmt.Printf("%s: %v\t", stmt.ColumnName(i), stmt.ColumnText(i))
+				fmt.Println()
+			}
+			rows.Rows = append(rows.Rows, row)
 		}
-		fmt.Println()
 	}
+
+	return rows, nil
 }
 
 func WritePatchset(ctx context.Context) {

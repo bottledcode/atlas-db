@@ -18,6 +18,11 @@ import (
 type Module struct {
 	bootstrapServer *grpc.Server
 	ctx             caddy.Context
+	destroySocket   func() error
+}
+
+func (m *Module) Cleanup() error {
+	return m.destroySocket()
 }
 
 var m Module
@@ -58,6 +63,11 @@ func (m *Module) Provision(ctx caddy.Context) (err error) {
 	m.bootstrapServer = grpc.NewServer()
 	bootstrap.RegisterBootstrapServer(m.bootstrapServer, &bootstrap.Server{})
 	consensus.RegisterConsensusServer(m.bootstrapServer, &consensus.Server{})
+
+	m.destroySocket, err = atlas.ServeSocket(ctx)
+	if err != nil {
+		return
+	}
 
 	atlas.Logger.Info("🌐 Atlas Started")
 
@@ -134,6 +144,12 @@ func (m *Module) UnmarshalCaddyfile(d *caddyfile.Dispenser) (err error) {
 				}
 				atlas.CurrentOptions.AdvertiseAddress = parts.Host
 				atlas.CurrentOptions.AdvertisePort = parts.StartPort
+			case "socket":
+				var path string
+				if !d.Args(&path) {
+					return d.ArgErr()
+				}
+				atlas.CurrentOptions.SocketPath = path
 			default:
 				return d.Errf("unknown option: %s", d.Val())
 			}

@@ -61,8 +61,8 @@ type commandString struct {
 }
 
 func commandFromString(command string) *commandString {
-	parts := strings.Fields(command)
 	normalized := strings.ToUpper(command)
+	parts := strings.Fields(normalized)
 	normalized = strings.Join(parts, " ")
 	return &commandString{
 		normalized: normalized,

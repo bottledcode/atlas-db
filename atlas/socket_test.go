@@ -13,7 +13,7 @@ func TestRemaining(t *testing.T) {
 	}{
 		{"COMMAND PART1 PART2 PART3", []string{"COMMAND", "PART1", "PART2", "PART3"}, 2, "PART2 PART3"},
 		{"COMMAND PART1 PART2 PART3", []string{"COMMAND", "PART1", "PART2", "PART3"}, 3, "PART3"},
-		{"COMMAND PART1 PART2 PART3", []string{"COMMAND", "PART1", "PART2", "PART3"}, 4, ""},
+		{"COMMAND PART1 PART2 PART3", []string{"COMMAND", "PART1", "PART2", "PART3"}, 4, "PART3"},
 		{"COMMAND PART1 PART2", []string{"COMMAND", "PART1", "PART2"}, 1, "PART1 PART2"},
 	}
 

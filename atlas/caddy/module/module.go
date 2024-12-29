@@ -41,9 +41,12 @@ func (m *Module) Provision(ctx caddy.Context) (err error) {
 		if err != nil {
 			return
 		}
-		_ = consensus.ProposeRegion(ctx, atlas.CurrentOptions.Region)
-
 		atlas.Logger.Info("🚀 Bootstrapping Complete")
+		atlas.Logger.Info("☄️ Joining Atlas Cluster...")
+		_ = consensus.ProposeRegion(ctx, atlas.CurrentOptions)
+		_ = consensus.ProposeNode(ctx, atlas.CurrentOptions)
+
+		atlas.Logger.Info("☄️ Atlas Cluster Joined")
 	} else {
 		err = bootstrap.InitializeMaybe()
 		if err != nil {

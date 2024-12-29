@@ -123,23 +123,6 @@ func (c *commandString) replaceCommand(original, new string) *commandString {
 
 var emptyCommandString *commandString = &commandString{}
 
-// maybeReplicateCommand is a function that will replicate a command to all other nodes in the cluster
-// rawCommand: should be the raw command -- not an atlas command
-func maybeReplicateCommand(rawCommand string) {
-	normalized := strings.ToUpper(rawCommand)
-	parts := strings.Fields(normalized)
-	normalized = strings.Join(parts, " ")
-
-	// todo: implement this
-}
-
-// configureReplication parses a command and returns commands to be replicated and whether to replicate it.
-// The raw
-func configureReplication(command string) (rawCommand []string, replicate bool) {
-	// todo: implement this
-	return
-}
-
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
 
@@ -204,7 +187,7 @@ func handleConnection(conn net.Conn) {
 				return ctx
 			}
 
-			ctx, err = InitializeSession(ctx, sql)
+			ctx, err = InitializeSession(ctx, sql, "atlas")
 			if err != nil {
 				Logger.Error("Error initializing session", zap.Error(err))
 				writeError(Fatal, err)
@@ -239,6 +222,13 @@ func handleConnection(conn net.Conn) {
 
 	executeQuery := func(stmt *sqlite.Stmt) {
 		rowNum := 0
+
+		// write out the column names
+		writeMessage("META COLUMN_COUNT" + strconv.Itoa(stmt.ColumnCount()))
+		for i := 0; i < stmt.ColumnCount(); i++ {
+			writeMessage("META COLUMN_NAME " + strconv.Itoa(i) + stmt.ColumnName(i))
+		}
+
 		for {
 			hasRow, err := stmt.Step()
 			if err != nil {
@@ -264,6 +254,13 @@ func handleConnection(conn net.Conn) {
 					writeMessage(r + " BLOB")
 				}
 			}
+		}
+		writeMessage("META LAST_INSERT_ID" + strconv.FormatInt(sql.LastInsertRowID(), 10))
+		writeMessage("META ROWS_AFFECTED" + strconv.Itoa(sql.Changes()))
+
+		err := stmt.ClearBindings()
+		if err != nil {
+			writeError(Warning, err)
 		}
 	}
 

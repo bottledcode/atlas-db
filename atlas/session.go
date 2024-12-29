@@ -16,7 +16,7 @@ func GetCurrentSession(ctx context.Context) *sqlite.Session {
 }
 
 // - An error if session creation or attachment fails
-func InitializeSession(ctx context.Context, conn *sqlite.Conn) (context.Context, error) {
+func InitializeSession(ctx context.Context, conn *sqlite.Conn, key string) (context.Context, error) {
 	var err error
 	session, err := conn.CreateSession("")
 	if err != nil {
@@ -26,7 +26,7 @@ func InitializeSession(ctx context.Context, conn *sqlite.Conn) (context.Context,
 	if err != nil {
 		return ctx, err
 	}
-	return context.WithValue(ctx, "atlas-session", session), nil
+	return context.WithValue(ctx, key+"-session", session), nil
 }
 
 type ValueColumn interface {

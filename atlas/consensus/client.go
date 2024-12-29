@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-func getNewClient(url string) (ConsensusClient, error) {
+func getNewClient(url string) (ConsensusClient, error, func()) {
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: true,
 	}
@@ -31,12 +31,13 @@ func getNewClient(url string) (ConsensusClient, error) {
 		return streamer(ctx, desc, cc, method, opts...)
 	}))
 	if err != nil {
-		return nil, err
+		return nil, err, nil
 	}
-	defer conn.Close()
 
 	client := NewConsensusClient(conn)
-	return client, nil
+	return client, nil, func() {
+		_ = conn.Close()
+	}
 }
 
 var ErrNoMajority = fmt.Errorf("no majority")
@@ -104,6 +105,14 @@ func ProposeRegion(ctx context.Context, options *atlas.Options) error {
 	expected := atomic.Uint64{}
 
 	clients := make([]ConsensusClient, len(nodes.Rows))
+	closers := make([]func(), len(nodes.Rows))
+	defer func() {
+		for _, closer := range closers {
+			if closer != nil {
+				closer()
+			}
+		}
+	}()
 
 	ctx, done := context.WithTimeout(ctx, time.Second*30)
 	defer done()
@@ -120,7 +129,7 @@ func ProposeRegion(ctx context.Context, options *atlas.Options) error {
 				return
 			}
 			expected.Add(1)
-			clients[i], err = getNewClient(node.GetColumn("address").GetString() + ":" + node.GetColumn("port").GetString())
+			clients[i], err, closers[i] = getNewClient(node.GetColumn("address").GetString() + ":" + node.GetColumn("port").GetString())
 			if err != nil {
 				errChan <- err
 				return
@@ -307,6 +316,14 @@ func ProposeNode(ctx context.Context, options *atlas.Options) error {
 	expected := atomic.Uint64{}
 
 	clients := make([]ConsensusClient, len(nodes.Rows))
+	closers := make([]func(), len(nodes.Rows))
+	defer func() {
+		for _, closer := range closers {
+			if closer != nil {
+				closer()
+			}
+		}
+	}()
 
 	ctx, done := context.WithTimeout(ctx, time.Second*30)
 	defer done()
@@ -323,7 +340,7 @@ func ProposeNode(ctx context.Context, options *atlas.Options) error {
 				return
 			}
 			expected.Add(1)
-			clients[i], err = getNewClient(node.GetColumn("address").GetString() + ":" + node.GetColumn("port").GetString())
+			clients[i], err, closers[i] = getNewClient(node.GetColumn("address").GetString() + ":" + node.GetColumn("port").GetString())
 			if err != nil {
 				errChan <- err
 				return

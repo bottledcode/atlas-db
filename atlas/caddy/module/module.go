@@ -9,6 +9,7 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"net/http"
 	"os"
@@ -33,8 +34,6 @@ func (m *Module) CaddyModule() caddy.ModuleInfo {
 func (m *Module) Provision(ctx caddy.Context) (err error) {
 	atlas.Logger = caddy.Log()
 
-	atlas.CreatePool(atlas.CurrentOptions)
-
 	if atlas.CurrentOptions.BootstrapConnect != "" {
 		atlas.Logger.Info("🚀 Bootstrapping Atlas...")
 		err = bootstrap.DoBootstrap(atlas.CurrentOptions.BootstrapConnect, atlas.CurrentOptions.MetaFilename)
@@ -43,11 +42,13 @@ func (m *Module) Provision(ctx caddy.Context) (err error) {
 		}
 		atlas.Logger.Info("🚀 Bootstrapping Complete")
 		atlas.Logger.Info("☄️ Joining Atlas Cluster...")
+		atlas.CreatePool(atlas.CurrentOptions)
 		_ = consensus.ProposeRegion(ctx, atlas.CurrentOptions)
 		_ = consensus.ProposeNode(ctx, atlas.CurrentOptions)
 
-		atlas.Logger.Info("☄️ Atlas Cluster Joined")
+		atlas.Logger.Info("☄️ Atlas Cluster Joined", zap.Int("NodeID", atlas.CurrentOptions.ServerId))
 	} else {
+		atlas.CreatePool(atlas.CurrentOptions)
 		err = bootstrap.InitializeMaybe()
 		if err != nil {
 			return

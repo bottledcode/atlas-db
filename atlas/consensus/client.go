@@ -69,6 +69,7 @@ func ProposeRegion(ctx context.Context, options *atlas.Options) error {
 	// check if the region already exists
 	regionId, _ := atlas.GetRegionIdFromName(ctx, conn, options.Region)
 	if regionId != 0 {
+		_, _ = atlas.ExecuteSQL(ctx, "rollback", conn, false)
 		// this region already exists and does not need to be proposed
 		return nil
 	}
@@ -186,7 +187,7 @@ func ProposeRegion(ctx context.Context, options *atlas.Options) error {
 		for i, node := range nodes.Rows {
 			go func(node atlas.Row, i int) {
 				defer wg.Done()
-				if node.GetColumn("address").GetString() == PlaceholderName {
+				if clients[i] == nil {
 					return
 				}
 				_, err = clients[i].AcceptTopologyChange(ctx, &AcceptTopologyChangeRequest{
@@ -255,6 +256,7 @@ func ProposeNode(ctx context.Context, options *atlas.Options) error {
 
 	regionId, _ := atlas.GetRegionIdFromName(ctx, conn, options.Region)
 	if regionId == 0 {
+		_, _ = atlas.ExecuteSQL(ctx, "rollback", conn, false)
 		return fmt.Errorf("region %s does not exist", options.Region)
 	}
 
@@ -273,6 +275,7 @@ func ProposeNode(ctx context.Context, options *atlas.Options) error {
 	if len(results.Rows) > 0 {
 		// this node already exists and does not need to be proposed
 		// todo: it WILL need to be deleted and added again if the region changed
+		_, _ = atlas.ExecuteSQL(ctx, "rollback", conn, false)
 		return nil
 	}
 
@@ -397,7 +400,7 @@ func ProposeNode(ctx context.Context, options *atlas.Options) error {
 		for i, node := range nodes.Rows {
 			go func(node atlas.Row, i int) {
 				defer wg.Done()
-				if node.GetColumn("address").GetString() == PlaceholderName {
+				if clients[i] == nil {
 					return
 				}
 				_, err = clients[i].AcceptTopologyChange(ctx, &AcceptTopologyChangeRequest{
@@ -421,6 +424,8 @@ func ProposeNode(ctx context.Context, options *atlas.Options) error {
 		if err != nil {
 			return err
 		}
+
+		options.ServerId = int(actualNode.NodeId)
 	} else {
 		// we don't have a majority, and there will later be a value accepted here
 		_, err = atlas.ExecuteSQL(ctx, "update nodes set address = :name where id = :id", conn, false, atlas.Param{

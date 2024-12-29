@@ -48,17 +48,96 @@ const EOL = "\r\n"
 type ErrorCode string
 
 const (
-	OK      ErrorCode = "0"
-	Info              = "1"
-	Warning           = "2"
-	Fatal             = "3"
+	OK      ErrorCode = "OK"
+	Info              = "INFO"
+	Warning           = "WARN"
+	Fatal             = "ERROR"
 )
 
-func remaining(command string, parts []string, from int) string {
-	for i := 0; i < from; i++ {
-		command = strings.Replace(command, parts[i]+" ", "", 1)
+type commandString struct {
+	normalized string
+	parts      []string
+	raw        string
+	rawParts   []string
+}
+
+func commandFromString(command string) *commandString {
+	normalized := strings.ToUpper(command)
+	parts := strings.Fields(normalized)
+	normalized = strings.Join(parts, " ")
+	rawParts := strings.Fields(command)
+
+	// count whitespace at the end of string
+	whitespace := 0
+	for i := len(command) - 1; i >= 0; i-- {
+		if command[i] == ' ' {
+			whitespace++
+		} else {
+			break
+		}
 	}
-	return command
+	if whitespace >= 2 {
+		parts = append(parts, strings.Repeat(" ", whitespace-1))
+		rawParts = append(rawParts, strings.Repeat(" ", whitespace-1))
+	}
+
+	return &commandString{
+		normalized: normalized,
+		parts:      parts,
+		raw:        command,
+		rawParts:   rawParts,
+	}
+}
+
+func (c *commandString) validate(expected int) error {
+	if len(c.parts) < expected {
+		return errors.New(c.raw + " expects " + strconv.Itoa(expected) + " arguments")
+	}
+	return nil
+}
+
+func (c *commandString) validateExact(expected int) error {
+	if len(c.parts) != expected {
+		return errors.New(c.raw + " expects exactly " + strconv.Itoa(expected) + " arguments")
+	}
+	return nil
+}
+
+func (c *commandString) removeCommand(start int) *commandString {
+	str := removeCommand(c.raw, start)
+	return commandFromString(str)
+}
+
+func (c *commandString) selectCommand(k int) string {
+	return c.rawParts[k]
+}
+
+func (c *commandString) selectNormalizedCommand(k int) string {
+	return c.parts[k]
+}
+
+func (c *commandString) replaceCommand(original, new string) *commandString {
+	str := replaceCommand(c.raw, original, new)
+	return commandFromString(str)
+}
+
+var emptyCommandString *commandString = &commandString{}
+
+// maybeReplicateCommand is a function that will replicate a command to all other nodes in the cluster
+// rawCommand: should be the raw command -- not an atlas command
+func maybeReplicateCommand(rawCommand string) {
+	normalized := strings.ToUpper(rawCommand)
+	parts := strings.Fields(normalized)
+	normalized = strings.Join(parts, " ")
+
+	// todo: implement this
+}
+
+// configureReplication parses a command and returns commands to be replicated and whether to replicate it.
+// The raw
+func configureReplication(command string) (rawCommand []string, replicate bool) {
+	// todo: implement this
+	return
 }
 
 func handleConnection(conn net.Conn) {
@@ -109,20 +188,20 @@ func handleConnection(conn net.Conn) {
 		}
 	}
 
-	maybeStartTransaction := func(command string) {
+	maybeStartTransaction := func(ctx context.Context, command *commandString) context.Context {
 		if !inTransaction {
 			connect()
 
-			if command == "" {
-				command = "BEGIN"
+			if command == emptyCommandString {
+				command = commandFromString("BEGIN")
 			}
 
-			_, err := ExecuteSQL(ctx, command, sql, false)
+			_, err := ExecuteSQL(ctx, command.raw, sql, false)
 			if err != nil {
 				Logger.Error("Error starting transaction", zap.Error(err))
 				writeError(Fatal, err)
 				hasFatalled = true
-				return
+				return ctx
 			}
 
 			ctx, err = InitializeSession(ctx, sql)
@@ -130,11 +209,12 @@ func handleConnection(conn net.Conn) {
 				Logger.Error("Error initializing session", zap.Error(err))
 				writeError(Fatal, err)
 				hasFatalled = true
-				return
+				return ctx
 			}
 
 			inTransaction = true
 		}
+		return ctx
 	}
 
 	consumeLine := func() string {
@@ -145,10 +225,7 @@ func handleConnection(conn net.Conn) {
 				hasFatalled = true
 				return ""
 			}
-			if !strings.HasSuffix(n, EOL) {
-				commandBuilder.WriteString(n)
-				continue
-			}
+			commandBuilder.WriteString(n)
 
 			// consume a command
 			if command, next, found := strings.Cut(commandBuilder.String(), "\r\n"); found {
@@ -158,14 +235,6 @@ func handleConnection(conn net.Conn) {
 				return command
 			}
 		}
-	}
-
-	validate := func(command string, parts []string, expected int) bool {
-		if len(parts) != expected {
-			writeError(Warning, errors.New(command+" expects "+strconv.Itoa(expected)+" arguments"))
-			return false
-		}
-		return true
 	}
 
 	executeQuery := func(stmt *sqlite.Stmt) {
@@ -205,173 +274,200 @@ func handleConnection(conn net.Conn) {
 		}
 	}()
 
+	defer func() {
+		sess := GetCurrentSession(ctx)
+		if sess != nil {
+			sess.Delete()
+		}
+	}()
+
 	for {
-		command := consumeLine()
-		normalized := strings.ToUpper(command)
-		parts := strings.Fields(normalized)
-		switch parts[0] {
+		command := commandFromString(consumeLine())
+		if len(command.parts) == 0 {
+			if hasFatalled {
+				break
+			}
+			continue
+		}
+
+		switch command.parts[0] {
 		case "PREPARE":
-			maybeStartTransaction("")
+			ctx = maybeStartTransaction(ctx, emptyCommandString)
 			if hasFatalled {
 				break
 			}
-			if validate(command, parts, 3) {
-				id := parts[1]
-				sqlStr := remaining(command, parts, 2)
-				stmt, err := sql.Prepare(sqlStr)
-				if err != nil {
-					writeError(Warning, err)
-					continue
-				}
-				stmts[id] = stmt
-				writeOk(OK)
+			if err := command.validate(3); err != nil {
+				writeError(Warning, err)
+				continue
 			}
+			id := command.selectNormalizedCommand(1)
+			sqlCommand := command.removeCommand(2)
+			stmt, err := sql.Prepare(sqlCommand.raw)
+			if err != nil {
+				writeError(Warning, err)
+				continue
+			}
+			stmts[id] = stmt
+			writeOk(OK)
+
 		case "EXECUTE":
-			maybeStartTransaction("")
+			ctx = maybeStartTransaction(ctx, emptyCommandString)
 			if hasFatalled {
 				break
 			}
-			if validate(command, parts, 2) {
-				id := parts[1]
-				stmt, ok := stmts[id]
-				if !ok {
-					writeError(Warning, errors.New("No statement with id "+id))
-					continue
-				}
-				executeQuery(stmt)
-				writeOk(OK)
+			if err := command.validate(2); err != nil {
+				writeError(Warning, err)
+				continue
 			}
+			id := command.selectNormalizedCommand(1)
+			stmt, ok := stmts[id]
+			if !ok {
+				writeError(Warning, errors.New("No statement with id "+id))
+				continue
+			}
+			executeQuery(stmt)
+			writeOk(OK)
 		case "QUERY":
-			maybeStartTransaction("")
+			ctx = maybeStartTransaction(ctx, emptyCommandString)
 			if hasFatalled {
 				break
 			}
-			if validate(command, parts, 2) {
-				sqlStr := remaining(command, parts, 1)
-				stmt, err := sql.Prepare(sqlStr)
-				if err != nil {
-					writeError(Warning, err)
-					continue
-				}
-				executeQuery(stmt)
-				err = stmt.Finalize()
-				if err != nil {
-					writeError(Warning, err)
-					continue
-				}
-				writeOk(OK)
+			if err := command.validate(2); err != nil {
+				writeError(Warning, err)
+				continue
 			}
+			sqlCommand := command.removeCommand(1)
+			stmt, err := sql.Prepare(sqlCommand.raw)
+			if err != nil {
+				writeError(Warning, err)
+				continue
+			}
+			executeQuery(stmt)
+			err = stmt.Finalize()
+			if err != nil {
+				writeError(Warning, err)
+				continue
+			}
+			writeOk(OK)
 		case "FINALIZE":
-			if validate(command, parts, 2) {
-				id := parts[1]
-				stmt, ok := stmts[id]
-				if !ok {
-					writeError(Warning, errors.New("No statement with id "+id))
-					continue
-				}
-				err := stmt.Finalize()
-				if err != nil {
-					writeError(Warning, err)
-					continue
-				}
-				delete(stmts, id)
-				writeOk(OK)
+			if err := command.validate(2); err != nil {
+				writeError(Warning, err)
+				continue
 			}
+			id := command.selectNormalizedCommand(1)
+			stmt, ok := stmts[id]
+			if !ok {
+				writeError(Warning, errors.New("No statement with id "+id))
+				continue
+			}
+			err := stmt.Finalize()
+			if err != nil {
+				writeError(Warning, err)
+				continue
+			}
+			delete(stmts, id)
+			writeOk(OK)
 		case "BIND":
-			if validate(command, parts, 4) {
-				id := parts[1]
-				stmt, ok := stmts[id]
-				if !ok {
-					writeError(Warning, errors.New("No statement with id "+id))
-					continue
+			if err := command.validate(4); err != nil {
+				writeError(Warning, err)
+				continue
+			}
+			id := command.selectNormalizedCommand(1)
+			stmt, ok := stmts[id]
+			if !ok {
+				writeError(Warning, errors.New("No statement with id "+id))
+				continue
+			}
+			param := command.selectCommand(2)
+			// check if numeric
+			if _, err := strconv.Atoi(param); err == nil {
+				i, _ := strconv.Atoi(param)
+				switch command.selectNormalizedCommand(3) {
+				case "TEXT":
+					stmt.BindText(i, command.removeCommand(4).raw)
+				case "INT":
+					fallthrough
+				case "INTEGER":
+					v, err := strconv.ParseInt(command.removeCommand(4).raw, 10, 64)
+					if err != nil {
+						writeError(Warning, err)
+						continue
+					}
+					stmt.BindInt64(i, v)
+				case "FLOAT":
+					v, err := strconv.ParseFloat(command.removeCommand(4).raw, 64)
+					if err != nil {
+						writeError(Warning, err)
+						continue
+					}
+					stmt.BindFloat(i, v)
+				case "NULL":
+					stmt.BindNull(i)
+				case "BLOB":
+					size := command.selectCommand(4)
+					v, err := strconv.Atoi(size)
+					if err != nil {
+						writeError(Warning, fmt.Errorf("invalid size %s", size))
+						continue
+					}
+					if v == 0 {
+						stmt.BindZeroBlob(i, 0)
+						continue
+					}
+					blobBytes, err := base64.StdEncoding.DecodeString(consumeLine())
+					if err != nil {
+						writeError(Warning, err)
+						continue
+					}
+					if len(blobBytes) != v {
+						writeError(Warning, fmt.Errorf("expected %d bytes, got %d", v, len(blobBytes)))
+						continue
+					}
+					stmt.BindBytes(i, blobBytes)
 				}
-				param := parts[2]
-				// check if numeric
-				if _, err := strconv.Atoi(param); err == nil {
-					i, _ := strconv.Atoi(param)
-					switch parts[3] {
-					case "TEXT":
-						stmt.BindText(i, remaining(command, parts, 4))
-					case "INTEGER":
-						v, err := strconv.ParseInt(remaining(command, parts, 4), 10, 64)
-						if err != nil {
-							writeError(Warning, err)
-							continue
-						}
-						stmt.BindInt64(i, v)
-					case "FLOAT":
-						v, err := strconv.ParseFloat(remaining(command, parts, 4), 64)
-						if err != nil {
-							writeError(Warning, err)
-							continue
-						}
-						stmt.BindFloat(i, v)
-					case "NULL":
-						stmt.BindNull(i)
-					case "BLOB":
-						size := parts[4]
-						v, err := strconv.Atoi(size)
-						if err != nil {
-							writeError(Warning, fmt.Errorf("Invalid size %s", size))
-							continue
-						}
-						if v == 0 {
-							stmt.BindZeroBlob(i, 0)
-							continue
-						}
-						blobBytes, err := base64.StdEncoding.DecodeString(consumeLine())
-						if err != nil {
-							writeError(Warning, err)
-							continue
-						}
-						if len(blobBytes) != v {
-							writeError(Warning, fmt.Errorf("Expected %d bytes, got %d", v, len(blobBytes)))
-							continue
-						}
-						stmt.BindBytes(i, blobBytes)
+			} else {
+				switch command.selectNormalizedCommand(3) {
+				case "TEXT":
+					stmt.SetText(param, command.removeCommand(4).raw)
+				case "INT":
+					fallthrough
+				case "INTEGER":
+					v, err := strconv.ParseInt(command.removeCommand(4).raw, 10, 64)
+					if err != nil {
+						writeError(Warning, err)
+						continue
 					}
-				} else {
-					switch parts[3] {
-					case "TEXT":
-						stmt.SetText(param, remaining(command, parts, 4))
-					case "INTEGER":
-						v, err := strconv.ParseInt(remaining(command, parts, 4), 10, 64)
-						if err != nil {
-							writeError(Warning, err)
-							continue
-						}
-						stmt.SetInt64(param, v)
-					case "FLOAT":
-						v, err := strconv.ParseFloat(remaining(command, parts, 4), 64)
-						if err != nil {
-							writeError(Warning, err)
-							continue
-						}
-						stmt.SetFloat(param, v)
-					case "NULL":
-						stmt.SetNull(param)
-					case "BLOB":
-						size := parts[4]
-						v, err := strconv.Atoi(size)
-						if err != nil {
-							writeError(Warning, fmt.Errorf("Invalid size %s", size))
-							continue
-						}
-						if v == 0 {
-							stmt.SetZeroBlob(param, 0)
-							continue
-						}
-						blobBytes, err := base64.StdEncoding.DecodeString(consumeLine())
-						if err != nil {
-							writeError(Warning, err)
-							continue
-						}
-						if len(blobBytes) != v {
-							writeError(Warning, fmt.Errorf("Expected %d bytes, got %d", v, len(blobBytes)))
-							continue
-						}
-						stmt.SetBytes(param, blobBytes)
+					stmt.SetInt64(param, v)
+				case "FLOAT":
+					v, err := strconv.ParseFloat(command.removeCommand(4).raw, 64)
+					if err != nil {
+						writeError(Warning, err)
+						continue
 					}
+					stmt.SetFloat(param, v)
+				case "NULL":
+					stmt.SetNull(param)
+				case "BLOB":
+					size := command.selectNormalizedCommand(4)
+					v, err := strconv.Atoi(size)
+					if err != nil {
+						writeError(Warning, fmt.Errorf("invalid size %s", size))
+						continue
+					}
+					if v == 0 {
+						stmt.SetZeroBlob(param, 0)
+						continue
+					}
+					blobBytes, err := base64.StdEncoding.DecodeString(consumeLine())
+					if err != nil {
+						writeError(Warning, err)
+						continue
+					}
+					if len(blobBytes) != v {
+						writeError(Warning, fmt.Errorf("expected %d bytes, got %d", v, len(blobBytes)))
+						continue
+					}
+					stmt.SetBytes(param, blobBytes)
 				}
 				writeOk(OK)
 			}
@@ -380,19 +476,24 @@ func handleConnection(conn net.Conn) {
 				writeOk(OK)
 				continue
 			}
-			if strings.Contains(command, ";") {
-				writeError(Warning, errors.New("BEGIN does not take arguments"))
+			if err := command.validate(1); err != nil {
+				writeError(Warning, err)
 				continue
 			}
-			maybeStartTransaction(command)
+			ctx = maybeStartTransaction(ctx, command)
 			if hasFatalled {
 				break
 			}
+			writeOk(OK)
 		case "COMMIT":
 			if !inTransaction {
 				writeError(Fatal, errors.New("no transaction to commit"))
 				hasFatalled = true
 				break
+			}
+			if err := command.validateExact(1); err != nil {
+				writeError(Warning, err)
+				continue
 			}
 			_, err := ExecuteSQL(ctx, "COMMIT", sql, false)
 			if err != nil {
@@ -411,9 +512,10 @@ func handleConnection(conn net.Conn) {
 				hasFatalled = true
 				break
 			}
-			if len(parts) >= 2 && parts[1] == "TO" {
-				if validate(command, parts, 3) {
-					_, err := ExecuteSQL(ctx, "ROLLBACK TO "+parts[2], sql, false)
+			if err := command.validate(3); err != nil {
+				// we are probably executing a savepoint
+				if command.selectNormalizedCommand(1) == "TO" {
+					_, err := ExecuteSQL(ctx, "ROLLBACK TO "+command.selectCommand(3), sql, false)
 					if err != nil {
 						writeError(Fatal, err)
 						hasFatalled = true
@@ -421,45 +523,53 @@ func handleConnection(conn net.Conn) {
 					}
 					writeOk(OK)
 					break
+				} else {
+					writeError(Warning, err)
+					continue
 				}
 			}
 
-			if validate(command, parts, 1) {
-				_, err := ExecuteSQL(ctx, "ROLLBACK", sql, false)
-				if err != nil {
-					writeError(Fatal, err)
-					hasFatalled = true
-					break
-				}
-				inTransaction = false
-				// reset the session
-				GetCurrentSession(ctx).Delete()
-
-				writeOk(OK)
+			_, err := ExecuteSQL(ctx, "ROLLBACK", sql, false)
+			if err != nil {
+				writeError(Fatal, err)
+				hasFatalled = true
+				break
 			}
+			inTransaction = false
+			// reset the session
+			GetCurrentSession(ctx).Delete()
+
+			writeOk(OK)
 		case "SAVEPOINT":
-			maybeStartTransaction("")
-			if validate(command, parts, 2) {
-				name := parts[1]
-				_, err := ExecuteSQL(ctx, "SAVEPOINT "+name, sql, false)
-				if err != nil {
-					writeError(Fatal, err)
-					hasFatalled = true
-					break
-				}
-				writeOk(OK)
+			ctx = maybeStartTransaction(ctx, emptyCommandString)
+			if err := command.validate(2); err != nil {
+				writeError(Warning, err)
+				continue
 			}
+			name := command.selectCommand(1)
+			_, err := ExecuteSQL(ctx, "SAVEPOINT "+name, sql, false)
+			if err != nil {
+				writeError(Fatal, err)
+				hasFatalled = true
+				break
+			}
+			writeOk(OK)
+
 		case "RELEASE":
-			if validate(command, parts, 2) {
-				name := parts[1]
-				_, err := ExecuteSQL(ctx, "RELEASE "+name, sql, false)
-				if err != nil {
-					writeError(Fatal, err)
-					hasFatalled = true
-					break
-				}
-				writeOk(OK)
+			if err := command.validate(2); err != nil {
+				writeError(Warning, err)
+				continue
 			}
+			name := command.selectCommand(1)
+			_, err := ExecuteSQL(ctx, "RELEASE "+name, sql, false)
+			if err != nil {
+				writeError(Fatal, err)
+				hasFatalled = true
+				break
+			}
+			writeOk(OK)
+		default:
+			writeError(Warning, errors.New("Unknown command "+command.selectNormalizedCommand(0)))
 		}
 
 		if hasFatalled {

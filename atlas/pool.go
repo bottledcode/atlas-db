@@ -62,7 +62,7 @@ func DrainPool() {
 	}
 }
 
-// A modified SQL query string with the new prefix
+// replaceCommand replaces command in query with newPrefix.
 func replaceCommand(query, command, newPrefix string) string {
 	fields := strings.Fields(command)
 	if len(fields) == 0 {
@@ -76,6 +76,29 @@ func replaceCommand(query, command, newPrefix string) string {
 	}
 
 	return newPrefix + query
+}
+
+func removeCommand(query string, num int) string {
+	fields := strings.Fields(query)
+	// count whitespace at the end of string
+	whitespace := 0
+	for i := len(query) - 1; i >= 0; i-- {
+		if query[i] == ' ' {
+			whitespace++
+		} else {
+			break
+		}
+	}
+	if whitespace >= 2 {
+		fields = append(fields, strings.Repeat(" ", whitespace-1))
+	}
+
+	for i := 0; i < num; i++ {
+		endpos := strings.Index(query, fields[i]) + len(fields[i])
+		query = query[endpos:]
+	}
+
+	return query[1:]
 }
 
 // of migration-related operations.

@@ -1,6 +1,8 @@
 package module
 
 import (
+	"bufio"
+	"errors"
 	"fmt"
 	"github.com/bottledcode/atlas-db/atlas"
 	"github.com/bottledcode/atlas-db/atlas/bootstrap"
@@ -8,11 +10,16 @@ import (
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
+	caddycmd "github.com/caddyserver/caddy/v2/cmd"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+	"github.com/chzyer/readline"
+	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"net"
 	"net/http"
 	"os"
+	"strings"
 )
 
 type Module struct {
@@ -22,7 +29,10 @@ type Module struct {
 }
 
 func (m *Module) Cleanup() error {
-	return m.destroySocket()
+	if m.destroySocket != nil {
+		return m.destroySocket()
+	}
+	return nil
 }
 
 var m Module
@@ -169,6 +179,77 @@ func init() {
 	})
 
 	httpcaddyfile.RegisterDirectiveOrder("atlas", "before", "file_server")
+	caddycmd.RegisterCommand(caddycmd.Command{
+		Name:  "atlas",
+		Usage: "<socket_path>",
+		Short: "Connect to an Atlas cluster to run commands",
+		Long:  "Connect to an Atlas cluster to run commands",
+		CobraFunc: func(command *cobra.Command) {
+			command.Args = cobra.ExactArgs(1)
+			command.RunE = caddycmd.WrapCommandFuncForCobra(func(flags caddycmd.Flags) (int, error) {
+				atlas.Logger = caddy.Log()
+
+				socketPath := flags.Arg(0)
+				conn, err := net.Dial("unix", socketPath)
+				writer := bufio.NewWriter(conn)
+				reader := bufio.NewReader(conn)
+				if err != nil {
+					return 1, err
+				}
+				defer conn.Close()
+
+				atlas.Logger.Info("🌐 Atlas Client Started")
+
+				rl, err := readline.New("> ")
+				if err != nil {
+					return 1, err
+				}
+				defer rl.Close()
+
+				for {
+					line, err := rl.Readline()
+					if err != nil {
+						if errors.Is(err, readline.ErrInterrupt) {
+							return 0, nil
+						}
+						return 1, err
+					}
+					if strings.HasPrefix(strings.ToUpper(line), "EXIT") {
+						return 0, nil
+					}
+
+					_, err = writer.WriteString(line + atlas.EOL)
+					if err != nil {
+						return 1, err
+					}
+					err = writer.Flush()
+					if err != nil {
+						return 1, err
+					}
+
+					buf := strings.Builder{}
+
+				keepReading:
+					response, err := reader.ReadString('\n')
+					if err != nil {
+						return 1, err
+					}
+					buf.WriteString(response)
+					if !strings.HasSuffix(response, atlas.EOL) {
+						goto keepReading
+					}
+					fmt.Println(strings.TrimSpace(buf.String()))
+					buf.Reset()
+
+					if strings.HasPrefix(buf.String(), string(atlas.OK)) || strings.HasPrefix(buf.String(), string(atlas.Fatal)) {
+						continue
+					}
+
+					goto keepReading
+				}
+			})
+		},
+	})
 }
 
 // Interface guards

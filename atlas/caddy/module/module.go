@@ -134,6 +134,12 @@ func (m *Module) UnmarshalCaddyfile(d *caddyfile.Dispenser) (err error) {
 				}
 				atlas.CurrentOptions.AdvertiseAddress = parts.Host
 				atlas.CurrentOptions.AdvertisePort = parts.StartPort
+			case "socket":
+				var path string
+				if !d.Args(&path) {
+					return d.ArgErr()
+				}
+				atlas.CurrentOptions.SocketPath = path
 			default:
 				return d.Errf("unknown option: %s", d.Val())
 			}

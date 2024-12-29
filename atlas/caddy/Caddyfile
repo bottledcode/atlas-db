@@ -8,7 +8,8 @@ https://localhost:4434 {
         region local
         connect localhost:4444
         credentials mySecret
-        db_path /tmp/atlas2/
+        db_path /tmp/atlas3/
+        socket /tmp/atlas3/socket
     }
     tls internal
 }

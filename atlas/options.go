@@ -10,6 +10,7 @@ type Options struct {
 	AdvertiseAddress string
 	AdvertisePort    uint
 	ApiKey           string
+	SocketPath       string
 }
 
 var CurrentOptions *Options
@@ -24,5 +25,6 @@ func init() {
 		Region:           "local",
 		AdvertiseAddress: "localhost",
 		AdvertisePort:    8080,
+		SocketPath:       "atlas.sock",
 	}
 }

@@ -29,3 +29,35 @@ func GetOrAddRegion(ctx context.Context, conn *sqlite.Conn, name string) (int64,
 
 	return conn.LastInsertRowID(), nil
 }
+
+func GetRegionIdFromName(ctx context.Context, conn *sqlite.Conn, name string) (int64, error) {
+	results, err := ExecuteSQL(ctx, "select * from regions where name = :name", conn, false, Param{
+		Name:  "name",
+		Value: name,
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	if len(results.Rows) == 0 {
+		return 0, nil
+	}
+
+	return results.GetIndex(0).GetColumn("id").GetInt(), nil
+}
+
+func GetRegionNameFromId(ctx context.Context, conn *sqlite.Conn, id int64) (string, error) {
+	results, err := ExecuteSQL(ctx, "select * from regions where id = :id", conn, false, Param{
+		Name:  "id",
+		Value: id,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	if len(results.Rows) == 0 {
+		return "", nil
+	}
+
+	return results.GetIndex(0).GetColumn("name").GetString(), nil
+}

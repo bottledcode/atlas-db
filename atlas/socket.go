@@ -80,6 +80,10 @@ func handleConnection(conn net.Conn) {
 		writeMessage("ERROR " + string(code) + " " + err.Error())
 	}
 
+	writeOk := func(code ErrorCode) {
+		writeMessage("OK " + string(code))
+	}
+
 	connect := func() {
 		if sql == nil {
 			CreatePool(CurrentOptions)
@@ -201,7 +205,7 @@ func handleConnection(conn net.Conn) {
 					continue
 				}
 				stmts[id] = stmt
-				writeMessage("OK")
+				writeOk(OK)
 			}
 		case "EXECUTE":
 			maybeStartTransaction("")
@@ -216,7 +220,7 @@ func handleConnection(conn net.Conn) {
 					continue
 				}
 				executeQuery(stmt)
-				writeMessage("OK")
+				writeOk(OK)
 			}
 		case "QUERY":
 			maybeStartTransaction("")
@@ -236,7 +240,7 @@ func handleConnection(conn net.Conn) {
 					writeError(Warning, err)
 					continue
 				}
-				writeMessage("OK")
+				writeOk(OK)
 			}
 		case "FINALIZE":
 			if validate(command, parts, 2) {
@@ -252,7 +256,7 @@ func handleConnection(conn net.Conn) {
 					continue
 				}
 				delete(stmts, id)
-				writeMessage("OK")
+				writeOk(OK)
 			}
 		case "BIND":
 			if validate(command, parts, 4) {
@@ -350,11 +354,11 @@ func handleConnection(conn net.Conn) {
 						stmt.SetBytes(param, blobBytes)
 					}
 				}
-				writeMessage("OK")
+				writeOk(OK)
 			}
 		case "BEGIN":
 			if inTransaction {
-				writeMessage("OK")
+				writeOk(OK)
 				continue
 			}
 			if strings.Contains(command, ";") {
@@ -381,7 +385,7 @@ func handleConnection(conn net.Conn) {
 
 			// todo: capture session changes
 
-			writeMessage("OK")
+			writeOk(OK)
 		case "ROLLBACK":
 			if !inTransaction {
 				writeError(Fatal, errors.New("no transaction to rollback"))
@@ -396,7 +400,7 @@ func handleConnection(conn net.Conn) {
 						hasFatalled = true
 						break
 					}
-					writeMessage("OK")
+					writeOk(OK)
 					break
 				}
 			}
@@ -412,7 +416,7 @@ func handleConnection(conn net.Conn) {
 				// reset the session
 				GetCurrentSession(ctx).Delete()
 
-				writeMessage("OK")
+				writeOk(OK)
 			}
 		case "SAVEPOINT":
 			maybeStartTransaction("")
@@ -424,7 +428,7 @@ func handleConnection(conn net.Conn) {
 					hasFatalled = true
 					break
 				}
-				writeMessage("OK")
+				writeOk(OK)
 			}
 		case "RELEASE":
 			if validate(command, parts, 2) {
@@ -435,7 +439,7 @@ func handleConnection(conn net.Conn) {
 					hasFatalled = true
 					break
 				}
-				writeMessage("OK")
+				writeOk(OK)
 			}
 		}
 

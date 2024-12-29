@@ -10,12 +10,12 @@ func TestCommandFromString(t *testing.T) {
 		t.Errorf("expected raw command to be %s, got %s", command, cs.raw)
 	}
 
-	expectedNormalized := "SELECT * FROM table"
+	expectedNormalized := "SELECT * FROM TABLE"
 	if cs.normalized != expectedNormalized {
 		t.Errorf("expected normalized command to be %s, got %s", expectedNormalized, cs.normalized)
 	}
 
-	expectedParts := []string{"SELECT", "*", "FROM", "table"}
+	expectedParts := []string{"SELECT", "*", "FROM", "TABLE"}
 	for i, part := range expectedParts {
 		if cs.parts[i] != part {
 			t.Errorf("expected part %d to be %s, got %s", i, part, cs.parts[i])

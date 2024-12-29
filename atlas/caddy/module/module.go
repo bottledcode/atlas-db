@@ -64,7 +64,7 @@ func (m *Module) Provision(ctx caddy.Context) (err error) {
 	bootstrap.RegisterBootstrapServer(m.bootstrapServer, &bootstrap.Server{})
 	consensus.RegisterConsensusServer(m.bootstrapServer, &consensus.Server{})
 
-	m.destroySocket, err = atlas.ServeSocket()
+	m.destroySocket, err = atlas.ServeSocket(ctx)
 	if err != nil {
 		return
 	}

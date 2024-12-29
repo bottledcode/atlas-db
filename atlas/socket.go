@@ -13,7 +13,7 @@ import (
 	"zombiezen.com/go/sqlite"
 )
 
-func ServeSocket() (func() error, error) {
+func ServeSocket(ctx context.Context) (func() error, error) {
 	// create the unix socket
 	ln, err := net.Listen("unix", CurrentOptions.SocketPath)
 	if err != nil {
@@ -22,13 +22,19 @@ func ServeSocket() (func() error, error) {
 
 	// start the server
 	go func() {
+		done := ctx.Done()
 		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				Logger.Error("Error accepting connection", zap.Error(err))
-				continue
+			select {
+			case <-done:
+				return
+			default:
+				conn, err := ln.Accept()
+				if err != nil {
+					Logger.Error("Error accepting connection", zap.Error(err))
+					continue
+				}
+				go handleConnection(conn)
 			}
-			go handleConnection(conn)
 		}
 	}()
 

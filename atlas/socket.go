@@ -12,7 +12,7 @@ import (
 	"zombiezen.com/go/sqlite"
 )
 
-func ServeSocket() (func(), error) {
+func ServeSocket() (func() error, error) {
 	// create the unix socket
 	ln, err := net.Listen("unix", CurrentOptions.SocketPath)
 	if err != nil {
@@ -31,8 +31,8 @@ func ServeSocket() (func(), error) {
 		}
 	}()
 
-	return func() {
-		ln.Close()
+	return func() error {
+		return ln.Close()
 	}, nil
 }
 
@@ -81,7 +81,7 @@ func handleConnection(conn net.Conn) {
 	}
 
 	writeOk := func(code ErrorCode) {
-		writeMessage("OK " + string(code))
+		writeMessage(string(code))
 	}
 
 	connect := func() {

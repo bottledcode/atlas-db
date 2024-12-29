@@ -18,6 +18,11 @@ import (
 type Module struct {
 	bootstrapServer *grpc.Server
 	ctx             caddy.Context
+	destroySocket   func() error
+}
+
+func (m *Module) Cleanup() error {
+	return m.destroySocket()
 }
 
 var m Module
@@ -58,6 +63,11 @@ func (m *Module) Provision(ctx caddy.Context) (err error) {
 	m.bootstrapServer = grpc.NewServer()
 	bootstrap.RegisterBootstrapServer(m.bootstrapServer, &bootstrap.Server{})
 	consensus.RegisterConsensusServer(m.bootstrapServer, &consensus.Server{})
+
+	m.destroySocket, err = atlas.ServeSocket()
+	if err != nil {
+		return
+	}
 
 	atlas.Logger.Info("🌐 Atlas Started")
 

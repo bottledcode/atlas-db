@@ -1,8 +1,9 @@
 create table tables
 (
-    id         integer not null primary key autoincrement,
-    table_name text    not null,
-    mode       text    not null default 'global'
+    id            integer not null primary key autoincrement,
+    table_name    text    not null,
+    is_region_replicated integer not null,
+    is_global_replicated integer not null
 );
 create table regions
 (
@@ -32,10 +33,13 @@ create table table_nodes
 );
 create table table_migrations
 (
-    id integer not null primary key autoincrement,
-    table_id integer not null
-        constraint table_migrations_tables_id_fk references tables,
-    command text,
-    patch blob,
-    snapshot blob
+    ballot     integer not null,
+    table_id   integer not null
+        constraint table_migrations_tables_id_fk
+            references tables,
+    migrations BLOB    not null,
+    constraint table_migrations_pk
+        primary key (ballot, table_id)
 );
+create index table_migrations_table_id_index
+    on table_migrations (table_id);

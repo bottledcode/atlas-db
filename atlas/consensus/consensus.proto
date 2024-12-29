@@ -7,6 +7,27 @@ option go_package = "/consensus";
 service Consensus {
   rpc ProposeTopologyChange(ProposeTopologyChangeRequest) returns (PromiseTopologyChange) {}
   rpc AcceptTopologyChange(AcceptTopologyChangeRequest) returns (AcceptedTopologyChange) {}
+  rpc StealTableOwnership(StealTableOwnershipRequest) returns (StealTableOwnershipResponse) {}
+  rpc WriteMigration(WriteMigrationRequest) returns (WriteMigrationResponse) {}
+}
+
+message WriteMigrationRequest {
+  int64 tableId = 1;
+  int64 migrationId = 2;
+  repeated bytes migration = 3;
+}
+
+message WriteMigrationResponse {
+  bool success = 1;
+}
+
+message StealTableOwnershipRequest {
+  int64 tableId = 1;
+}
+
+message StealTableOwnershipResponse {
+  bool success = 1;
+  Node owner = 2;
 }
 
 message Node {

@@ -16,17 +16,31 @@ func GetCurrentSession(ctx context.Context) *sqlite.Session {
 }
 
 // - An error if session creation or attachment fails
-func InitializeSession(ctx context.Context, conn *sqlite.Conn) (context.Context, error) {
+func InitializeSession(ctx context.Context, conn *sqlite.Conn, key string) (context.Context, error) {
 	var err error
 	session, err := conn.CreateSession("")
 	if err != nil {
 		return ctx, err
 	}
-	err = session.Attach("")
+
+	m, err := MigrationsPool.Take(ctx)
 	if err != nil {
 		return ctx, err
 	}
-	return context.WithValue(ctx, "atlas-session", session), nil
+	defer MigrationsPool.Put(m)
+
+	results, err := ExecuteSQL(ctx, "select table_name from tables where is_global_replicated or is_region_replicated", m, false)
+	if err != nil {
+		return ctx, err
+	}
+	for _, row := range results.Rows {
+		tableName := row.GetColumn("table_name").GetString()
+		if err = session.Attach(tableName); err != nil {
+			return ctx, err
+		}
+	}
+
+	return context.WithValue(ctx, key+"-session", session), nil
 }
 
 type ValueColumn interface {

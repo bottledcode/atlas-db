@@ -2,6 +2,7 @@ package atlas
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -123,21 +124,21 @@ func (c *commandString) replaceCommand(original, new string) *commandString {
 
 var emptyCommandString *commandString = &commandString{}
 
-// maybeReplicateCommand is a function that will replicate a command to all other nodes in the cluster
-// rawCommand: should be the raw command -- not an atlas command
-func maybeReplicateCommand(rawCommand string) {
-	normalized := strings.ToUpper(rawCommand)
-	parts := strings.Fields(normalized)
-	normalized = strings.Join(parts, " ")
+type queryMode int
 
-	// todo: implement this
-}
+const (
+	normalQueryMode queryMode = iota
+	localQueryMode
+)
 
-// configureReplication parses a command and returns commands to be replicated and whether to replicate it.
-// The raw
-func configureReplication(command string) (rawCommand []string, replicate bool) {
-	// todo: implement this
-	return
+func (qm *queryMode) String() string {
+	switch *qm {
+	case normalQueryMode:
+		return "normal"
+	case localQueryMode:
+		return "local"
+	}
+	return "unknown"
 }
 
 func handleConnection(conn net.Conn) {
@@ -150,6 +151,8 @@ func handleConnection(conn net.Conn) {
 	var sql *sqlite.Conn
 	ctx := context.Background()
 	hasFatalled := false
+
+	qm := normalQueryMode
 
 	var writeMessage func(msg string)
 
@@ -204,7 +207,7 @@ func handleConnection(conn net.Conn) {
 				return ctx
 			}
 
-			ctx, err = InitializeSession(ctx, sql)
+			ctx, err = InitializeSession(ctx, sql, "atlas")
 			if err != nil {
 				Logger.Error("Error initializing session", zap.Error(err))
 				writeError(Fatal, err)
@@ -237,8 +240,32 @@ func handleConnection(conn net.Conn) {
 		}
 	}
 
+	syntheticQuery := func(kv map[string]string) {
+		rowNum := 0
+
+		writeMessage("META COLUMN_COUNT 2")
+		writeMessage("META COLUMN_NAME 0 key")
+		writeMessage("META COLUMN_NAME 1 value")
+
+		for key, value := range kv {
+			rowNum += 1
+			writeMessage("ROW " + strconv.Itoa(rowNum) + " TEXT " + key)
+			writeMessage("ROW " + strconv.Itoa(rowNum) + " TEXT " + value)
+		}
+
+		writeMessage("META LAST_INSERT_ID 0")
+		writeMessage("META ROWS_AFFECTED " + strconv.Itoa(rowNum))
+	}
+
 	executeQuery := func(stmt *sqlite.Stmt) {
 		rowNum := 0
+
+		// write out the column names
+		writeMessage("META COLUMN_COUNT" + strconv.Itoa(stmt.ColumnCount()))
+		for i := 0; i < stmt.ColumnCount(); i++ {
+			writeMessage("META COLUMN_NAME " + strconv.Itoa(i) + stmt.ColumnName(i))
+		}
+
 		for {
 			hasRow, err := stmt.Step()
 			if err != nil {
@@ -265,7 +292,17 @@ func handleConnection(conn net.Conn) {
 				}
 			}
 		}
+		writeMessage("META LAST_INSERT_ID" + strconv.FormatInt(sql.LastInsertRowID(), 10))
+		writeMessage("META ROWS_AFFECTED" + strconv.Itoa(sql.Changes()))
+
+		err := stmt.ClearBindings()
+		if err != nil {
+			writeError(Warning, err)
+		}
 	}
+
+	var migrations [][]byte
+	requiresMigration := false
 
 	stmts := make(map[string]*sqlite.Stmt)
 	defer func() {
@@ -302,6 +339,31 @@ func handleConnection(conn net.Conn) {
 			}
 			id := command.selectNormalizedCommand(1)
 			sqlCommand := command.removeCommand(2)
+
+			if nonAllowedQuery(sqlCommand) {
+				writeError(Warning, errors.New("query not allowed"))
+				continue
+			}
+
+			if !isQueryReadOnly(sqlCommand) {
+				// ensure we are running in normal mode
+				if qm == localQueryMode {
+					writeError(Warning, errors.New("write query is not allowed in local query mode"))
+					continue
+				}
+
+				// determine if this is a schema changing migration
+				if isQueryChangeSchema(sqlCommand) {
+					migrations = append(migrations, []byte(sqlCommand.raw))
+					err := maybeWatchTable(ctx, sqlCommand)
+					if err != nil {
+						writeError(Warning, err)
+						continue
+					}
+				}
+				requiresMigration = true
+			}
+
 			stmt, err := sql.Prepare(sqlCommand.raw)
 			if err != nil {
 				writeError(Warning, err)
@@ -337,6 +399,31 @@ func handleConnection(conn net.Conn) {
 				continue
 			}
 			sqlCommand := command.removeCommand(1)
+
+			if nonAllowedQuery(sqlCommand) {
+				writeError(Warning, errors.New("query not allowed"))
+				continue
+			}
+
+			if !isQueryReadOnly(sqlCommand) {
+				// ensure we are running in normal mode
+				if qm == localQueryMode {
+					writeError(Warning, errors.New("write query is not allowed in local query mode"))
+					continue
+				}
+
+				// determine if this is a schema changing migration
+				if isQueryChangeSchema(sqlCommand) {
+					migrations = append(migrations, []byte(sqlCommand.raw))
+					err := maybeWatchTable(ctx, sqlCommand)
+					if err != nil {
+						writeError(Warning, err)
+						continue
+					}
+				}
+				requiresMigration = true
+			}
+
 			stmt, err := sql.Prepare(sqlCommand.raw)
 			if err != nil {
 				writeError(Warning, err)
@@ -495,6 +582,25 @@ func handleConnection(conn net.Conn) {
 				writeError(Warning, err)
 				continue
 			}
+
+			if requiresMigration {
+				session := GetCurrentSession(ctx)
+				if session == nil {
+					writeError(Fatal, errors.New("no session"))
+					hasFatalled = true
+					break
+				}
+				var sessionData []byte
+				sessionWriter := bytes.NewBuffer(sessionData)
+				err := session.WritePatchset(sessionWriter)
+				if err != nil {
+					writeError(Fatal, err)
+					hasFatalled = true
+					break
+				}
+				migrations = append(migrations, sessionData)
+			}
+
 			_, err := ExecuteSQL(ctx, "COMMIT", sql, false)
 			if err != nil {
 				writeError(Fatal, err)
@@ -502,8 +608,6 @@ func handleConnection(conn net.Conn) {
 				break
 			}
 			inTransaction = false
-
-			// todo: capture session changes
 
 			writeOk(OK)
 		case "ROLLBACK":
@@ -566,6 +670,40 @@ func handleConnection(conn net.Conn) {
 				writeError(Fatal, err)
 				hasFatalled = true
 				break
+			}
+			writeOk(OK)
+		case "PRAGMA":
+			if command.selectNormalizedCommand(1) == "ATLAS_QUERY_MODE" {
+				if err := command.validate(3); err != nil {
+					syntheticQuery(map[string]string{
+						"atlas_query_mode": qm.String(),
+					})
+				}
+				switch command.selectNormalizedCommand(2) {
+				case "NORMAL":
+					qm = normalQueryMode
+				case "LOCAL":
+					qm = localQueryMode
+				}
+				writeOk(OK)
+				continue
+			}
+			// todo: prevent certain pragma commands from executing; once we know what they are
+
+			ctx = maybeStartTransaction(ctx, emptyCommandString)
+			if hasFatalled {
+				break
+			}
+			stmt, err := sql.Prepare(command.raw)
+			if err != nil {
+				writeError(Warning, err)
+				continue
+			}
+			executeQuery(stmt)
+			err = stmt.Finalize()
+			if err != nil {
+				writeError(Warning, err)
+				continue
 			}
 			writeOk(OK)
 		default:

@@ -193,6 +193,11 @@ func handleConnection(conn net.Conn) {
 	}
 
 	stmts := make(map[string]*sqlite.Stmt)
+	defer func() {
+		for _, stmt := range stmts {
+			_ = stmt.Finalize()
+		}
+	}()
 
 	for {
 		command := consumeLine()

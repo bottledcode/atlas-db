@@ -231,7 +231,11 @@ func handleConnection(conn net.Conn) {
 					continue
 				}
 				executeQuery(stmt)
-				stmt.Finalize()
+				err = stmt.Finalize()
+				if err != nil {
+					writeError(Warning, err)
+					continue
+				}
 				writeMessage("OK")
 			}
 		case "FINALIZE":
@@ -242,7 +246,11 @@ func handleConnection(conn net.Conn) {
 					writeError(Warning, errors.New("No statement with id "+id))
 					continue
 				}
-				stmt.Finalize()
+				err := stmt.Finalize()
+				if err != nil {
+					writeError(Warning, err)
+					continue
+				}
 				delete(stmts, id)
 				writeMessage("OK")
 			}

@@ -2,6 +2,7 @@ package atlas
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -300,6 +301,9 @@ func handleConnection(conn net.Conn) {
 		}
 	}
 
+	var migrations [][]byte
+	requiresMigration := false
+
 	stmts := make(map[string]*sqlite.Stmt)
 	defer func() {
 		for _, stmt := range stmts {
@@ -335,6 +339,26 @@ func handleConnection(conn net.Conn) {
 			}
 			id := command.selectNormalizedCommand(1)
 			sqlCommand := command.removeCommand(2)
+
+			if nonAllowedQuery(sqlCommand) {
+				writeError(Warning, errors.New("query not allowed"))
+				continue
+			}
+
+			if !isQueryReadOnly(sqlCommand) {
+				// ensure we are running in normal mode
+				if qm == localQueryMode {
+					writeError(Warning, errors.New("write query is not allowed in local query mode"))
+					continue
+				}
+
+				// determine if this is a schema changing migration
+				if isQueryChangeSchema(sqlCommand) {
+					migrations = append(migrations, []byte(sqlCommand.raw))
+				}
+				requiresMigration = true
+			}
+
 			stmt, err := sql.Prepare(sqlCommand.raw)
 			if err != nil {
 				writeError(Warning, err)
@@ -370,6 +394,26 @@ func handleConnection(conn net.Conn) {
 				continue
 			}
 			sqlCommand := command.removeCommand(1)
+
+			if nonAllowedQuery(sqlCommand) {
+				writeError(Warning, errors.New("query not allowed"))
+				continue
+			}
+
+			if !isQueryReadOnly(sqlCommand) {
+				// ensure we are running in normal mode
+				if qm == localQueryMode {
+					writeError(Warning, errors.New("write query is not allowed in local query mode"))
+					continue
+				}
+
+				// determine if this is a schema changing migration
+				if isQueryChangeSchema(sqlCommand) {
+					migrations = append(migrations, []byte(sqlCommand.raw))
+				}
+				requiresMigration = true
+			}
+
 			stmt, err := sql.Prepare(sqlCommand.raw)
 			if err != nil {
 				writeError(Warning, err)
@@ -528,6 +572,26 @@ func handleConnection(conn net.Conn) {
 				writeError(Warning, err)
 				continue
 			}
+
+			if requiresMigration {
+				session := GetCurrentSession(ctx)
+				if session == nil {
+					writeError(Fatal, errors.New("no session"))
+					hasFatalled = true
+					break
+				}
+				var sessionData []byte
+				sessionWriter := bytes.NewBuffer(sessionData)
+				err := session.WritePatchset(sessionWriter)
+				if err != nil {
+					writeError(Fatal, err)
+					hasFatalled = true
+					break
+				}
+				migrations = append(migrations, sessionData)
+
+			}
+
 			_, err := ExecuteSQL(ctx, "COMMIT", sql, false)
 			if err != nil {
 				writeError(Fatal, err)
@@ -535,8 +599,6 @@ func handleConnection(conn net.Conn) {
 				break
 			}
 			inTransaction = false
-
-			// todo: capture session changes
 
 			writeOk(OK)
 		case "ROLLBACK":

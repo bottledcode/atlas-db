@@ -19,6 +19,8 @@ const _ = grpc.SupportPackageIsVersion7
 type ConsensusClient interface {
 	ProposeTopologyChange(ctx context.Context, in *ProposeTopologyChangeRequest, opts ...grpc.CallOption) (*PromiseTopologyChange, error)
 	AcceptTopologyChange(ctx context.Context, in *AcceptTopologyChangeRequest, opts ...grpc.CallOption) (*AcceptedTopologyChange, error)
+	StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipResponse, error)
+	WriteMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*WriteMigrationResponse, error)
 }
 
 type consensusClient struct {
@@ -47,12 +49,32 @@ func (c *consensusClient) AcceptTopologyChange(ctx context.Context, in *AcceptTo
 	return out, nil
 }
 
+func (c *consensusClient) StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipResponse, error) {
+	out := new(StealTableOwnershipResponse)
+	err := c.cc.Invoke(ctx, "/atlas.consensus.Consensus/StealTableOwnership", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *consensusClient) WriteMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*WriteMigrationResponse, error) {
+	out := new(WriteMigrationResponse)
+	err := c.cc.Invoke(ctx, "/atlas.consensus.Consensus/WriteMigration", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ConsensusServer is the server API for Consensus service.
 // All implementations must embed UnimplementedConsensusServer
 // for forward compatibility
 type ConsensusServer interface {
 	ProposeTopologyChange(context.Context, *ProposeTopologyChangeRequest) (*PromiseTopologyChange, error)
 	AcceptTopologyChange(context.Context, *AcceptTopologyChangeRequest) (*AcceptedTopologyChange, error)
+	StealTableOwnership(context.Context, *StealTableOwnershipRequest) (*StealTableOwnershipResponse, error)
+	WriteMigration(context.Context, *WriteMigrationRequest) (*WriteMigrationResponse, error)
 	mustEmbedUnimplementedConsensusServer()
 }
 
@@ -65,6 +87,12 @@ func (UnimplementedConsensusServer) ProposeTopologyChange(context.Context, *Prop
 }
 func (UnimplementedConsensusServer) AcceptTopologyChange(context.Context, *AcceptTopologyChangeRequest) (*AcceptedTopologyChange, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AcceptTopologyChange not implemented")
+}
+func (UnimplementedConsensusServer) StealTableOwnership(context.Context, *StealTableOwnershipRequest) (*StealTableOwnershipResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method StealTableOwnership not implemented")
+}
+func (UnimplementedConsensusServer) WriteMigration(context.Context, *WriteMigrationRequest) (*WriteMigrationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method WriteMigration not implemented")
 }
 func (UnimplementedConsensusServer) mustEmbedUnimplementedConsensusServer() {}
 
@@ -115,6 +143,42 @@ func _Consensus_AcceptTopologyChange_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Consensus_StealTableOwnership_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StealTableOwnershipRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ConsensusServer).StealTableOwnership(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/atlas.consensus.Consensus/StealTableOwnership",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ConsensusServer).StealTableOwnership(ctx, req.(*StealTableOwnershipRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Consensus_WriteMigration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WriteMigrationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ConsensusServer).WriteMigration(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/atlas.consensus.Consensus/WriteMigration",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ConsensusServer).WriteMigration(ctx, req.(*WriteMigrationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var _Consensus_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "atlas.consensus.Consensus",
 	HandlerType: (*ConsensusServer)(nil),
@@ -126,6 +190,14 @@ var _Consensus_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AcceptTopologyChange",
 			Handler:    _Consensus_AcceptTopologyChange_Handler,
+		},
+		{
+			MethodName: "StealTableOwnership",
+			Handler:    _Consensus_StealTableOwnership_Handler,
+		},
+		{
+			MethodName: "WriteMigration",
+			Handler:    _Consensus_WriteMigration_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

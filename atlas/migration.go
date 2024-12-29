@@ -27,3 +27,39 @@ func isQueryReadOnly(query *commandString) bool {
 
 	return true
 }
+
+func nonAllowedQuery(query *commandString) bool {
+	switch query.selectCommand(0) {
+	case "BEGIN":
+		return true
+	case "COMMIT":
+		return true
+	case "ROLLBACK":
+		return true
+	case "SAVEPOINT":
+		return true
+	case "RELEASE":
+		return true
+	case "DETACH":
+		return true
+	case "ATTACH":
+		return true
+	case "PRAGMA":
+		return true
+	}
+
+	return false
+}
+
+func isQueryChangeSchema(query *commandString) bool {
+	switch query.selectCommand(0) {
+	case "ALTER":
+		return true
+	case "CREATE":
+		return true
+	case "DROP":
+		return true
+	}
+
+	return false
+}

@@ -58,16 +58,34 @@ type commandString struct {
 	normalized string
 	parts      []string
 	raw        string
+	rawParts   []string
 }
 
 func commandFromString(command string) *commandString {
 	normalized := strings.ToUpper(command)
 	parts := strings.Fields(normalized)
 	normalized = strings.Join(parts, " ")
+	rawParts := strings.Fields(command)
+
+	// count whitespace at the end of string
+	whitespace := 0
+	for i := len(command) - 1; i >= 0; i-- {
+		if command[i] == ' ' {
+			whitespace++
+		} else {
+			break
+		}
+	}
+	if whitespace >= 2 {
+		parts = append(parts, strings.Repeat(" ", whitespace-1))
+		rawParts = append(rawParts, strings.Repeat(" ", whitespace-1))
+	}
+
 	return &commandString{
 		normalized: normalized,
 		parts:      parts,
 		raw:        command,
+		rawParts:   rawParts,
 	}
 }
 
@@ -91,7 +109,7 @@ func (c *commandString) removeCommand(start int) *commandString {
 }
 
 func (c *commandString) selectCommand(k int) string {
-	return selectCommand(c.raw, k)
+	return c.rawParts[k]
 }
 
 func (c *commandString) selectNormalizedCommand(k int) string {

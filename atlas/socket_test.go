@@ -1,52 +1,39 @@
 package atlas
 
-import "testing"
+import (
+	"github.com/stretchr/testify/assert"
+	"testing"
+)
 
 func TestCommandFromString(t *testing.T) {
 	command := "SELECT * FROM table"
 	cs := commandFromString(command)
 
-	if cs.raw != command {
-		t.Errorf("expected raw command to be %s, got %s", command, cs.raw)
-	}
+	assert.Equal(t, command, cs.raw)
 
 	expectedNormalized := "SELECT * FROM TABLE"
-	if cs.normalized != expectedNormalized {
-		t.Errorf("expected normalized command to be %s, got %s", expectedNormalized, cs.normalized)
-	}
+	assert.Equal(t, expectedNormalized, cs.normalized)
 
 	expectedParts := []string{"SELECT", "*", "FROM", "TABLE"}
-	for i, part := range expectedParts {
-		if cs.parts[i] != part {
-			t.Errorf("expected part %d to be %s, got %s", i, part, cs.parts[i])
-		}
-	}
+	assert.Equal(t, expectedParts, cs.parts)
 }
 
 func TestValidate(t *testing.T) {
 	cs := commandFromString("SELECT * FROM table")
 	err := cs.validate(4)
-	if err != nil {
-		t.Errorf("expected no error, got %s", err)
-	}
+	assert.NoError(t, err)
 
 	err = cs.validate(5)
-	if err == nil {
-		t.Errorf("expected error, got nil")
-	}
+	assert.Errorf(t, err, "expected error, got nil")
 }
 
 func TestValidateExact(t *testing.T) {
 	cs := commandFromString("SELECT * FROM table")
 	err := cs.validateExact(4)
-	if err != nil {
-		t.Errorf("expected no error, got %s", err)
-	}
+	assert.NoError(t, err)
 
 	err = cs.validateExact(3)
-	if err == nil {
-		t.Errorf("expected error, got nil")
-	}
+	assert.Errorf(t, err, "expected error, got nil")
 }
 
 func TestRemoveCommand(t *testing.T) {
@@ -54,9 +41,15 @@ func TestRemoveCommand(t *testing.T) {
 	newCs := cs.removeCommand(2)
 
 	expected := "FROM table"
-	if newCs.raw != expected {
-		t.Errorf("expected raw command to be %s, got %s", expected, newCs.raw)
-	}
+	assert.Equal(t, expected, newCs.raw)
+}
+
+func TestRemoveButKeepSpace(t *testing.T) {
+	cs := commandFromString("bind cu :name text  ")
+	newCs := cs.removeCommand(4)
+
+	expected := " "
+	assert.Equal(t, expected, newCs.raw)
 }
 
 func TestSelectCommand(t *testing.T) {
@@ -64,9 +57,15 @@ func TestSelectCommand(t *testing.T) {
 	part := cs.selectCommand(2)
 
 	expected := "FROM"
-	if part != expected {
-		t.Errorf("expected part to be %s, got %s", expected, part)
-	}
+	assert.Equal(t, expected, part)
+}
+
+func TestSelectSpace(t *testing.T) {
+	cs := commandFromString("bind cu :name text  ")
+	part := cs.selectCommand(4)
+
+	expected := " "
+	assert.Equal(t, expected, part)
 }
 
 func TestSelectNormalizedCommand(t *testing.T) {
@@ -74,9 +73,7 @@ func TestSelectNormalizedCommand(t *testing.T) {
 	part := cs.selectNormalizedCommand(2)
 
 	expected := "FROM"
-	if part != expected {
-		t.Errorf("expected part to be %s, got %s", expected, part)
-	}
+	assert.Equal(t, expected, part)
 }
 
 func TestReplaceCommand(t *testing.T) {
@@ -84,7 +81,5 @@ func TestReplaceCommand(t *testing.T) {
 	newCs := cs.replaceCommand("SELECT LOCAL", "SELECT")
 
 	expected := "SELECT * FROM table"
-	if newCs.raw != expected {
-		t.Errorf("expected raw command to be %s, got %s", expected, newCs.raw)
-	}
+	assert.Equal(t, expected, newCs.raw)
 }

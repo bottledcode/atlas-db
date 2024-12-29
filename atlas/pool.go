@@ -80,16 +80,25 @@ func replaceCommand(query, command, newPrefix string) string {
 
 func removeCommand(query string, num int) string {
 	fields := strings.Fields(query)
+	// count whitespace at the end of string
+	whitespace := 0
+	for i := len(query) - 1; i >= 0; i-- {
+		if query[i] == ' ' {
+			whitespace++
+		} else {
+			break
+		}
+	}
+	if whitespace >= 2 {
+		fields = append(fields, strings.Repeat(" ", whitespace-1))
+	}
+
 	for i := 0; i < num; i++ {
 		endpos := strings.Index(query, fields[i]) + len(fields[i])
 		query = query[endpos:]
 	}
 
-	return strings.TrimLeft(query, " ")
-}
-
-func selectCommand(query string, num int) string {
-	return strings.Fields(query)[num]
+	return query[1:]
 }
 
 // of migration-related operations.

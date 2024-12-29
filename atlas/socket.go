@@ -1,6 +1,7 @@
 package atlas
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -57,7 +58,7 @@ func remaining(command string, parts []string, from int) string {
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
 
-	buf := make([]byte, 1024)
+	reader := bufio.NewReader(conn)
 	var commandBuilder strings.Builder
 	inTransaction := false
 	var sql *sqlite.Conn
@@ -128,13 +129,16 @@ func handleConnection(conn net.Conn) {
 
 	consumeLine := func() string {
 		for {
-			n, err := conn.Read(buf)
+			n, err := reader.ReadString('\n')
 			if err != nil {
 				Logger.Error("Error reading from connection", zap.Error(err))
 				hasFatalled = true
 				return ""
 			}
-			commandBuilder.Write(buf[:n])
+			if !strings.HasSuffix(n, EOL) {
+				commandBuilder.WriteString(n)
+				continue
+			}
 
 			// consume a command
 			if command, next, found := strings.Cut(commandBuilder.String(), "\r\n"); found {

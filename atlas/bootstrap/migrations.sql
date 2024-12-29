@@ -31,15 +31,15 @@ create table table_nodes
         constraint table_nodes_nodes_id_fk
             references nodes
 );
-create table table_name
+create table table_migrations
 (
     ballot     integer not null,
     table_id   integer not null
-        constraint table_name_tables_id_fk
+        constraint table_migrations_tables_id_fk
             references tables,
     migrations BLOB    not null,
-    constraint table_name_pk
+    constraint table_migrations_pk
         primary key (ballot, table_id)
 );
-create index table_name_table_id_index
-    on table_name (table_id);
+create index table_migrations_table_id_index
+    on table_migrations (table_id);

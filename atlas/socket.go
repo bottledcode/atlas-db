@@ -59,6 +59,7 @@ func handleConnection(conn net.Conn) {
 	defer conn.Close()
 
 	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
 	var commandBuilder strings.Builder
 	inTransaction := false
 	var sql *sqlite.Conn
@@ -68,8 +69,9 @@ func handleConnection(conn net.Conn) {
 	var writeMessage func(msg string)
 
 	writeMessage = func(msg string) {
-		n, err := conn.Write([]byte(msg + EOL))
+		n, err := writer.WriteString(msg + EOL)
 		if err != nil {
+			// todo: handle full buffer?
 			Logger.Error("Error writing to connection", zap.Error(err))
 		}
 		if n < len(msg) {
@@ -79,10 +81,12 @@ func handleConnection(conn net.Conn) {
 
 	writeError := func(code ErrorCode, err error) {
 		writeMessage("ERROR " + string(code) + " " + err.Error())
+		_ = writer.Flush()
 	}
 
 	writeOk := func(code ErrorCode) {
 		writeMessage(string(code))
+		_ = writer.Flush()
 	}
 
 	connect := func() {

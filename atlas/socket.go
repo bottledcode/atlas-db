@@ -565,6 +565,23 @@ func handleConnection(conn net.Conn) {
 				break
 			}
 			writeOk(OK)
+		case "PRAGMA":
+			ctx = maybeStartTransaction(ctx, emptyCommandString)
+			if hasFatalled {
+				break
+			}
+			stmt, err := sql.Prepare(command.raw)
+			if err != nil {
+				writeError(Warning, err)
+				continue
+			}
+			executeQuery(stmt)
+			err = stmt.Finalize()
+			if err != nil {
+				writeError(Warning, err)
+				continue
+			}
+			writeOk(OK)
 		default:
 			writeError(Warning, errors.New("Unknown command "+command.selectNormalizedCommand(0)))
 		}

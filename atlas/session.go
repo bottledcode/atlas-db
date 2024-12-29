@@ -22,8 +22,11 @@ func InitializeSession(ctx context.Context, conn *sqlite.Conn) (context.Context,
 	if err != nil {
 		return ctx, err
 	}
-	sess := session.Attach("")
-	return context.WithValue(ctx, "atlas-session", sess), nil
+	err = session.Attach("")
+	if err != nil {
+		return ctx, err
+	}
+	return context.WithValue(ctx, "atlas-session", session), nil
 }
 
 type ValueColumn interface {

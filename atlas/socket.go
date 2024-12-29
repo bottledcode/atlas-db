@@ -48,18 +48,11 @@ const EOL = "\r\n"
 type ErrorCode string
 
 const (
-	OK      ErrorCode = "0"
-	Info              = "1"
-	Warning           = "2"
-	Fatal             = "3"
+	OK      ErrorCode = "OK"
+	Info              = "INFO"
+	Warning           = "WARN"
+	Fatal             = "ERROR"
 )
-
-func remaining(command string, parts []string, from int) string {
-	for i := 0; i < from; i++ {
-		command = strings.Replace(command, parts[i]+" ", "", 1)
-	}
-	return command
-}
 
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
@@ -109,7 +102,7 @@ func handleConnection(conn net.Conn) {
 		}
 	}
 
-	maybeStartTransaction := func(command string) {
+	maybeStartTransaction := func(ctx context.Context, command string) context.Context {
 		if !inTransaction {
 			connect()
 
@@ -122,7 +115,7 @@ func handleConnection(conn net.Conn) {
 				Logger.Error("Error starting transaction", zap.Error(err))
 				writeError(Fatal, err)
 				hasFatalled = true
-				return
+				return ctx
 			}
 
 			ctx, err = InitializeSession(ctx, sql)
@@ -130,11 +123,12 @@ func handleConnection(conn net.Conn) {
 				Logger.Error("Error initializing session", zap.Error(err))
 				writeError(Fatal, err)
 				hasFatalled = true
-				return
+				return ctx
 			}
 
 			inTransaction = true
 		}
+		return ctx
 	}
 
 	consumeLine := func() string {
@@ -145,10 +139,7 @@ func handleConnection(conn net.Conn) {
 				hasFatalled = true
 				return ""
 			}
-			if !strings.HasSuffix(n, EOL) {
-				commandBuilder.WriteString(n)
-				continue
-			}
+			commandBuilder.WriteString(n)
 
 			// consume a command
 			if command, next, found := strings.Cut(commandBuilder.String(), "\r\n"); found {
@@ -161,7 +152,7 @@ func handleConnection(conn net.Conn) {
 	}
 
 	validate := func(command string, parts []string, expected int) bool {
-		if len(parts) != expected {
+		if len(parts) < expected {
 			writeError(Warning, errors.New(command+" expects "+strconv.Itoa(expected)+" arguments"))
 			return false
 		}
@@ -205,19 +196,34 @@ func handleConnection(conn net.Conn) {
 		}
 	}()
 
+	defer func() {
+		sess := GetCurrentSession(ctx)
+		if sess != nil {
+			sess.Delete()
+		}
+	}()
+
 	for {
 		command := consumeLine()
 		normalized := strings.ToUpper(command)
 		parts := strings.Fields(normalized)
+		normalized = strings.Join(parts, " ")
+		if len(parts) == 0 {
+			if hasFatalled {
+				break
+			}
+			continue
+		}
+
 		switch parts[0] {
 		case "PREPARE":
-			maybeStartTransaction("")
+			ctx = maybeStartTransaction(ctx, "")
 			if hasFatalled {
 				break
 			}
 			if validate(command, parts, 3) {
 				id := parts[1]
-				sqlStr := remaining(command, parts, 2)
+				sqlStr := removeCommand(command, 2)
 				stmt, err := sql.Prepare(sqlStr)
 				if err != nil {
 					writeError(Warning, err)
@@ -227,7 +233,7 @@ func handleConnection(conn net.Conn) {
 				writeOk(OK)
 			}
 		case "EXECUTE":
-			maybeStartTransaction("")
+			ctx = maybeStartTransaction(ctx, "")
 			if hasFatalled {
 				break
 			}
@@ -242,12 +248,12 @@ func handleConnection(conn net.Conn) {
 				writeOk(OK)
 			}
 		case "QUERY":
-			maybeStartTransaction("")
+			ctx = maybeStartTransaction(ctx, "")
 			if hasFatalled {
 				break
 			}
 			if validate(command, parts, 2) {
-				sqlStr := remaining(command, parts, 1)
+				sqlStr := removeCommand(command, 1)
 				stmt, err := sql.Prepare(sqlStr)
 				if err != nil {
 					writeError(Warning, err)
@@ -285,22 +291,24 @@ func handleConnection(conn net.Conn) {
 					writeError(Warning, errors.New("No statement with id "+id))
 					continue
 				}
-				param := parts[2]
+				param := selectCommand(command, 2)
 				// check if numeric
 				if _, err := strconv.Atoi(param); err == nil {
 					i, _ := strconv.Atoi(param)
 					switch parts[3] {
 					case "TEXT":
-						stmt.BindText(i, remaining(command, parts, 4))
+						stmt.BindText(i, removeCommand(command, 4))
+					case "INT":
+						fallthrough
 					case "INTEGER":
-						v, err := strconv.ParseInt(remaining(command, parts, 4), 10, 64)
+						v, err := strconv.ParseInt(removeCommand(command, 4), 10, 64)
 						if err != nil {
 							writeError(Warning, err)
 							continue
 						}
 						stmt.BindInt64(i, v)
 					case "FLOAT":
-						v, err := strconv.ParseFloat(remaining(command, parts, 4), 64)
+						v, err := strconv.ParseFloat(removeCommand(command, 4), 64)
 						if err != nil {
 							writeError(Warning, err)
 							continue
@@ -333,16 +341,18 @@ func handleConnection(conn net.Conn) {
 				} else {
 					switch parts[3] {
 					case "TEXT":
-						stmt.SetText(param, remaining(command, parts, 4))
+						stmt.SetText(param, removeCommand(command, 4))
+					case "INT":
+						fallthrough
 					case "INTEGER":
-						v, err := strconv.ParseInt(remaining(command, parts, 4), 10, 64)
+						v, err := strconv.ParseInt(removeCommand(command, 4), 10, 64)
 						if err != nil {
 							writeError(Warning, err)
 							continue
 						}
 						stmt.SetInt64(param, v)
 					case "FLOAT":
-						v, err := strconv.ParseFloat(remaining(command, parts, 4), 64)
+						v, err := strconv.ParseFloat(removeCommand(command, 4), 64)
 						if err != nil {
 							writeError(Warning, err)
 							continue
@@ -384,10 +394,11 @@ func handleConnection(conn net.Conn) {
 				writeError(Warning, errors.New("BEGIN does not take arguments"))
 				continue
 			}
-			maybeStartTransaction(command)
+			ctx = maybeStartTransaction(ctx, command)
 			if hasFatalled {
 				break
 			}
+			writeOk(OK)
 		case "COMMIT":
 			if !inTransaction {
 				writeError(Fatal, errors.New("no transaction to commit"))
@@ -438,7 +449,7 @@ func handleConnection(conn net.Conn) {
 				writeOk(OK)
 			}
 		case "SAVEPOINT":
-			maybeStartTransaction("")
+			ctx = maybeStartTransaction(ctx, "")
 			if validate(command, parts, 2) {
 				name := parts[1]
 				_, err := ExecuteSQL(ctx, "SAVEPOINT "+name, sql, false)
@@ -460,6 +471,8 @@ func handleConnection(conn net.Conn) {
 				}
 				writeOk(OK)
 			}
+		default:
+			writeError(Warning, errors.New("Unknown command "+parts[0]))
 		}
 
 		if hasFatalled {

@@ -123,6 +123,23 @@ func (c *commandString) replaceCommand(original, new string) *commandString {
 
 var emptyCommandString *commandString = &commandString{}
 
+type queryMode int
+
+const (
+	normalQueryMode queryMode = iota
+	localQueryMode
+)
+
+func (qm *queryMode) String() string {
+	switch *qm {
+	case normalQueryMode:
+		return "normal"
+	case localQueryMode:
+		return "local"
+	}
+	return "unknown"
+}
+
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
 
@@ -133,6 +150,8 @@ func handleConnection(conn net.Conn) {
 	var sql *sqlite.Conn
 	ctx := context.Background()
 	hasFatalled := false
+
+	qm := normalQueryMode
 
 	var writeMessage func(msg string)
 
@@ -218,6 +237,23 @@ func handleConnection(conn net.Conn) {
 				return command
 			}
 		}
+	}
+
+	syntheticQuery := func(kv map[string]string) {
+		rowNum := 0
+
+		writeMessage("META COLUMN_COUNT 2")
+		writeMessage("META COLUMN_NAME 0 key")
+		writeMessage("META COLUMN_NAME 1 value")
+
+		for key, value := range kv {
+			rowNum += 1
+			writeMessage("ROW " + strconv.Itoa(rowNum) + " TEXT " + key)
+			writeMessage("ROW " + strconv.Itoa(rowNum) + " TEXT " + value)
+		}
+
+		writeMessage("META LAST_INSERT_ID 0")
+		writeMessage("META ROWS_AFFECTED " + strconv.Itoa(rowNum))
 	}
 
 	executeQuery := func(stmt *sqlite.Stmt) {
@@ -566,6 +602,23 @@ func handleConnection(conn net.Conn) {
 			}
 			writeOk(OK)
 		case "PRAGMA":
+			if command.selectNormalizedCommand(1) == "ATLAS_QUERY_MODE" {
+				if err := command.validate(3); err != nil {
+					syntheticQuery(map[string]string{
+						"atlas_query_mode": qm.String(),
+					})
+				}
+				switch command.selectNormalizedCommand(2) {
+				case "NORMAL":
+					qm = normalQueryMode
+				case "LOCAL":
+					qm = localQueryMode
+				}
+				writeOk(OK)
+				continue
+			}
+			// todo: prevent certain pragma commands from executing; once we know what they are
+
 			ctx = maybeStartTransaction(ctx, emptyCommandString)
 			if hasFatalled {
 				break

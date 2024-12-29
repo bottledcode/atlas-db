@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/bottledcode/atlas-db/atlas"
+	"go.uber.org/zap"
 )
 
 type Server struct {
@@ -280,6 +281,7 @@ func (s *Server) AcceptTopologyChange(ctx context.Context, accept *AcceptTopolog
 
 	switch change := accept.GetChange().(type) {
 	case *AcceptTopologyChangeRequest_Node:
+		atlas.Logger.Info("☄️ A node has joined the cluster", zap.Int64("node_id", change.Node.GetNodeId()))
 		_, err = atlas.ExecuteSQL(ctx, "update nodes set address = :address, port = :port where id = :id", conn, false, atlas.Param{
 			Name:  "address",
 			Value: change.Node.GetNodeAddress(),

@@ -84,6 +84,10 @@ func (v *ValueColumnInt) GetBool() bool {
 	return v.Value != 0
 }
 
+func (v *ValueColumnInt) GetString() string {
+	return fmt.Sprintf("%d", v.Value)
+}
+
 type ValueColumnFloat struct {
 	UnknownValueColumn
 	Value float64

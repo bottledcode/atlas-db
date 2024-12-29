@@ -119,6 +119,7 @@ func maybeReplicateCommand(rawCommand string) {
 // The raw
 func configureReplication(command string) (rawCommand []string, replicate bool) {
 	// todo: implement this
+	return
 }
 
 func handleConnection(conn net.Conn) {
@@ -216,14 +217,6 @@ func handleConnection(conn net.Conn) {
 				return command
 			}
 		}
-	}
-
-	validate := func(command string, parts []string, expected int) bool {
-		if len(parts) < expected {
-			writeError(Warning, errors.New(command+" expects "+strconv.Itoa(expected)+" arguments"))
-			return false
-		}
-		return true
 	}
 
 	executeQuery := func(stmt *sqlite.Stmt) {
@@ -396,7 +389,7 @@ func handleConnection(conn net.Conn) {
 					size := command.selectCommand(4)
 					v, err := strconv.Atoi(size)
 					if err != nil {
-						writeError(Warning, fmt.Errorf("Invalid size %s", size))
+						writeError(Warning, fmt.Errorf("invalid size %s", size))
 						continue
 					}
 					if v == 0 {
@@ -409,7 +402,7 @@ func handleConnection(conn net.Conn) {
 						continue
 					}
 					if len(blobBytes) != v {
-						writeError(Warning, fmt.Errorf("Expected %d bytes, got %d", v, len(blobBytes)))
+						writeError(Warning, fmt.Errorf("expected %d bytes, got %d", v, len(blobBytes)))
 						continue
 					}
 					stmt.BindBytes(i, blobBytes)
@@ -440,7 +433,7 @@ func handleConnection(conn net.Conn) {
 					size := command.selectNormalizedCommand(4)
 					v, err := strconv.Atoi(size)
 					if err != nil {
-						writeError(Warning, fmt.Errorf("Invalid size %s", size))
+						writeError(Warning, fmt.Errorf("invalid size %s", size))
 						continue
 					}
 					if v == 0 {
@@ -453,7 +446,7 @@ func handleConnection(conn net.Conn) {
 						continue
 					}
 					if len(blobBytes) != v {
-						writeError(Warning, fmt.Errorf("Expected %d bytes, got %d", v, len(blobBytes)))
+						writeError(Warning, fmt.Errorf("expected %d bytes, got %d", v, len(blobBytes)))
 						continue
 					}
 					stmt.SetBytes(param, blobBytes)

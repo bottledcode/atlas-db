@@ -355,6 +355,11 @@ func handleConnection(conn net.Conn) {
 				// determine if this is a schema changing migration
 				if isQueryChangeSchema(sqlCommand) {
 					migrations = append(migrations, []byte(sqlCommand.raw))
+					err := maybeWatchTable(ctx, sqlCommand)
+					if err != nil {
+						writeError(Warning, err)
+						continue
+					}
 				}
 				requiresMigration = true
 			}
@@ -410,6 +415,11 @@ func handleConnection(conn net.Conn) {
 				// determine if this is a schema changing migration
 				if isQueryChangeSchema(sqlCommand) {
 					migrations = append(migrations, []byte(sqlCommand.raw))
+					err := maybeWatchTable(ctx, sqlCommand)
+					if err != nil {
+						writeError(Warning, err)
+						continue
+					}
 				}
 				requiresMigration = true
 			}
@@ -589,7 +599,6 @@ func handleConnection(conn net.Conn) {
 					break
 				}
 				migrations = append(migrations, sessionData)
-
 			}
 
 			_, err := ExecuteSQL(ctx, "COMMIT", sql, false)

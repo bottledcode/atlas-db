@@ -22,10 +22,24 @@ func InitializeSession(ctx context.Context, conn *sqlite.Conn, key string) (cont
 	if err != nil {
 		return ctx, err
 	}
-	err = session.Attach("")
+
+	m, err := MigrationsPool.Take(ctx)
 	if err != nil {
 		return ctx, err
 	}
+	defer MigrationsPool.Put(m)
+
+	results, err := ExecuteSQL(ctx, "select table_name from tables where is_global_replicated or is_region_replicated", m, false)
+	if err != nil {
+		return ctx, err
+	}
+	for _, row := range results.Rows {
+		tableName := row.GetColumn("table_name").GetString()
+		if err = session.Attach(tableName); err != nil {
+			return ctx, err
+		}
+	}
+
 	return context.WithValue(ctx, key+"-session", session), nil
 }
 

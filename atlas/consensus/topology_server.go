@@ -294,6 +294,10 @@ func (s *Server) AcceptTopologyChange(ctx context.Context, accept *AcceptTopolog
 			return nil, err
 		}
 		_, err = atlas.ExecuteSQL(ctx, "COMMIT", conn, false)
+		if err != nil {
+			return nil, err
+		}
+
 		resp.Response = &AcceptedTopologyChange_Node{Node: change.Node}
 	case *AcceptTopologyChangeRequest_Region:
 		_, err = atlas.ExecuteSQL(ctx, "update regions set name = :name where id = :id", conn, false, atlas.Param{

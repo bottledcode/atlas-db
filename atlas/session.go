@@ -6,6 +6,7 @@ import (
 	"go.uber.org/zap"
 	"os"
 	"strings"
+	"time"
 	"zombiezen.com/go/sqlite"
 )
 
@@ -52,6 +53,7 @@ type ValueColumn interface {
 	GetBool() bool
 	GetBlob() []byte
 	IsNull() bool
+	GetTime() time.Time
 }
 
 type UnknownValueColumn struct {
@@ -81,6 +83,10 @@ func (u *UnknownValueColumn) IsNull() bool {
 	return false
 }
 
+func (u *UnknownValueColumn) GetTime() time.Time {
+	panic("not a time")
+}
+
 type ValueColumnString struct {
 	UnknownValueColumn
 	Value string
@@ -88,6 +94,14 @@ type ValueColumnString struct {
 
 func (v *ValueColumnString) GetString() string {
 	return v.Value
+}
+
+func (v *ValueColumnString) GetTime() time.Time {
+	t, err := time.Parse(time.RFC3339, v.Value)
+	if err != nil {
+		Logger.Error("error parsing time", zap.Error(err))
+	}
+	return t
 }
 
 type ValueColumnInt struct {
@@ -157,6 +171,10 @@ func (r *Rows) GetIndex(idx int) *Row {
 	return &r.Rows[idx]
 }
 
+func (r *Rows) Empty() bool {
+	return len(r.Rows) == 0
+}
+
 // Each row is converted to a Row struct with corresponding ValueColumn implementations.
 func CaptureChanges(query string, db *sqlite.Conn, output bool, params ...Param) (*Rows, error) {
 	stmt, err := db.Prepare(query)
@@ -184,6 +202,10 @@ func CaptureChanges(query string, db *sqlite.Conn, output bool, params ...Param)
 			stmt.SetBool(param.Name, v)
 		} else if param.Value == nil {
 			stmt.SetNull(param.Name)
+		} else if v, ok := param.Value.(time.Time); ok {
+			stmt.SetText(param.Name, v.Format(time.RFC3339))
+		} else {
+			return nil, fmt.Errorf("unsupported parameter type: %T", param.Value)
 		}
 	}
 

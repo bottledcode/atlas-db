@@ -25,7 +25,9 @@ create table tables
         constraint tables_nodes_id_fk
             references nodes,
     created_at        timestamp        default CURRENT_TIMESTAMP,
-    version           int     not null default 0
+    version           int     not null default 0,
+    promised          int     not null default 0,
+    allowed_regions   text             default null
 );
 create table leadership
 (
@@ -38,9 +40,13 @@ create table leadership
     region_id    integer not null
         constraint leadership_regions_id_fk
             references regions,
-    last_updated timestamp default CURRENT_TIMESTAMP,
-    primary key (table_id, node_id, region_id)
+    last_updated timestamp        default CURRENT_TIMESTAMP,
+    promised     int     not null default 0,
+    owner        int     not null default 0,
+    primary key (table_id, region_id, node_id)
 );
+create index leadership_node_id_index
+    on leadership (owner, table_id, region_id);
 create table schema_migrations
 (
     table_id   integer not null,

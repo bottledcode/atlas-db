@@ -20,6 +20,7 @@ jobs:
       - name: Merge Dependabot PR
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.WITHINBOREDOM_GH_PAT }}
           script: |
             github.rest.issues.createComment({
               issue_number: context.issue.number,

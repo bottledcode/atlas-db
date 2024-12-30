@@ -50,3 +50,42 @@ jobs:
       with:
         version: v1.60
         only-new-issues: true
+
+  auto-merge:
+    name: Auto-merge Dependabot PR
+    runs-on: self-hosted
+    needs: [build, lint]
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Merge Dependabot PR
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const { context, github } = require('@actions/github');
+            const pr = context.payload.pull_request;
+            
+            // Verify PR status checks
+            const { data: checks } = await github.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+            });
+            
+            if (!checks.mergeable) {
+              throw new Error('PR is not mergeable. Status checks might be failing.');
+            }
+            
+            try {
+              await github.pulls.merge({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+                merge_method: 'squash'
+              });
+            } catch (error) {
+              console.error('Failed to merge PR:', error);
+              throw error;
+            }

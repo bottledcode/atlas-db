@@ -2,7 +2,7 @@ package consensus
 
 import "context"
 
-func (s *Server) StealTableOwnership(context.Context, *StealTableOwnershipRequest) (*StealTableOwnershipResponse, error) {
+func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnershipRequest) (*StealTableOwnershipResponse, error) {
 	return nil, nil
 }
 

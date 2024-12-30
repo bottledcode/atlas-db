@@ -9,6 +9,7 @@ package consensus
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 )
@@ -20,12 +21,61 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type ReplicationLevel int32
+
+const (
+	ReplicationLevel_GLOBAL ReplicationLevel = 0 // Replicate the table globally
+	ReplicationLevel_REGION ReplicationLevel = 1 // Replicate the table within the region
+	ReplicationLevel_LOCAL  ReplicationLevel = 2 // Replicate the table within the node
+)
+
+// Enum value maps for ReplicationLevel.
+var (
+	ReplicationLevel_name = map[int32]string{
+		0: "GLOBAL",
+		1: "REGION",
+		2: "LOCAL",
+	}
+	ReplicationLevel_value = map[string]int32{
+		"GLOBAL": 0,
+		"REGION": 1,
+		"LOCAL":  2,
+	}
+)
+
+func (x ReplicationLevel) Enum() *ReplicationLevel {
+	p := new(ReplicationLevel)
+	*p = x
+	return p
+}
+
+func (x ReplicationLevel) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ReplicationLevel) Descriptor() protoreflect.EnumDescriptor {
+	return file_consensus_consensus_proto_enumTypes[0].Descriptor()
+}
+
+func (ReplicationLevel) Type() protoreflect.EnumType {
+	return &file_consensus_consensus_proto_enumTypes[0]
+}
+
+func (x ReplicationLevel) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ReplicationLevel.Descriptor instead.
+func (ReplicationLevel) EnumDescriptor() ([]byte, []int) {
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{0}
+}
+
 type TopologyChange int32
 
 const (
-	TopologyChange_UNKNOWN TopologyChange = 0
-	TopologyChange_ADD     TopologyChange = 1
-	TopologyChange_REMOVE  TopologyChange = 2
+	TopologyChange_UNKNOWN TopologyChange = 0 // Unknown change
+	TopologyChange_ADD     TopologyChange = 1 // Add a node or region
+	TopologyChange_REMOVE  TopologyChange = 2 // Remove a node or region
 )
 
 // Enum value maps for TopologyChange.
@@ -53,11 +103,11 @@ func (x TopologyChange) String() string {
 }
 
 func (TopologyChange) Descriptor() protoreflect.EnumDescriptor {
-	return file_consensus_consensus_proto_enumTypes[0].Descriptor()
+	return file_consensus_consensus_proto_enumTypes[1].Descriptor()
 }
 
 func (TopologyChange) Type() protoreflect.EnumType {
-	return &file_consensus_consensus_proto_enumTypes[0]
+	return &file_consensus_consensus_proto_enumTypes[1]
 }
 
 func (x TopologyChange) Number() protoreflect.EnumNumber {
@@ -66,23 +116,230 @@ func (x TopologyChange) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use TopologyChange.Descriptor instead.
 func (TopologyChange) EnumDescriptor() ([]byte, []int) {
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{1}
+}
+
+type SchemaMigration struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	TableId  int64    `protobuf:"varint,1,opt,name=tableId,proto3" json:"tableId,omitempty"`  // The ID of the table
+	Version  int64    `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`  // The version of the table
+	Commands []string `protobuf:"bytes,3,rep,name=commands,proto3" json:"commands,omitempty"` // The commands to be executed
+}
+
+func (x *SchemaMigration) Reset() {
+	*x = SchemaMigration{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_consensus_consensus_proto_msgTypes[0]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *SchemaMigration) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SchemaMigration) ProtoMessage() {}
+
+func (x *SchemaMigration) ProtoReflect() protoreflect.Message {
+	mi := &file_consensus_consensus_proto_msgTypes[0]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SchemaMigration.ProtoReflect.Descriptor instead.
+func (*SchemaMigration) Descriptor() ([]byte, []int) {
 	return file_consensus_consensus_proto_rawDescGZIP(), []int{0}
 }
+
+func (x *SchemaMigration) GetTableId() int64 {
+	if x != nil {
+		return x.TableId
+	}
+	return 0
+}
+
+func (x *SchemaMigration) GetVersion() int64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *SchemaMigration) GetCommands() []string {
+	if x != nil {
+		return x.Commands
+	}
+	return nil
+}
+
+type DataMigration struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	TableId int64    `protobuf:"varint,1,opt,name=tableId,proto3" json:"tableId,omitempty"` // The ID of the table
+	Version int64    `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"` // The version of the table
+	Data    [][]byte `protobuf:"bytes,3,rep,name=data,proto3" json:"data,omitempty"`        // The data to be written
+}
+
+func (x *DataMigration) Reset() {
+	*x = DataMigration{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_consensus_consensus_proto_msgTypes[1]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *DataMigration) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DataMigration) ProtoMessage() {}
+
+func (x *DataMigration) ProtoReflect() protoreflect.Message {
+	mi := &file_consensus_consensus_proto_msgTypes[1]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DataMigration.ProtoReflect.Descriptor instead.
+func (*DataMigration) Descriptor() ([]byte, []int) {
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *DataMigration) GetTableId() int64 {
+	if x != nil {
+		return x.TableId
+	}
+	return 0
+}
+
+func (x *DataMigration) GetVersion() int64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *DataMigration) GetData() [][]byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+type Migration struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	// Types that are assignable to Migration:
+	//
+	//	*Migration_Schema
+	//	*Migration_Data
+	Migration isMigration_Migration `protobuf_oneof:"migration"`
+}
+
+func (x *Migration) Reset() {
+	*x = Migration{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_consensus_consensus_proto_msgTypes[2]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *Migration) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Migration) ProtoMessage() {}
+
+func (x *Migration) ProtoReflect() protoreflect.Message {
+	mi := &file_consensus_consensus_proto_msgTypes[2]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Migration.ProtoReflect.Descriptor instead.
+func (*Migration) Descriptor() ([]byte, []int) {
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{2}
+}
+
+func (m *Migration) GetMigration() isMigration_Migration {
+	if m != nil {
+		return m.Migration
+	}
+	return nil
+}
+
+func (x *Migration) GetSchema() *SchemaMigration {
+	if x, ok := x.GetMigration().(*Migration_Schema); ok {
+		return x.Schema
+	}
+	return nil
+}
+
+func (x *Migration) GetData() *DataMigration {
+	if x, ok := x.GetMigration().(*Migration_Data); ok {
+		return x.Data
+	}
+	return nil
+}
+
+type isMigration_Migration interface {
+	isMigration_Migration()
+}
+
+type Migration_Schema struct {
+	Schema *SchemaMigration `protobuf:"bytes,1,opt,name=schema,proto3,oneof"` // The schema migration
+}
+
+type Migration_Data struct {
+	Data *DataMigration `protobuf:"bytes,2,opt,name=data,proto3,oneof"` // The data migration
+}
+
+func (*Migration_Schema) isMigration_Migration() {}
+
+func (*Migration_Data) isMigration_Migration() {}
 
 type WriteMigrationRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	TableId     int64    `protobuf:"varint,1,opt,name=tableId,proto3" json:"tableId,omitempty"`
-	MigrationId int64    `protobuf:"varint,2,opt,name=migrationId,proto3" json:"migrationId,omitempty"`
-	Migration   [][]byte `protobuf:"bytes,3,rep,name=migration,proto3" json:"migration,omitempty"`
+	TableId   int64      `protobuf:"varint,1,opt,name=tableId,proto3" json:"tableId,omitempty"`    // The ID of the table
+	Sender    *Node      `protobuf:"bytes,2,opt,name=sender,proto3" json:"sender,omitempty"`       // The node sending the migration
+	Migration *Migration `protobuf:"bytes,3,opt,name=migration,proto3" json:"migration,omitempty"` // The migration to be written
 }
 
 func (x *WriteMigrationRequest) Reset() {
 	*x = WriteMigrationRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_consensus_consensus_proto_msgTypes[0]
+		mi := &file_consensus_consensus_proto_msgTypes[3]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -95,7 +352,7 @@ func (x *WriteMigrationRequest) String() string {
 func (*WriteMigrationRequest) ProtoMessage() {}
 
 func (x *WriteMigrationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[0]
+	mi := &file_consensus_consensus_proto_msgTypes[3]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -108,7 +365,7 @@ func (x *WriteMigrationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteMigrationRequest.ProtoReflect.Descriptor instead.
 func (*WriteMigrationRequest) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{0}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *WriteMigrationRequest) GetTableId() int64 {
@@ -118,14 +375,14 @@ func (x *WriteMigrationRequest) GetTableId() int64 {
 	return 0
 }
 
-func (x *WriteMigrationRequest) GetMigrationId() int64 {
+func (x *WriteMigrationRequest) GetSender() *Node {
 	if x != nil {
-		return x.MigrationId
+		return x.Sender
 	}
-	return 0
+	return nil
 }
 
-func (x *WriteMigrationRequest) GetMigration() [][]byte {
+func (x *WriteMigrationRequest) GetMigration() *Migration {
 	if x != nil {
 		return x.Migration
 	}
@@ -137,13 +394,16 @@ type WriteMigrationResponse struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Success bool `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Success    bool         `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`      // Whether the operation was successful
+	Table      *Table       `protobuf:"bytes,2,opt,name=table,proto3" json:"table,omitempty"`           // The table if the operation was not successful
+	Leadership []*Node      `protobuf:"bytes,3,rep,name=leadership,proto3" json:"leadership,omitempty"` // The nodes that are the new leaders
+	Migrations []*Migration `protobuf:"bytes,4,rep,name=migrations,proto3" json:"migrations,omitempty"` // missing migrations if the operation was not successful
 }
 
 func (x *WriteMigrationResponse) Reset() {
 	*x = WriteMigrationResponse{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_consensus_consensus_proto_msgTypes[1]
+		mi := &file_consensus_consensus_proto_msgTypes[4]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -156,7 +416,7 @@ func (x *WriteMigrationResponse) String() string {
 func (*WriteMigrationResponse) ProtoMessage() {}
 
 func (x *WriteMigrationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[1]
+	mi := &file_consensus_consensus_proto_msgTypes[4]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -169,7 +429,7 @@ func (x *WriteMigrationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteMigrationResponse.ProtoReflect.Descriptor instead.
 func (*WriteMigrationResponse) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{1}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *WriteMigrationResponse) GetSuccess() bool {
@@ -179,18 +439,119 @@ func (x *WriteMigrationResponse) GetSuccess() bool {
 	return false
 }
 
+func (x *WriteMigrationResponse) GetTable() *Table {
+	if x != nil {
+		return x.Table
+	}
+	return nil
+}
+
+func (x *WriteMigrationResponse) GetLeadership() []*Node {
+	if x != nil {
+		return x.Leadership
+	}
+	return nil
+}
+
+func (x *WriteMigrationResponse) GetMigrations() []*Migration {
+	if x != nil {
+		return x.Migrations
+	}
+	return nil
+}
+
+type Table struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Id          int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`                  // The ID of the table
+	Name        string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`               // The name of the table
+	Version     int64                  `protobuf:"varint,3,opt,name=version,proto3" json:"version,omitempty"`        // The version of the table
+	GlobalOwner *Node                  `protobuf:"bytes,4,opt,name=globalOwner,proto3" json:"globalOwner,omitempty"` // The global owner of the table
+	CreatedAt   *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=createdAt,proto3" json:"createdAt,omitempty"`     // The time the table was created
+}
+
+func (x *Table) Reset() {
+	*x = Table{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_consensus_consensus_proto_msgTypes[5]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *Table) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Table) ProtoMessage() {}
+
+func (x *Table) ProtoReflect() protoreflect.Message {
+	mi := &file_consensus_consensus_proto_msgTypes[5]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Table.ProtoReflect.Descriptor instead.
+func (*Table) Descriptor() ([]byte, []int) {
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *Table) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *Table) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Table) GetVersion() int64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *Table) GetGlobalOwner() *Node {
+	if x != nil {
+		return x.GlobalOwner
+	}
+	return nil
+}
+
+func (x *Table) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
+}
+
 type StealTableOwnershipRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	TableId int64 `protobuf:"varint,1,opt,name=tableId,proto3" json:"tableId,omitempty"`
+	TableId int64  `protobuf:"varint,1,opt,name=tableId,proto3" json:"tableId,omitempty"` // The ID of the table
+	Table   *Table `protobuf:"bytes,2,opt,name=table,proto3" json:"table,omitempty"`      // The table to be stolen
 }
 
 func (x *StealTableOwnershipRequest) Reset() {
 	*x = StealTableOwnershipRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_consensus_consensus_proto_msgTypes[2]
+		mi := &file_consensus_consensus_proto_msgTypes[6]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -203,7 +564,7 @@ func (x *StealTableOwnershipRequest) String() string {
 func (*StealTableOwnershipRequest) ProtoMessage() {}
 
 func (x *StealTableOwnershipRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[2]
+	mi := &file_consensus_consensus_proto_msgTypes[6]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -216,7 +577,7 @@ func (x *StealTableOwnershipRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StealTableOwnershipRequest.ProtoReflect.Descriptor instead.
 func (*StealTableOwnershipRequest) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{2}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *StealTableOwnershipRequest) GetTableId() int64 {
@@ -226,19 +587,26 @@ func (x *StealTableOwnershipRequest) GetTableId() int64 {
 	return 0
 }
 
+func (x *StealTableOwnershipRequest) GetTable() *Table {
+	if x != nil {
+		return x.Table
+	}
+	return nil
+}
+
 type StealTableOwnershipResponse struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Success bool  `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
-	Owner   *Node `protobuf:"bytes,2,opt,name=owner,proto3" json:"owner,omitempty"`
+	Success bool   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"` // Whether the operation was successful
+	Table   *Table `protobuf:"bytes,2,opt,name=table,proto3" json:"table,omitempty"`      // The table if the operation was not successful
 }
 
 func (x *StealTableOwnershipResponse) Reset() {
 	*x = StealTableOwnershipResponse{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_consensus_consensus_proto_msgTypes[3]
+		mi := &file_consensus_consensus_proto_msgTypes[7]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -251,7 +619,7 @@ func (x *StealTableOwnershipResponse) String() string {
 func (*StealTableOwnershipResponse) ProtoMessage() {}
 
 func (x *StealTableOwnershipResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[3]
+	mi := &file_consensus_consensus_proto_msgTypes[7]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -264,7 +632,7 @@ func (x *StealTableOwnershipResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StealTableOwnershipResponse.ProtoReflect.Descriptor instead.
 func (*StealTableOwnershipResponse) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{3}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *StealTableOwnershipResponse) GetSuccess() bool {
@@ -274,9 +642,9 @@ func (x *StealTableOwnershipResponse) GetSuccess() bool {
 	return false
 }
 
-func (x *StealTableOwnershipResponse) GetOwner() *Node {
+func (x *StealTableOwnershipResponse) GetTable() *Table {
 	if x != nil {
-		return x.Owner
+		return x.Table
 	}
 	return nil
 }
@@ -286,16 +654,16 @@ type Node struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	NodeId      int64  `protobuf:"varint,1,opt,name=nodeId,proto3" json:"nodeId,omitempty"`
-	NodeAddress string `protobuf:"bytes,2,opt,name=nodeAddress,proto3" json:"nodeAddress,omitempty"`
-	NodeRegion  string `protobuf:"bytes,3,opt,name=nodeRegion,proto3" json:"nodeRegion,omitempty"`
-	NodePort    int64  `protobuf:"varint,4,opt,name=nodePort,proto3" json:"nodePort,omitempty"`
+	NodeId      int64  `protobuf:"varint,1,opt,name=nodeId,proto3" json:"nodeId,omitempty"`          // The ID of the node
+	NodeAddress string `protobuf:"bytes,2,opt,name=nodeAddress,proto3" json:"nodeAddress,omitempty"` // The address of the node
+	NodeRegion  string `protobuf:"bytes,3,opt,name=nodeRegion,proto3" json:"nodeRegion,omitempty"`   // The region the node is in
+	NodePort    int64  `protobuf:"varint,4,opt,name=nodePort,proto3" json:"nodePort,omitempty"`      // The port the node listens on
 }
 
 func (x *Node) Reset() {
 	*x = Node{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_consensus_consensus_proto_msgTypes[4]
+		mi := &file_consensus_consensus_proto_msgTypes[8]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -308,7 +676,7 @@ func (x *Node) String() string {
 func (*Node) ProtoMessage() {}
 
 func (x *Node) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[4]
+	mi := &file_consensus_consensus_proto_msgTypes[8]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -321,7 +689,7 @@ func (x *Node) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Node.ProtoReflect.Descriptor instead.
 func (*Node) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{4}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Node) GetNodeId() int64 {
@@ -357,14 +725,14 @@ type Region struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	RegionName string `protobuf:"bytes,1,opt,name=regionName,proto3" json:"regionName,omitempty"`
-	RegionId   int64  `protobuf:"varint,2,opt,name=regionId,proto3" json:"regionId,omitempty"`
+	RegionName string `protobuf:"bytes,1,opt,name=regionName,proto3" json:"regionName,omitempty"` // The region name
+	RegionId   int64  `protobuf:"varint,2,opt,name=regionId,proto3" json:"regionId,omitempty"`    // The region ID
 }
 
 func (x *Region) Reset() {
 	*x = Region{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_consensus_consensus_proto_msgTypes[5]
+		mi := &file_consensus_consensus_proto_msgTypes[9]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -377,7 +745,7 @@ func (x *Region) String() string {
 func (*Region) ProtoMessage() {}
 
 func (x *Region) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[5]
+	mi := &file_consensus_consensus_proto_msgTypes[9]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -390,7 +758,7 @@ func (x *Region) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Region.ProtoReflect.Descriptor instead.
 func (*Region) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{5}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Region) GetRegionName() string {
@@ -422,7 +790,7 @@ type ProposeTopologyChangeRequest struct {
 func (x *ProposeTopologyChangeRequest) Reset() {
 	*x = ProposeTopologyChangeRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_consensus_consensus_proto_msgTypes[6]
+		mi := &file_consensus_consensus_proto_msgTypes[10]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -435,7 +803,7 @@ func (x *ProposeTopologyChangeRequest) String() string {
 func (*ProposeTopologyChangeRequest) ProtoMessage() {}
 
 func (x *ProposeTopologyChangeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[6]
+	mi := &file_consensus_consensus_proto_msgTypes[10]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -448,7 +816,7 @@ func (x *ProposeTopologyChangeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProposeTopologyChangeRequest.ProtoReflect.Descriptor instead.
 func (*ProposeTopologyChangeRequest) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{6}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{10}
 }
 
 func (m *ProposeTopologyChangeRequest) GetChange() isProposeTopologyChangeRequest_Change {
@@ -477,11 +845,11 @@ type isProposeTopologyChangeRequest_Change interface {
 }
 
 type ProposeTopologyChangeRequest_RegionChange struct {
-	RegionChange *ProposeRegionTopologyChange `protobuf:"bytes,1,opt,name=regionChange,proto3,oneof"`
+	RegionChange *ProposeRegionTopologyChange `protobuf:"bytes,1,opt,name=regionChange,proto3,oneof"` // The region to be added or removed
 }
 
 type ProposeTopologyChangeRequest_NodeChange struct {
-	NodeChange *ProposeNodeTopologyChange `protobuf:"bytes,2,opt,name=nodeChange,proto3,oneof"`
+	NodeChange *ProposeNodeTopologyChange `protobuf:"bytes,2,opt,name=nodeChange,proto3,oneof"` // The node to be added or removed
 }
 
 func (*ProposeTopologyChangeRequest_RegionChange) isProposeTopologyChangeRequest_Change() {}
@@ -493,14 +861,14 @@ type ProposeRegionTopologyChange struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Region *Region        `protobuf:"bytes,1,opt,name=region,proto3" json:"region,omitempty"`
-	Kind   TopologyChange `protobuf:"varint,2,opt,name=kind,proto3,enum=atlas.consensus.TopologyChange" json:"kind,omitempty"`
+	Region *Region        `protobuf:"bytes,1,opt,name=region,proto3" json:"region,omitempty"`                                  // The region to be added or removed
+	Kind   TopologyChange `protobuf:"varint,2,opt,name=kind,proto3,enum=atlas.consensus.TopologyChange" json:"kind,omitempty"` // The kind of change to be made
 }
 
 func (x *ProposeRegionTopologyChange) Reset() {
 	*x = ProposeRegionTopologyChange{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_consensus_consensus_proto_msgTypes[7]
+		mi := &file_consensus_consensus_proto_msgTypes[11]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -513,7 +881,7 @@ func (x *ProposeRegionTopologyChange) String() string {
 func (*ProposeRegionTopologyChange) ProtoMessage() {}
 
 func (x *ProposeRegionTopologyChange) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[7]
+	mi := &file_consensus_consensus_proto_msgTypes[11]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -526,7 +894,7 @@ func (x *ProposeRegionTopologyChange) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProposeRegionTopologyChange.ProtoReflect.Descriptor instead.
 func (*ProposeRegionTopologyChange) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{7}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ProposeRegionTopologyChange) GetRegion() *Region {
@@ -548,14 +916,14 @@ type ProposeNodeTopologyChange struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Node *Node          `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`
-	Kind TopologyChange `protobuf:"varint,2,opt,name=kind,proto3,enum=atlas.consensus.TopologyChange" json:"kind,omitempty"`
+	Node *Node          `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`                                      // The node to be added or removed
+	Kind TopologyChange `protobuf:"varint,2,opt,name=kind,proto3,enum=atlas.consensus.TopologyChange" json:"kind,omitempty"` // The kind of change to be made
 }
 
 func (x *ProposeNodeTopologyChange) Reset() {
 	*x = ProposeNodeTopologyChange{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_consensus_consensus_proto_msgTypes[8]
+		mi := &file_consensus_consensus_proto_msgTypes[12]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -568,7 +936,7 @@ func (x *ProposeNodeTopologyChange) String() string {
 func (*ProposeNodeTopologyChange) ProtoMessage() {}
 
 func (x *ProposeNodeTopologyChange) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[8]
+	mi := &file_consensus_consensus_proto_msgTypes[12]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -581,7 +949,7 @@ func (x *ProposeNodeTopologyChange) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProposeNodeTopologyChange.ProtoReflect.Descriptor instead.
 func (*ProposeNodeTopologyChange) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{8}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ProposeNodeTopologyChange) GetNode() *Node {
@@ -603,7 +971,7 @@ type PromiseTopologyChange struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Promise bool `protobuf:"varint,1,opt,name=promise,proto3" json:"promise,omitempty"`
+	Promise bool `protobuf:"varint,1,opt,name=promise,proto3" json:"promise,omitempty"` // A promise to accept the topology change
 	// Types that are assignable to Response:
 	//
 	//	*PromiseTopologyChange_Node
@@ -614,7 +982,7 @@ type PromiseTopologyChange struct {
 func (x *PromiseTopologyChange) Reset() {
 	*x = PromiseTopologyChange{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_consensus_consensus_proto_msgTypes[9]
+		mi := &file_consensus_consensus_proto_msgTypes[13]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -627,7 +995,7 @@ func (x *PromiseTopologyChange) String() string {
 func (*PromiseTopologyChange) ProtoMessage() {}
 
 func (x *PromiseTopologyChange) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[9]
+	mi := &file_consensus_consensus_proto_msgTypes[13]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -640,7 +1008,7 @@ func (x *PromiseTopologyChange) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PromiseTopologyChange.ProtoReflect.Descriptor instead.
 func (*PromiseTopologyChange) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{9}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *PromiseTopologyChange) GetPromise() bool {
@@ -676,11 +1044,11 @@ type isPromiseTopologyChange_Response interface {
 }
 
 type PromiseTopologyChange_Node struct {
-	Node *Node `protobuf:"bytes,2,opt,name=node,proto3,oneof"`
+	Node *Node `protobuf:"bytes,2,opt,name=node,proto3,oneof"` // The node if the promise is not accepted
 }
 
 type PromiseTopologyChange_Region struct {
-	Region *Region `protobuf:"bytes,3,opt,name=region,proto3,oneof"`
+	Region *Region `protobuf:"bytes,3,opt,name=region,proto3,oneof"` // The region if the promise is not accepted
 }
 
 func (*PromiseTopologyChange_Node) isPromiseTopologyChange_Response() {}
@@ -702,7 +1070,7 @@ type AcceptTopologyChangeRequest struct {
 func (x *AcceptTopologyChangeRequest) Reset() {
 	*x = AcceptTopologyChangeRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_consensus_consensus_proto_msgTypes[10]
+		mi := &file_consensus_consensus_proto_msgTypes[14]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -715,7 +1083,7 @@ func (x *AcceptTopologyChangeRequest) String() string {
 func (*AcceptTopologyChangeRequest) ProtoMessage() {}
 
 func (x *AcceptTopologyChangeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[10]
+	mi := &file_consensus_consensus_proto_msgTypes[14]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -728,7 +1096,7 @@ func (x *AcceptTopologyChangeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AcceptTopologyChangeRequest.ProtoReflect.Descriptor instead.
 func (*AcceptTopologyChangeRequest) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{10}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{14}
 }
 
 func (m *AcceptTopologyChangeRequest) GetChange() isAcceptTopologyChangeRequest_Change {
@@ -757,11 +1125,11 @@ type isAcceptTopologyChangeRequest_Change interface {
 }
 
 type AcceptTopologyChangeRequest_Node struct {
-	Node *Node `protobuf:"bytes,1,opt,name=node,proto3,oneof"`
+	Node *Node `protobuf:"bytes,1,opt,name=node,proto3,oneof"` // The node to be added or removed
 }
 
 type AcceptTopologyChangeRequest_Region struct {
-	Region *Region `protobuf:"bytes,2,opt,name=region,proto3,oneof"`
+	Region *Region `protobuf:"bytes,2,opt,name=region,proto3,oneof"` // The region to be added or removed
 }
 
 func (*AcceptTopologyChangeRequest_Node) isAcceptTopologyChangeRequest_Change() {}
@@ -783,7 +1151,7 @@ type AcceptedTopologyChange struct {
 func (x *AcceptedTopologyChange) Reset() {
 	*x = AcceptedTopologyChange{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_consensus_consensus_proto_msgTypes[11]
+		mi := &file_consensus_consensus_proto_msgTypes[15]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -796,7 +1164,7 @@ func (x *AcceptedTopologyChange) String() string {
 func (*AcceptedTopologyChange) ProtoMessage() {}
 
 func (x *AcceptedTopologyChange) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[11]
+	mi := &file_consensus_consensus_proto_msgTypes[15]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -809,7 +1177,7 @@ func (x *AcceptedTopologyChange) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AcceptedTopologyChange.ProtoReflect.Descriptor instead.
 func (*AcceptedTopologyChange) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{11}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{15}
 }
 
 func (m *AcceptedTopologyChange) GetResponse() isAcceptedTopologyChange_Response {
@@ -838,11 +1206,11 @@ type isAcceptedTopologyChange_Response interface {
 }
 
 type AcceptedTopologyChange_Node struct {
-	Node *Node `protobuf:"bytes,2,opt,name=node,proto3,oneof"`
+	Node *Node `protobuf:"bytes,2,opt,name=node,proto3,oneof"` // The post-write node
 }
 
 type AcceptedTopologyChange_Region struct {
-	Region *Region `protobuf:"bytes,3,opt,name=region,proto3,oneof"`
+	Region *Region `protobuf:"bytes,3,opt,name=region,proto3,oneof"` // The post-write region
 }
 
 func (*AcceptedTopologyChange_Node) isAcceptedTopologyChange_Response() {}
@@ -854,28 +1222,78 @@ var File_consensus_consensus_proto protoreflect.FileDescriptor
 var file_consensus_consensus_proto_rawDesc = []byte{
 	0x0a, 0x19, 0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75, 0x73, 0x2f, 0x63, 0x6f, 0x6e, 0x73,
 	0x65, 0x6e, 0x73, 0x75, 0x73, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x0f, 0x61, 0x74, 0x6c,
-	0x61, 0x73, 0x2e, 0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75, 0x73, 0x22, 0x71, 0x0a, 0x15,
-	0x57, 0x72, 0x69, 0x74, 0x65, 0x4d, 0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65,
-	0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x18, 0x0a, 0x07, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x49, 0x64,
-	0x18, 0x01, 0x20, 0x01, 0x28, 0x03, 0x52, 0x07, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x49, 0x64, 0x12,
-	0x20, 0x0a, 0x0b, 0x6d, 0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x49, 0x64, 0x18, 0x02,
-	0x20, 0x01, 0x28, 0x03, 0x52, 0x0b, 0x6d, 0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x49,
-	0x64, 0x12, 0x1c, 0x0a, 0x09, 0x6d, 0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x03,
-	0x20, 0x03, 0x28, 0x0c, 0x52, 0x09, 0x6d, 0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x22,
-	0x32, 0x0a, 0x16, 0x57, 0x72, 0x69, 0x74, 0x65, 0x4d, 0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f,
-	0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x18, 0x0a, 0x07, 0x73, 0x75, 0x63,
+	0x61, 0x73, 0x2e, 0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75, 0x73, 0x1a, 0x1f, 0x67, 0x6f,
+	0x6f, 0x67, 0x6c, 0x65, 0x2f, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2f, 0x74, 0x69,
+	0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22, 0x61, 0x0a,
+	0x0f, 0x53, 0x63, 0x68, 0x65, 0x6d, 0x61, 0x4d, 0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e,
+	0x12, 0x18, 0x0a, 0x07, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x49, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28,
+	0x03, 0x52, 0x07, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x49, 0x64, 0x12, 0x18, 0x0a, 0x07, 0x76, 0x65,
+	0x72, 0x73, 0x69, 0x6f, 0x6e, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x07, 0x76, 0x65, 0x72,
+	0x73, 0x69, 0x6f, 0x6e, 0x12, 0x1a, 0x0a, 0x08, 0x63, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x73,
+	0x18, 0x03, 0x20, 0x03, 0x28, 0x09, 0x52, 0x08, 0x63, 0x6f, 0x6d, 0x6d, 0x61, 0x6e, 0x64, 0x73,
+	0x22, 0x57, 0x0a, 0x0d, 0x44, 0x61, 0x74, 0x61, 0x4d, 0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f,
+	0x6e, 0x12, 0x18, 0x0a, 0x07, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x49, 0x64, 0x18, 0x01, 0x20, 0x01,
+	0x28, 0x03, 0x52, 0x07, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x49, 0x64, 0x12, 0x18, 0x0a, 0x07, 0x76,
+	0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x07, 0x76, 0x65,
+	0x72, 0x73, 0x69, 0x6f, 0x6e, 0x12, 0x12, 0x0a, 0x04, 0x64, 0x61, 0x74, 0x61, 0x18, 0x03, 0x20,
+	0x03, 0x28, 0x0c, 0x52, 0x04, 0x64, 0x61, 0x74, 0x61, 0x22, 0x8a, 0x01, 0x0a, 0x09, 0x4d, 0x69,
+	0x67, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x3a, 0x0a, 0x06, 0x73, 0x63, 0x68, 0x65, 0x6d,
+	0x61, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x20, 0x2e, 0x61, 0x74, 0x6c, 0x61, 0x73, 0x2e,
+	0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75, 0x73, 0x2e, 0x53, 0x63, 0x68, 0x65, 0x6d, 0x61,
+	0x4d, 0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x48, 0x00, 0x52, 0x06, 0x73, 0x63, 0x68,
+	0x65, 0x6d, 0x61, 0x12, 0x34, 0x0a, 0x04, 0x64, 0x61, 0x74, 0x61, 0x18, 0x02, 0x20, 0x01, 0x28,
+	0x0b, 0x32, 0x1e, 0x2e, 0x61, 0x74, 0x6c, 0x61, 0x73, 0x2e, 0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e,
+	0x73, 0x75, 0x73, 0x2e, 0x44, 0x61, 0x74, 0x61, 0x4d, 0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f,
+	0x6e, 0x48, 0x00, 0x52, 0x04, 0x64, 0x61, 0x74, 0x61, 0x42, 0x0b, 0x0a, 0x09, 0x6d, 0x69, 0x67,
+	0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x22, 0x9a, 0x01, 0x0a, 0x15, 0x57, 0x72, 0x69, 0x74, 0x65,
+	0x4d, 0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
+	0x12, 0x18, 0x0a, 0x07, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x49, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28,
+	0x03, 0x52, 0x07, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x49, 0x64, 0x12, 0x2d, 0x0a, 0x06, 0x73, 0x65,
+	0x6e, 0x64, 0x65, 0x72, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x15, 0x2e, 0x61, 0x74, 0x6c,
+	0x61, 0x73, 0x2e, 0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75, 0x73, 0x2e, 0x4e, 0x6f, 0x64,
+	0x65, 0x52, 0x06, 0x73, 0x65, 0x6e, 0x64, 0x65, 0x72, 0x12, 0x38, 0x0a, 0x09, 0x6d, 0x69, 0x67,
+	0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1a, 0x2e, 0x61,
+	0x74, 0x6c, 0x61, 0x73, 0x2e, 0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75, 0x73, 0x2e, 0x4d,
+	0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x09, 0x6d, 0x69, 0x67, 0x72, 0x61, 0x74,
+	0x69, 0x6f, 0x6e, 0x22, 0xd3, 0x01, 0x0a, 0x16, 0x57, 0x72, 0x69, 0x74, 0x65, 0x4d, 0x69, 0x67,
+	0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x18,
+	0x0a, 0x07, 0x73, 0x75, 0x63, 0x63, 0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x08, 0x52,
+	0x07, 0x73, 0x75, 0x63, 0x63, 0x65, 0x73, 0x73, 0x12, 0x2c, 0x0a, 0x05, 0x74, 0x61, 0x62, 0x6c,
+	0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x16, 0x2e, 0x61, 0x74, 0x6c, 0x61, 0x73, 0x2e,
+	0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75, 0x73, 0x2e, 0x54, 0x61, 0x62, 0x6c, 0x65, 0x52,
+	0x05, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x12, 0x35, 0x0a, 0x0a, 0x6c, 0x65, 0x61, 0x64, 0x65, 0x72,
+	0x73, 0x68, 0x69, 0x70, 0x18, 0x03, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x15, 0x2e, 0x61, 0x74, 0x6c,
+	0x61, 0x73, 0x2e, 0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75, 0x73, 0x2e, 0x4e, 0x6f, 0x64,
+	0x65, 0x52, 0x0a, 0x6c, 0x65, 0x61, 0x64, 0x65, 0x72, 0x73, 0x68, 0x69, 0x70, 0x12, 0x3a, 0x0a,
+	0x0a, 0x6d, 0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x18, 0x04, 0x20, 0x03, 0x28,
+	0x0b, 0x32, 0x1a, 0x2e, 0x61, 0x74, 0x6c, 0x61, 0x73, 0x2e, 0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e,
+	0x73, 0x75, 0x73, 0x2e, 0x4d, 0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x0a, 0x6d,
+	0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x22, 0xb8, 0x01, 0x0a, 0x05, 0x54, 0x61,
+	0x62, 0x6c, 0x65, 0x12, 0x0e, 0x0a, 0x02, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x03, 0x52,
+	0x02, 0x69, 0x64, 0x12, 0x12, 0x0a, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28,
+	0x09, 0x52, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x12, 0x18, 0x0a, 0x07, 0x76, 0x65, 0x72, 0x73, 0x69,
+	0x6f, 0x6e, 0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x07, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f,
+	0x6e, 0x12, 0x37, 0x0a, 0x0b, 0x67, 0x6c, 0x6f, 0x62, 0x61, 0x6c, 0x4f, 0x77, 0x6e, 0x65, 0x72,
+	0x18, 0x04, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x15, 0x2e, 0x61, 0x74, 0x6c, 0x61, 0x73, 0x2e, 0x63,
+	0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75, 0x73, 0x2e, 0x4e, 0x6f, 0x64, 0x65, 0x52, 0x0b, 0x67,
+	0x6c, 0x6f, 0x62, 0x61, 0x6c, 0x4f, 0x77, 0x6e, 0x65, 0x72, 0x12, 0x38, 0x0a, 0x09, 0x63, 0x72,
+	0x65, 0x61, 0x74, 0x65, 0x64, 0x41, 0x74, 0x18, 0x05, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1a, 0x2e,
+	0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e,
+	0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x52, 0x09, 0x63, 0x72, 0x65, 0x61, 0x74,
+	0x65, 0x64, 0x41, 0x74, 0x22, 0x64, 0x0a, 0x1a, 0x53, 0x74, 0x65, 0x61, 0x6c, 0x54, 0x61, 0x62,
+	0x6c, 0x65, 0x4f, 0x77, 0x6e, 0x65, 0x72, 0x73, 0x68, 0x69, 0x70, 0x52, 0x65, 0x71, 0x75, 0x65,
+	0x73, 0x74, 0x12, 0x18, 0x0a, 0x07, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x49, 0x64, 0x18, 0x01, 0x20,
+	0x01, 0x28, 0x03, 0x52, 0x07, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x49, 0x64, 0x12, 0x2c, 0x0a, 0x05,
+	0x74, 0x61, 0x62, 0x6c, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x16, 0x2e, 0x61, 0x74,
+	0x6c, 0x61, 0x73, 0x2e, 0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75, 0x73, 0x2e, 0x54, 0x61,
+	0x62, 0x6c, 0x65, 0x52, 0x05, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x22, 0x65, 0x0a, 0x1b, 0x53, 0x74,
+	0x65, 0x61, 0x6c, 0x54, 0x61, 0x62, 0x6c, 0x65, 0x4f, 0x77, 0x6e, 0x65, 0x72, 0x73, 0x68, 0x69,
+	0x70, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x18, 0x0a, 0x07, 0x73, 0x75, 0x63,
 	0x63, 0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x08, 0x52, 0x07, 0x73, 0x75, 0x63, 0x63,
-	0x65, 0x73, 0x73, 0x22, 0x36, 0x0a, 0x1a, 0x53, 0x74, 0x65, 0x61, 0x6c, 0x54, 0x61, 0x62, 0x6c,
-	0x65, 0x4f, 0x77, 0x6e, 0x65, 0x72, 0x73, 0x68, 0x69, 0x70, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
-	0x74, 0x12, 0x18, 0x0a, 0x07, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x49, 0x64, 0x18, 0x01, 0x20, 0x01,
-	0x28, 0x03, 0x52, 0x07, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x49, 0x64, 0x22, 0x64, 0x0a, 0x1b, 0x53,
-	0x74, 0x65, 0x61, 0x6c, 0x54, 0x61, 0x62, 0x6c, 0x65, 0x4f, 0x77, 0x6e, 0x65, 0x72, 0x73, 0x68,
-	0x69, 0x70, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x18, 0x0a, 0x07, 0x73, 0x75,
-	0x63, 0x63, 0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x08, 0x52, 0x07, 0x73, 0x75, 0x63,
-	0x63, 0x65, 0x73, 0x73, 0x12, 0x2b, 0x0a, 0x05, 0x6f, 0x77, 0x6e, 0x65, 0x72, 0x18, 0x02, 0x20,
-	0x01, 0x28, 0x0b, 0x32, 0x15, 0x2e, 0x61, 0x74, 0x6c, 0x61, 0x73, 0x2e, 0x63, 0x6f, 0x6e, 0x73,
-	0x65, 0x6e, 0x73, 0x75, 0x73, 0x2e, 0x4e, 0x6f, 0x64, 0x65, 0x52, 0x05, 0x6f, 0x77, 0x6e, 0x65,
-	0x72, 0x22, 0x7c, 0x0a, 0x04, 0x4e, 0x6f, 0x64, 0x65, 0x12, 0x16, 0x0a, 0x06, 0x6e, 0x6f, 0x64,
+	0x65, 0x73, 0x73, 0x12, 0x2c, 0x0a, 0x05, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x18, 0x02, 0x20, 0x01,
+	0x28, 0x0b, 0x32, 0x16, 0x2e, 0x61, 0x74, 0x6c, 0x61, 0x73, 0x2e, 0x63, 0x6f, 0x6e, 0x73, 0x65,
+	0x6e, 0x73, 0x75, 0x73, 0x2e, 0x54, 0x61, 0x62, 0x6c, 0x65, 0x52, 0x05, 0x74, 0x61, 0x62, 0x6c,
+	0x65, 0x22, 0x7c, 0x0a, 0x04, 0x4e, 0x6f, 0x64, 0x65, 0x12, 0x16, 0x0a, 0x06, 0x6e, 0x6f, 0x64,
 	0x65, 0x49, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x03, 0x52, 0x06, 0x6e, 0x6f, 0x64, 0x65, 0x49,
 	0x64, 0x12, 0x20, 0x0a, 0x0b, 0x6e, 0x6f, 0x64, 0x65, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73,
 	0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x6e, 0x6f, 0x64, 0x65, 0x41, 0x64, 0x64, 0x72,
@@ -943,40 +1361,44 @@ var file_consensus_consensus_proto_rawDesc = []byte{
 	0x6e, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x17, 0x2e, 0x61, 0x74, 0x6c, 0x61, 0x73, 0x2e,
 	0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75, 0x73, 0x2e, 0x52, 0x65, 0x67, 0x69, 0x6f, 0x6e,
 	0x48, 0x00, 0x52, 0x06, 0x72, 0x65, 0x67, 0x69, 0x6f, 0x6e, 0x42, 0x0a, 0x0a, 0x08, 0x72, 0x65,
-	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x2a, 0x32, 0x0a, 0x0e, 0x54, 0x6f, 0x70, 0x6f, 0x6c, 0x6f,
-	0x67, 0x79, 0x43, 0x68, 0x61, 0x6e, 0x67, 0x65, 0x12, 0x0b, 0x0a, 0x07, 0x55, 0x4e, 0x4b, 0x4e,
-	0x4f, 0x57, 0x4e, 0x10, 0x00, 0x12, 0x07, 0x0a, 0x03, 0x41, 0x44, 0x44, 0x10, 0x01, 0x12, 0x0a,
-	0x0a, 0x06, 0x52, 0x45, 0x4d, 0x4f, 0x56, 0x45, 0x10, 0x02, 0x32, 0xc7, 0x03, 0x0a, 0x09, 0x43,
-	0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75, 0x73, 0x12, 0x70, 0x0a, 0x15, 0x50, 0x72, 0x6f, 0x70,
-	0x6f, 0x73, 0x65, 0x54, 0x6f, 0x70, 0x6f, 0x6c, 0x6f, 0x67, 0x79, 0x43, 0x68, 0x61, 0x6e, 0x67,
-	0x65, 0x12, 0x2d, 0x2e, 0x61, 0x74, 0x6c, 0x61, 0x73, 0x2e, 0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e,
-	0x73, 0x75, 0x73, 0x2e, 0x50, 0x72, 0x6f, 0x70, 0x6f, 0x73, 0x65, 0x54, 0x6f, 0x70, 0x6f, 0x6c,
-	0x6f, 0x67, 0x79, 0x43, 0x68, 0x61, 0x6e, 0x67, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
-	0x1a, 0x26, 0x2e, 0x61, 0x74, 0x6c, 0x61, 0x73, 0x2e, 0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73,
-	0x75, 0x73, 0x2e, 0x50, 0x72, 0x6f, 0x6d, 0x69, 0x73, 0x65, 0x54, 0x6f, 0x70, 0x6f, 0x6c, 0x6f,
-	0x67, 0x79, 0x43, 0x68, 0x61, 0x6e, 0x67, 0x65, 0x22, 0x00, 0x12, 0x6f, 0x0a, 0x14, 0x41, 0x63,
-	0x63, 0x65, 0x70, 0x74, 0x54, 0x6f, 0x70, 0x6f, 0x6c, 0x6f, 0x67, 0x79, 0x43, 0x68, 0x61, 0x6e,
-	0x67, 0x65, 0x12, 0x2c, 0x2e, 0x61, 0x74, 0x6c, 0x61, 0x73, 0x2e, 0x63, 0x6f, 0x6e, 0x73, 0x65,
-	0x6e, 0x73, 0x75, 0x73, 0x2e, 0x41, 0x63, 0x63, 0x65, 0x70, 0x74, 0x54, 0x6f, 0x70, 0x6f, 0x6c,
-	0x6f, 0x67, 0x79, 0x43, 0x68, 0x61, 0x6e, 0x67, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
+	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x2a, 0x35, 0x0a, 0x10, 0x52, 0x65, 0x70, 0x6c, 0x69, 0x63,
+	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x4c, 0x65, 0x76, 0x65, 0x6c, 0x12, 0x0a, 0x0a, 0x06, 0x47, 0x4c,
+	0x4f, 0x42, 0x41, 0x4c, 0x10, 0x00, 0x12, 0x0a, 0x0a, 0x06, 0x52, 0x45, 0x47, 0x49, 0x4f, 0x4e,
+	0x10, 0x01, 0x12, 0x09, 0x0a, 0x05, 0x4c, 0x4f, 0x43, 0x41, 0x4c, 0x10, 0x02, 0x2a, 0x32, 0x0a,
+	0x0e, 0x54, 0x6f, 0x70, 0x6f, 0x6c, 0x6f, 0x67, 0x79, 0x43, 0x68, 0x61, 0x6e, 0x67, 0x65, 0x12,
+	0x0b, 0x0a, 0x07, 0x55, 0x4e, 0x4b, 0x4e, 0x4f, 0x57, 0x4e, 0x10, 0x00, 0x12, 0x07, 0x0a, 0x03,
+	0x41, 0x44, 0x44, 0x10, 0x01, 0x12, 0x0a, 0x0a, 0x06, 0x52, 0x45, 0x4d, 0x4f, 0x56, 0x45, 0x10,
+	0x02, 0x32, 0xc7, 0x03, 0x0a, 0x09, 0x43, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75, 0x73, 0x12,
+	0x70, 0x0a, 0x15, 0x50, 0x72, 0x6f, 0x70, 0x6f, 0x73, 0x65, 0x54, 0x6f, 0x70, 0x6f, 0x6c, 0x6f,
+	0x67, 0x79, 0x43, 0x68, 0x61, 0x6e, 0x67, 0x65, 0x12, 0x2d, 0x2e, 0x61, 0x74, 0x6c, 0x61, 0x73,
+	0x2e, 0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75, 0x73, 0x2e, 0x50, 0x72, 0x6f, 0x70, 0x6f,
+	0x73, 0x65, 0x54, 0x6f, 0x70, 0x6f, 0x6c, 0x6f, 0x67, 0x79, 0x43, 0x68, 0x61, 0x6e, 0x67, 0x65,
+	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x26, 0x2e, 0x61, 0x74, 0x6c, 0x61, 0x73, 0x2e,
+	0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75, 0x73, 0x2e, 0x50, 0x72, 0x6f, 0x6d, 0x69, 0x73,
+	0x65, 0x54, 0x6f, 0x70, 0x6f, 0x6c, 0x6f, 0x67, 0x79, 0x43, 0x68, 0x61, 0x6e, 0x67, 0x65, 0x22,
+	0x00, 0x12, 0x6f, 0x0a, 0x14, 0x41, 0x63, 0x63, 0x65, 0x70, 0x74, 0x54, 0x6f, 0x70, 0x6f, 0x6c,
+	0x6f, 0x67, 0x79, 0x43, 0x68, 0x61, 0x6e, 0x67, 0x65, 0x12, 0x2c, 0x2e, 0x61, 0x74, 0x6c, 0x61,
+	0x73, 0x2e, 0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75, 0x73, 0x2e, 0x41, 0x63, 0x63, 0x65,
+	0x70, 0x74, 0x54, 0x6f, 0x70, 0x6f, 0x6c, 0x6f, 0x67, 0x79, 0x43, 0x68, 0x61, 0x6e, 0x67, 0x65,
+	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x27, 0x2e, 0x61, 0x74, 0x6c, 0x61, 0x73, 0x2e,
+	0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75, 0x73, 0x2e, 0x41, 0x63, 0x63, 0x65, 0x70, 0x74,
+	0x65, 0x64, 0x54, 0x6f, 0x70, 0x6f, 0x6c, 0x6f, 0x67, 0x79, 0x43, 0x68, 0x61, 0x6e, 0x67, 0x65,
+	0x22, 0x00, 0x12, 0x72, 0x0a, 0x13, 0x53, 0x74, 0x65, 0x61, 0x6c, 0x54, 0x61, 0x62, 0x6c, 0x65,
+	0x4f, 0x77, 0x6e, 0x65, 0x72, 0x73, 0x68, 0x69, 0x70, 0x12, 0x2b, 0x2e, 0x61, 0x74, 0x6c, 0x61,
+	0x73, 0x2e, 0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75, 0x73, 0x2e, 0x53, 0x74, 0x65, 0x61,
+	0x6c, 0x54, 0x61, 0x62, 0x6c, 0x65, 0x4f, 0x77, 0x6e, 0x65, 0x72, 0x73, 0x68, 0x69, 0x70, 0x52,
+	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x2c, 0x2e, 0x61, 0x74, 0x6c, 0x61, 0x73, 0x2e, 0x63,
+	0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75, 0x73, 0x2e, 0x53, 0x74, 0x65, 0x61, 0x6c, 0x54, 0x61,
+	0x62, 0x6c, 0x65, 0x4f, 0x77, 0x6e, 0x65, 0x72, 0x73, 0x68, 0x69, 0x70, 0x52, 0x65, 0x73, 0x70,
+	0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x63, 0x0a, 0x0e, 0x57, 0x72, 0x69, 0x74, 0x65, 0x4d,
+	0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x26, 0x2e, 0x61, 0x74, 0x6c, 0x61, 0x73,
+	0x2e, 0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75, 0x73, 0x2e, 0x57, 0x72, 0x69, 0x74, 0x65,
+	0x4d, 0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
 	0x1a, 0x27, 0x2e, 0x61, 0x74, 0x6c, 0x61, 0x73, 0x2e, 0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73,
-	0x75, 0x73, 0x2e, 0x41, 0x63, 0x63, 0x65, 0x70, 0x74, 0x65, 0x64, 0x54, 0x6f, 0x70, 0x6f, 0x6c,
-	0x6f, 0x67, 0x79, 0x43, 0x68, 0x61, 0x6e, 0x67, 0x65, 0x22, 0x00, 0x12, 0x72, 0x0a, 0x13, 0x53,
-	0x74, 0x65, 0x61, 0x6c, 0x54, 0x61, 0x62, 0x6c, 0x65, 0x4f, 0x77, 0x6e, 0x65, 0x72, 0x73, 0x68,
-	0x69, 0x70, 0x12, 0x2b, 0x2e, 0x61, 0x74, 0x6c, 0x61, 0x73, 0x2e, 0x63, 0x6f, 0x6e, 0x73, 0x65,
-	0x6e, 0x73, 0x75, 0x73, 0x2e, 0x53, 0x74, 0x65, 0x61, 0x6c, 0x54, 0x61, 0x62, 0x6c, 0x65, 0x4f,
-	0x77, 0x6e, 0x65, 0x72, 0x73, 0x68, 0x69, 0x70, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a,
-	0x2c, 0x2e, 0x61, 0x74, 0x6c, 0x61, 0x73, 0x2e, 0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75,
-	0x73, 0x2e, 0x53, 0x74, 0x65, 0x61, 0x6c, 0x54, 0x61, 0x62, 0x6c, 0x65, 0x4f, 0x77, 0x6e, 0x65,
-	0x72, 0x73, 0x68, 0x69, 0x70, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12,
-	0x63, 0x0a, 0x0e, 0x57, 0x72, 0x69, 0x74, 0x65, 0x4d, 0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f,
-	0x6e, 0x12, 0x26, 0x2e, 0x61, 0x74, 0x6c, 0x61, 0x73, 0x2e, 0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e,
-	0x73, 0x75, 0x73, 0x2e, 0x57, 0x72, 0x69, 0x74, 0x65, 0x4d, 0x69, 0x67, 0x72, 0x61, 0x74, 0x69,
-	0x6f, 0x6e, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x27, 0x2e, 0x61, 0x74, 0x6c, 0x61,
-	0x73, 0x2e, 0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75, 0x73, 0x2e, 0x57, 0x72, 0x69, 0x74,
-	0x65, 0x4d, 0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e,
-	0x73, 0x65, 0x22, 0x00, 0x42, 0x0c, 0x5a, 0x0a, 0x2f, 0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73,
-	0x75, 0x73, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x75, 0x73, 0x2e, 0x57, 0x72, 0x69, 0x74, 0x65, 0x4d, 0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f,
+	0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x42, 0x0c, 0x5a, 0x0a, 0x2f,
+	0x63, 0x6f, 0x6e, 0x73, 0x65, 0x6e, 0x73, 0x75, 0x73, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f,
+	0x33,
 }
 
 var (
@@ -991,50 +1413,66 @@ func file_consensus_consensus_proto_rawDescGZIP() []byte {
 	return file_consensus_consensus_proto_rawDescData
 }
 
-var file_consensus_consensus_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_consensus_consensus_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_consensus_consensus_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_consensus_consensus_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_consensus_consensus_proto_goTypes = []interface{}{
-	(TopologyChange)(0),                  // 0: atlas.consensus.TopologyChange
-	(*WriteMigrationRequest)(nil),        // 1: atlas.consensus.WriteMigrationRequest
-	(*WriteMigrationResponse)(nil),       // 2: atlas.consensus.WriteMigrationResponse
-	(*StealTableOwnershipRequest)(nil),   // 3: atlas.consensus.StealTableOwnershipRequest
-	(*StealTableOwnershipResponse)(nil),  // 4: atlas.consensus.StealTableOwnershipResponse
-	(*Node)(nil),                         // 5: atlas.consensus.Node
-	(*Region)(nil),                       // 6: atlas.consensus.Region
-	(*ProposeTopologyChangeRequest)(nil), // 7: atlas.consensus.ProposeTopologyChangeRequest
-	(*ProposeRegionTopologyChange)(nil),  // 8: atlas.consensus.ProposeRegionTopologyChange
-	(*ProposeNodeTopologyChange)(nil),    // 9: atlas.consensus.ProposeNodeTopologyChange
-	(*PromiseTopologyChange)(nil),        // 10: atlas.consensus.PromiseTopologyChange
-	(*AcceptTopologyChangeRequest)(nil),  // 11: atlas.consensus.AcceptTopologyChangeRequest
-	(*AcceptedTopologyChange)(nil),       // 12: atlas.consensus.AcceptedTopologyChange
+	(ReplicationLevel)(0),                // 0: atlas.consensus.ReplicationLevel
+	(TopologyChange)(0),                  // 1: atlas.consensus.TopologyChange
+	(*SchemaMigration)(nil),              // 2: atlas.consensus.SchemaMigration
+	(*DataMigration)(nil),                // 3: atlas.consensus.DataMigration
+	(*Migration)(nil),                    // 4: atlas.consensus.Migration
+	(*WriteMigrationRequest)(nil),        // 5: atlas.consensus.WriteMigrationRequest
+	(*WriteMigrationResponse)(nil),       // 6: atlas.consensus.WriteMigrationResponse
+	(*Table)(nil),                        // 7: atlas.consensus.Table
+	(*StealTableOwnershipRequest)(nil),   // 8: atlas.consensus.StealTableOwnershipRequest
+	(*StealTableOwnershipResponse)(nil),  // 9: atlas.consensus.StealTableOwnershipResponse
+	(*Node)(nil),                         // 10: atlas.consensus.Node
+	(*Region)(nil),                       // 11: atlas.consensus.Region
+	(*ProposeTopologyChangeRequest)(nil), // 12: atlas.consensus.ProposeTopologyChangeRequest
+	(*ProposeRegionTopologyChange)(nil),  // 13: atlas.consensus.ProposeRegionTopologyChange
+	(*ProposeNodeTopologyChange)(nil),    // 14: atlas.consensus.ProposeNodeTopologyChange
+	(*PromiseTopologyChange)(nil),        // 15: atlas.consensus.PromiseTopologyChange
+	(*AcceptTopologyChangeRequest)(nil),  // 16: atlas.consensus.AcceptTopologyChangeRequest
+	(*AcceptedTopologyChange)(nil),       // 17: atlas.consensus.AcceptedTopologyChange
+	(*timestamppb.Timestamp)(nil),        // 18: google.protobuf.Timestamp
 }
 var file_consensus_consensus_proto_depIdxs = []int32{
-	5,  // 0: atlas.consensus.StealTableOwnershipResponse.owner:type_name -> atlas.consensus.Node
-	8,  // 1: atlas.consensus.ProposeTopologyChangeRequest.regionChange:type_name -> atlas.consensus.ProposeRegionTopologyChange
-	9,  // 2: atlas.consensus.ProposeTopologyChangeRequest.nodeChange:type_name -> atlas.consensus.ProposeNodeTopologyChange
-	6,  // 3: atlas.consensus.ProposeRegionTopologyChange.region:type_name -> atlas.consensus.Region
-	0,  // 4: atlas.consensus.ProposeRegionTopologyChange.kind:type_name -> atlas.consensus.TopologyChange
-	5,  // 5: atlas.consensus.ProposeNodeTopologyChange.node:type_name -> atlas.consensus.Node
-	0,  // 6: atlas.consensus.ProposeNodeTopologyChange.kind:type_name -> atlas.consensus.TopologyChange
-	5,  // 7: atlas.consensus.PromiseTopologyChange.node:type_name -> atlas.consensus.Node
-	6,  // 8: atlas.consensus.PromiseTopologyChange.region:type_name -> atlas.consensus.Region
-	5,  // 9: atlas.consensus.AcceptTopologyChangeRequest.node:type_name -> atlas.consensus.Node
-	6,  // 10: atlas.consensus.AcceptTopologyChangeRequest.region:type_name -> atlas.consensus.Region
-	5,  // 11: atlas.consensus.AcceptedTopologyChange.node:type_name -> atlas.consensus.Node
-	6,  // 12: atlas.consensus.AcceptedTopologyChange.region:type_name -> atlas.consensus.Region
-	7,  // 13: atlas.consensus.Consensus.ProposeTopologyChange:input_type -> atlas.consensus.ProposeTopologyChangeRequest
-	11, // 14: atlas.consensus.Consensus.AcceptTopologyChange:input_type -> atlas.consensus.AcceptTopologyChangeRequest
-	3,  // 15: atlas.consensus.Consensus.StealTableOwnership:input_type -> atlas.consensus.StealTableOwnershipRequest
-	1,  // 16: atlas.consensus.Consensus.WriteMigration:input_type -> atlas.consensus.WriteMigrationRequest
-	10, // 17: atlas.consensus.Consensus.ProposeTopologyChange:output_type -> atlas.consensus.PromiseTopologyChange
-	12, // 18: atlas.consensus.Consensus.AcceptTopologyChange:output_type -> atlas.consensus.AcceptedTopologyChange
-	4,  // 19: atlas.consensus.Consensus.StealTableOwnership:output_type -> atlas.consensus.StealTableOwnershipResponse
-	2,  // 20: atlas.consensus.Consensus.WriteMigration:output_type -> atlas.consensus.WriteMigrationResponse
-	17, // [17:21] is the sub-list for method output_type
-	13, // [13:17] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	2,  // 0: atlas.consensus.Migration.schema:type_name -> atlas.consensus.SchemaMigration
+	3,  // 1: atlas.consensus.Migration.data:type_name -> atlas.consensus.DataMigration
+	10, // 2: atlas.consensus.WriteMigrationRequest.sender:type_name -> atlas.consensus.Node
+	4,  // 3: atlas.consensus.WriteMigrationRequest.migration:type_name -> atlas.consensus.Migration
+	7,  // 4: atlas.consensus.WriteMigrationResponse.table:type_name -> atlas.consensus.Table
+	10, // 5: atlas.consensus.WriteMigrationResponse.leadership:type_name -> atlas.consensus.Node
+	4,  // 6: atlas.consensus.WriteMigrationResponse.migrations:type_name -> atlas.consensus.Migration
+	10, // 7: atlas.consensus.Table.globalOwner:type_name -> atlas.consensus.Node
+	18, // 8: atlas.consensus.Table.createdAt:type_name -> google.protobuf.Timestamp
+	7,  // 9: atlas.consensus.StealTableOwnershipRequest.table:type_name -> atlas.consensus.Table
+	7,  // 10: atlas.consensus.StealTableOwnershipResponse.table:type_name -> atlas.consensus.Table
+	13, // 11: atlas.consensus.ProposeTopologyChangeRequest.regionChange:type_name -> atlas.consensus.ProposeRegionTopologyChange
+	14, // 12: atlas.consensus.ProposeTopologyChangeRequest.nodeChange:type_name -> atlas.consensus.ProposeNodeTopologyChange
+	11, // 13: atlas.consensus.ProposeRegionTopologyChange.region:type_name -> atlas.consensus.Region
+	1,  // 14: atlas.consensus.ProposeRegionTopologyChange.kind:type_name -> atlas.consensus.TopologyChange
+	10, // 15: atlas.consensus.ProposeNodeTopologyChange.node:type_name -> atlas.consensus.Node
+	1,  // 16: atlas.consensus.ProposeNodeTopologyChange.kind:type_name -> atlas.consensus.TopologyChange
+	10, // 17: atlas.consensus.PromiseTopologyChange.node:type_name -> atlas.consensus.Node
+	11, // 18: atlas.consensus.PromiseTopologyChange.region:type_name -> atlas.consensus.Region
+	10, // 19: atlas.consensus.AcceptTopologyChangeRequest.node:type_name -> atlas.consensus.Node
+	11, // 20: atlas.consensus.AcceptTopologyChangeRequest.region:type_name -> atlas.consensus.Region
+	10, // 21: atlas.consensus.AcceptedTopologyChange.node:type_name -> atlas.consensus.Node
+	11, // 22: atlas.consensus.AcceptedTopologyChange.region:type_name -> atlas.consensus.Region
+	12, // 23: atlas.consensus.Consensus.ProposeTopologyChange:input_type -> atlas.consensus.ProposeTopologyChangeRequest
+	16, // 24: atlas.consensus.Consensus.AcceptTopologyChange:input_type -> atlas.consensus.AcceptTopologyChangeRequest
+	8,  // 25: atlas.consensus.Consensus.StealTableOwnership:input_type -> atlas.consensus.StealTableOwnershipRequest
+	5,  // 26: atlas.consensus.Consensus.WriteMigration:input_type -> atlas.consensus.WriteMigrationRequest
+	15, // 27: atlas.consensus.Consensus.ProposeTopologyChange:output_type -> atlas.consensus.PromiseTopologyChange
+	17, // 28: atlas.consensus.Consensus.AcceptTopologyChange:output_type -> atlas.consensus.AcceptedTopologyChange
+	9,  // 29: atlas.consensus.Consensus.StealTableOwnership:output_type -> atlas.consensus.StealTableOwnershipResponse
+	6,  // 30: atlas.consensus.Consensus.WriteMigration:output_type -> atlas.consensus.WriteMigrationResponse
+	27, // [27:31] is the sub-list for method output_type
+	23, // [23:27] is the sub-list for method input_type
+	23, // [23:23] is the sub-list for extension type_name
+	23, // [23:23] is the sub-list for extension extendee
+	0,  // [0:23] is the sub-list for field type_name
 }
 
 func init() { file_consensus_consensus_proto_init() }
@@ -1044,7 +1482,7 @@ func file_consensus_consensus_proto_init() {
 	}
 	if !protoimpl.UnsafeEnabled {
 		file_consensus_consensus_proto_msgTypes[0].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*WriteMigrationRequest); i {
+			switch v := v.(*SchemaMigration); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -1056,7 +1494,7 @@ func file_consensus_consensus_proto_init() {
 			}
 		}
 		file_consensus_consensus_proto_msgTypes[1].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*WriteMigrationResponse); i {
+			switch v := v.(*DataMigration); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -1068,7 +1506,7 @@ func file_consensus_consensus_proto_init() {
 			}
 		}
 		file_consensus_consensus_proto_msgTypes[2].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*StealTableOwnershipRequest); i {
+			switch v := v.(*Migration); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -1080,7 +1518,7 @@ func file_consensus_consensus_proto_init() {
 			}
 		}
 		file_consensus_consensus_proto_msgTypes[3].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*StealTableOwnershipResponse); i {
+			switch v := v.(*WriteMigrationRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -1092,7 +1530,7 @@ func file_consensus_consensus_proto_init() {
 			}
 		}
 		file_consensus_consensus_proto_msgTypes[4].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*Node); i {
+			switch v := v.(*WriteMigrationResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -1104,7 +1542,7 @@ func file_consensus_consensus_proto_init() {
 			}
 		}
 		file_consensus_consensus_proto_msgTypes[5].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*Region); i {
+			switch v := v.(*Table); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -1116,7 +1554,7 @@ func file_consensus_consensus_proto_init() {
 			}
 		}
 		file_consensus_consensus_proto_msgTypes[6].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ProposeTopologyChangeRequest); i {
+			switch v := v.(*StealTableOwnershipRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -1128,7 +1566,7 @@ func file_consensus_consensus_proto_init() {
 			}
 		}
 		file_consensus_consensus_proto_msgTypes[7].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ProposeRegionTopologyChange); i {
+			switch v := v.(*StealTableOwnershipResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -1140,7 +1578,7 @@ func file_consensus_consensus_proto_init() {
 			}
 		}
 		file_consensus_consensus_proto_msgTypes[8].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ProposeNodeTopologyChange); i {
+			switch v := v.(*Node); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -1152,7 +1590,7 @@ func file_consensus_consensus_proto_init() {
 			}
 		}
 		file_consensus_consensus_proto_msgTypes[9].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*PromiseTopologyChange); i {
+			switch v := v.(*Region); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -1164,7 +1602,7 @@ func file_consensus_consensus_proto_init() {
 			}
 		}
 		file_consensus_consensus_proto_msgTypes[10].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*AcceptTopologyChangeRequest); i {
+			switch v := v.(*ProposeTopologyChangeRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -1176,6 +1614,54 @@ func file_consensus_consensus_proto_init() {
 			}
 		}
 		file_consensus_consensus_proto_msgTypes[11].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*ProposeRegionTopologyChange); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_consensus_consensus_proto_msgTypes[12].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*ProposeNodeTopologyChange); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_consensus_consensus_proto_msgTypes[13].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*PromiseTopologyChange); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_consensus_consensus_proto_msgTypes[14].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*AcceptTopologyChangeRequest); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_consensus_consensus_proto_msgTypes[15].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*AcceptedTopologyChange); i {
 			case 0:
 				return &v.state
@@ -1188,19 +1674,23 @@ func file_consensus_consensus_proto_init() {
 			}
 		}
 	}
-	file_consensus_consensus_proto_msgTypes[6].OneofWrappers = []interface{}{
+	file_consensus_consensus_proto_msgTypes[2].OneofWrappers = []interface{}{
+		(*Migration_Schema)(nil),
+		(*Migration_Data)(nil),
+	}
+	file_consensus_consensus_proto_msgTypes[10].OneofWrappers = []interface{}{
 		(*ProposeTopologyChangeRequest_RegionChange)(nil),
 		(*ProposeTopologyChangeRequest_NodeChange)(nil),
 	}
-	file_consensus_consensus_proto_msgTypes[9].OneofWrappers = []interface{}{
+	file_consensus_consensus_proto_msgTypes[13].OneofWrappers = []interface{}{
 		(*PromiseTopologyChange_Node)(nil),
 		(*PromiseTopologyChange_Region)(nil),
 	}
-	file_consensus_consensus_proto_msgTypes[10].OneofWrappers = []interface{}{
+	file_consensus_consensus_proto_msgTypes[14].OneofWrappers = []interface{}{
 		(*AcceptTopologyChangeRequest_Node)(nil),
 		(*AcceptTopologyChangeRequest_Region)(nil),
 	}
-	file_consensus_consensus_proto_msgTypes[11].OneofWrappers = []interface{}{
+	file_consensus_consensus_proto_msgTypes[15].OneofWrappers = []interface{}{
 		(*AcceptedTopologyChange_Node)(nil),
 		(*AcceptedTopologyChange_Region)(nil),
 	}
@@ -1209,8 +1699,8 @@ func file_consensus_consensus_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_consensus_consensus_proto_rawDesc,
-			NumEnums:      1,
-			NumMessages:   12,
+			NumEnums:      2,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

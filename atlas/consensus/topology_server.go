@@ -8,10 +8,6 @@ import (
 	"go.uber.org/zap"
 )
 
-type Server struct {
-	UnimplementedConsensusServer
-}
-
 var ErrInvalidTopologyChange = errors.New("invalid topology change")
 
 const PlaceholderName = "--PLACEHOLDER--"

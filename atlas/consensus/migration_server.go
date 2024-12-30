@@ -27,7 +27,9 @@ func (t *Table) FromSqlRow(row *atlas.Row) error {
 	t.GlobalOwner = &Node{
 		NodeId: row.GetColumn("owner_node_id").GetInt(),
 	}
-	t.AllowedRegions = strings.Split(row.GetColumn("allowed_regions").GetString(), ",")
+	t.AllowedRegions = strings.FieldsFunc(row.GetColumn("allowed_regions").GetString(), func(r rune) bool {
+		return r == ','
+	})
 
 	return nil
 }
@@ -67,52 +69,49 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 		}
 	}()
 
-	// Request the existing table entry from the database
+	// Request the existing table entry from the database~
 	results, err := atlas.ExecuteSQL(ctx, `
-select (id, replication_level, table_name, created_at, owner_node_id, version, allowed_regions)
+select id, replication_level, table_name, created_at, owner_node_id, version, allowed_regions
 from tables
 where id = :id
-`, conn, false, atlas.Param{
-		Name:  "id",
-		Value: req.GetTable().GetId(),
-	})
+`, conn, false, atlas.Param{Name: "id", Value: req.GetTable().GetId()})
 	if err != nil {
 		return nil, err
 	}
 
-	var ownerNodeId *int64
+	var newOwnerId *int64
 
 	if req.GetTable().GetGlobalOwner() != nil {
 		id := req.GetTable().GetGlobalOwner().GetNodeId()
-		ownerNodeId = &id
+		newOwnerId = &id
 	}
 
 	// If the table entry does not exist, we can automatically grant ownership to the requesting node.
 	if results.Empty() {
-		_, err = atlas.ExecuteSQL(
-			ctx,
-			`
+		_, err = atlas.ExecuteSQL(ctx, `
 insert into tables (id, table_name, replication_level, owner_node_id, created_at)
 values (:id, :table_name, :replication_level, :owner_node_id, :created_at)
-`,
-			conn,
-			false,
-			atlas.Param{
-				Name:  "table_name",
-				Value: req.GetTable().GetName(),
-			}, atlas.Param{
-				Name:  "replication_level",
-				Value: req.GetTable().GetReplicationLevel().String(),
-			}, atlas.Param{
-				Name:  "owner_node_id",
-				Value: ownerNodeId,
-			}, atlas.Param{
-				Name:  "created_at",
-				Value: req.GetTable().GetCreatedAt().AsTime(),
-			}, atlas.Param{
-				Name:  "id",
-				Value: req.GetTable().GetId(),
-			})
+`, conn, false, atlas.Param{
+			Name:  "table_name",
+			Value: req.GetTable().GetName(),
+		}, atlas.Param{
+			Name:  "replication_level",
+			Value: req.GetTable().GetReplicationLevel().String(),
+		}, atlas.Param{
+			Name:  "owner_node_id",
+			Value: newOwnerId,
+		}, atlas.Param{
+			Name:  "created_at",
+			Value: req.GetTable().GetCreatedAt().AsTime(),
+		}, atlas.Param{
+			Name:  "id",
+			Value: req.GetTable().GetId(),
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		_, err = atlas.ExecuteSQL(ctx, "commit", conn, false)
 		if err != nil {
 			return nil, err
 		}
@@ -141,26 +140,20 @@ values (:id, :table_name, :replication_level, :owner_node_id, :created_at)
 	}
 
 	// All global tables belong to a single owner.
-	//This owner can be the only writer.
+	// This owner can be the only writer.
 	// Further, if a node wants to perform a schema migration, it must become the owner of all data.
 	// This is a w-paxos process.
 	if existingTable.GetReplicationLevel() == ReplicationLevel_global || req.Reason == StealReason_SCHEMA_MIGRATION {
 		// retrieve the current owner
-		results, err = atlas.ExecuteSQL(
-			ctx,
-			`
+		results, err = atlas.ExecuteSQL(ctx, `
 select nodes.id as id, active, r.name as region, port, address
 from nodes
          inner join main.regions r on nodes.region_id = r.id
 where nodes.id = :id
-`,
-			conn,
-			false,
-			atlas.Param{
-				Name:  "id",
-				Value: existingTable.GetGlobalOwner().GetNodeId(),
-			},
-		)
+`, conn, false, atlas.Param{
+			Name:  "id",
+			Value: existingTable.GetGlobalOwner().GetNodeId(),
+		})
 		err = existingTable.GlobalOwner.FromSqlRow(results.GetIndex(0))
 		if err != nil {
 			return nil, err

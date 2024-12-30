@@ -97,7 +97,7 @@ func (v *ValueColumnString) GetString() string {
 }
 
 func (v *ValueColumnString) GetTime() time.Time {
-	t, err := time.Parse(time.RFC3339, v.Value)
+	t, err := time.Parse(time.DateTime, v.Value)
 	if err != nil {
 		Logger.Error("error parsing time", zap.Error(err))
 	}
@@ -204,6 +204,12 @@ func CaptureChanges(query string, db *sqlite.Conn, output bool, params ...Param)
 			stmt.SetNull(param.Name)
 		} else if v, ok := param.Value.(time.Time); ok {
 			stmt.SetText(param.Name, v.Format(time.RFC3339))
+		} else if v, ok := param.Value.(*int64); ok {
+			if v == nil {
+				stmt.SetNull(param.Name)
+			} else {
+				stmt.SetInt64(param.Name, *v)
+			}
 		} else {
 			return nil, fmt.Errorf("unsupported parameter type: %T", param.Value)
 		}

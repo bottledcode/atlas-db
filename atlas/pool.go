@@ -35,6 +35,18 @@ func CreatePool(options *Options) {
 	}, sqlitemigration.Options{
 		Flags:    sqlite.OpenReadWrite | sqlite.OpenCreate | sqlite.OpenWAL,
 		PoolSize: 10,
+		PrepareConn: func(conn *sqlite.Conn) (err error) {
+			err = conn.SetDefensive(true)
+			if err != nil {
+				return
+			}
+			_, err = conn.Prep("PRAGMA foreign_keys = ON;").Step()
+			if err != nil {
+				return
+			}
+
+			return
+		},
 	})
 }
 

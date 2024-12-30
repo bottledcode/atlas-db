@@ -89,7 +89,7 @@ func TestNodeAddProposal_AtlasError(t *testing.T) {
 
 	_, err = atlas.ExecuteSQL(ctx, "INSERT INTO regions (name) VALUES ('region1')", conn, false)
 	assert.NoError(t, err)
-	_, err = atlas.ExecuteSQL(ctx, "INSERT INTO nodes (id, address, port, region_id) VALUES (1, 'localhost', 1234, 1)", conn, false)
+	_, err = atlas.ExecuteSQL(ctx, "INSERT INTO nodes (id, address, port, region_id, active) VALUES (1, 'localhost', 1234, 1, 1)", conn, false)
 	assert.NoError(t, err)
 
 	atlas.MigrationsPool.Put(conn)
@@ -129,7 +129,7 @@ func TestNodeRemoveProposal_Success(t *testing.T) {
 
 	_, err = atlas.ExecuteSQL(ctx, "INSERT INTO regions (name) VALUES ('region1')", conn, false)
 	assert.NoError(t, err)
-	_, err = atlas.ExecuteSQL(ctx, "INSERT INTO nodes (id, address, port, region_id) VALUES (1, 'localhost', 1234, 1)", conn, false)
+	_, err = atlas.ExecuteSQL(ctx, "INSERT INTO nodes (id, address, port, region_id, active) VALUES (1, 'localhost', 1234, 1, 1)", conn, false)
 	assert.NoError(t, err)
 
 	atlas.MigrationsPool.Put(conn)

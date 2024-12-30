@@ -21,9 +21,7 @@ func CreatePool(options *Options) {
 		return
 	}
 
-	Pool = sqlitemigration.NewPool(options.DbFilename, sqlitemigration.Schema{
-		Migrations: strings.Split(migrations, ";"),
-	}, sqlitemigration.Options{
+	Pool = sqlitemigration.NewPool(options.DbFilename, sqlitemigration.Schema{}, sqlitemigration.Options{
 		Flags:    sqlite.OpenReadWrite | sqlite.OpenCreate | sqlite.OpenWAL,
 		PoolSize: runtime.NumCPU() * 2,
 		PrepareConn: func(conn *sqlite.Conn) (err error) {

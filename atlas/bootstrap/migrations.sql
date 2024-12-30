@@ -1,15 +1,10 @@
--- a simple list of regions; a region should never be deleted
 create table regions
 (
     id   integer not null primary key autoincrement,
     name text    not null unique
 );
-
--- create an index on name so we can look it up by name efficiently
 create index regions_name_uindex
     on regions (name);
-
--- nodes in the cluster
 create table nodes
 (
     id          integer not null primary key autoincrement,
@@ -21,8 +16,6 @@ create table nodes
     create_at   timestamp default CURRENT_TIMESTAMP,
     last_active timestamp default CURRENT_TIMESTAMP
 );
-
--- table metadata
 create table tables
 (
     id                integer not null primary key autoincrement,
@@ -34,8 +27,6 @@ create table tables
     created_at        timestamp        default CURRENT_TIMESTAMP,
     version           int     not null default 0
 );
-
--- provide a detailed view on table leadership
 create table leadership
 (
     table_id     integer not null
@@ -50,8 +41,6 @@ create table leadership
     last_updated timestamp default CURRENT_TIMESTAMP,
     primary key (table_id, node_id, region_id)
 );
-
--- a log of migrations to apply to the database
 create table schema_migrations
 (
     table_id   integer not null,
@@ -60,7 +49,6 @@ create table schema_migrations
     applied_at timestamp default CURRENT_TIMESTAMP,
     primary key (table_id, version)
 );
-
 create table data_migrations
 (
     table_id integer not null,

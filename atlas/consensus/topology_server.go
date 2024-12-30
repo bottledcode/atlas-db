@@ -196,7 +196,7 @@ func (s *Server) nodeAddProposal(ctx context.Context, node *Node) (*PromiseTopol
 		return nil, fmt.Errorf("region %s not found: %w", node.GetNodeRegion(), ErrInvalidTopologyChange)
 	}
 
-	_, err = atlas.ExecuteSQL(ctx, "insert into nodes values (:id, :name, 0, :region)", conn, false, atlas.Param{
+	_, err = atlas.ExecuteSQL(ctx, "insert into nodes (id, address, port, region_id, active) values (:id, :name, 0, :region, 0)", conn, false, atlas.Param{
 		Name:  "id",
 		Value: node.GetNodeId(),
 	}, atlas.Param{
@@ -278,7 +278,7 @@ func (s *Server) AcceptTopologyChange(ctx context.Context, accept *AcceptTopolog
 	switch change := accept.GetChange().(type) {
 	case *AcceptTopologyChangeRequest_Node:
 		atlas.Logger.Info("☄️ A node has joined the cluster", zap.Int64("node_id", change.Node.GetNodeId()))
-		_, err = atlas.ExecuteSQL(ctx, "update nodes set address = :address, port = :port where id = :id", conn, false, atlas.Param{
+		_, err = atlas.ExecuteSQL(ctx, "update nodes set address = :address, port = :port, active = 1 where id = :id", conn, false, atlas.Param{
 			Name:  "address",
 			Value: change.Node.GetNodeAddress(),
 		}, atlas.Param{

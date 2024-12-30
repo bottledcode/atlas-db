@@ -60,7 +60,7 @@ func InitializeMaybe() error {
 		}
 
 		// No nodes currently exist, and we didn't bootstrap. So, start writing!
-		_, err = atlas.ExecuteSQL(ctx, "insert into nodes (address, port, region_id) values (:address, :port, :region)", conn, false, atlas.Param{
+		_, err = atlas.ExecuteSQL(ctx, "insert into nodes (address, port, region_id, active) values (:address, :port, :region, 1)", conn, false, atlas.Param{
 			Name:  "address",
 			Value: atlas.CurrentOptions.AdvertiseAddress,
 		}, atlas.Param{

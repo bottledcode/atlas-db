@@ -6,6 +6,7 @@ import (
 	"go.uber.org/zap"
 	"os"
 	"strings"
+	"time"
 	"zombiezen.com/go/sqlite"
 )
 
@@ -15,7 +16,9 @@ func GetCurrentSession(ctx context.Context) *sqlite.Session {
 	return ctx.Value("atlas-session").(*sqlite.Session)
 }
 
-// - An error if session creation or attachment fails
+// InitializeSession creates a new session for the provided SQLite connection and attaches all tables with a replication
+// level of "regional" or "global" to it. It returns the updated context with the session attached. If an error occurs
+// during session creation or table attachment, it returns the original context and the error.
 func InitializeSession(ctx context.Context, conn *sqlite.Conn, key string) (context.Context, error) {
 	var err error
 	session, err := conn.CreateSession("")
@@ -29,7 +32,7 @@ func InitializeSession(ctx context.Context, conn *sqlite.Conn, key string) (cont
 	}
 	defer MigrationsPool.Put(m)
 
-	results, err := ExecuteSQL(ctx, "select table_name from tables where is_global_replicated or is_region_replicated", m, false)
+	results, err := ExecuteSQL(ctx, "select table_name from tables where replication_level in ('regional', 'global')", m, false)
 	if err != nil {
 		return ctx, err
 	}
@@ -50,6 +53,7 @@ type ValueColumn interface {
 	GetBool() bool
 	GetBlob() []byte
 	IsNull() bool
+	GetTime() time.Time
 }
 
 type UnknownValueColumn struct {
@@ -79,6 +83,10 @@ func (u *UnknownValueColumn) IsNull() bool {
 	return false
 }
 
+func (u *UnknownValueColumn) GetTime() time.Time {
+	panic("not a time")
+}
+
 type ValueColumnString struct {
 	UnknownValueColumn
 	Value string
@@ -86,6 +94,14 @@ type ValueColumnString struct {
 
 func (v *ValueColumnString) GetString() string {
 	return v.Value
+}
+
+func (v *ValueColumnString) GetTime() time.Time {
+	t, err := time.Parse(time.DateTime, v.Value)
+	if err != nil {
+		Logger.Error("error parsing time", zap.Error(err))
+	}
+	return t
 }
 
 type ValueColumnInt struct {
@@ -155,6 +171,10 @@ func (r *Rows) GetIndex(idx int) *Row {
 	return &r.Rows[idx]
 }
 
+func (r *Rows) Empty() bool {
+	return len(r.Rows) == 0
+}
+
 // Each row is converted to a Row struct with corresponding ValueColumn implementations.
 func CaptureChanges(query string, db *sqlite.Conn, output bool, params ...Param) (*Rows, error) {
 	stmt, err := db.Prepare(query)
@@ -182,6 +202,16 @@ func CaptureChanges(query string, db *sqlite.Conn, output bool, params ...Param)
 			stmt.SetBool(param.Name, v)
 		} else if param.Value == nil {
 			stmt.SetNull(param.Name)
+		} else if v, ok := param.Value.(time.Time); ok {
+			stmt.SetText(param.Name, v.Format(time.RFC3339))
+		} else if v, ok := param.Value.(*int64); ok {
+			if v == nil {
+				stmt.SetNull(param.Name)
+			} else {
+				stmt.SetInt64(param.Name, *v)
+			}
+		} else {
+			return nil, fmt.Errorf("unsupported parameter type: %T", param.Value)
 		}
 	}
 

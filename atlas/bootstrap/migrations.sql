@@ -1,45 +1,64 @@
-create table tables
-(
-    id            integer not null primary key autoincrement,
-    table_name    text    not null,
-    is_region_replicated integer not null,
-    is_global_replicated integer not null
-);
 create table regions
 (
     id   integer not null primary key autoincrement,
-    name text    not null
+    name text    not null unique
 );
 create index regions_name_uindex
     on regions (name);
 create table nodes
 (
-    id        integer not null primary key autoincrement,
-    address   text    not null,
-    port      int     not null,
-    region_id int     not null
-        constraint nodes_regions_id_fk references regions
+    id          integer not null primary key autoincrement,
+    address     text    not null,
+    port        int     not null,
+    region_id   int     not null
+        constraint nodes_regions_id_fk references regions,
+    active      int     not null,
+    create_at   timestamp default CURRENT_TIMESTAMP,
+    last_active timestamp default CURRENT_TIMESTAMP
 );
-create table table_nodes
+create table tables
 (
-    id       integer not null primary key autoincrement,
-    is_owner INTEGER not null,
-    table_id integer
-        constraint table_nodes_tables_id_fk
-            references tables,
-    node_id  integer
-        constraint table_nodes_nodes_id_fk
-            references nodes
+    id                integer not null primary key autoincrement,
+    table_name        text    not null unique,
+    replication_level text check (replication_level in ('local', 'regional', 'global')),
+    owner_node_id     integer -- for global replication
+        constraint tables_nodes_id_fk
+            references nodes,
+    created_at        timestamp        default CURRENT_TIMESTAMP,
+    version           int     not null default 0,
+    promised          int     not null default 0,
+    allowed_regions   text             default null
 );
-create table table_migrations
+create table leadership
 (
-    ballot     integer not null,
-    table_id   integer not null
-        constraint table_migrations_tables_id_fk
+    table_id     integer not null
+        constraint leadership_tables_id_fk
             references tables,
-    migrations BLOB    not null,
-    constraint table_migrations_pk
-        primary key (ballot, table_id)
+    node_id      integer not null
+        constraint leadership_nodes_id_fk
+            references nodes,
+    region_id    integer not null
+        constraint leadership_regions_id_fk
+            references regions,
+    last_updated timestamp        default CURRENT_TIMESTAMP,
+    promised     int     not null default 0,
+    owner        int     not null default 0,
+    primary key (table_id, region_id, node_id)
 );
-create index table_migrations_table_id_index
-    on table_migrations (table_id);
+create index leadership_node_id_index
+    on leadership (owner, table_id, region_id);
+create table schema_migrations
+(
+    table_id   integer not null,
+    version    integer not null,
+    command    text    not null,
+    applied_at timestamp default CURRENT_TIMESTAMP,
+    primary key (table_id, version)
+);
+create table data_migrations
+(
+    table_id integer not null,
+    version  integer not null,
+    data     blob    not null,
+    primary key (table_id, version)
+);

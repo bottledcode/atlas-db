@@ -9,6 +9,12 @@ on:
   pull_request:
     branches: [ "main" ]
 
+
+permissions:
+    contents: read
+    pull-requests: read
+    checks: write
+
 jobs:
 
   build:
@@ -41,3 +47,4 @@ jobs:
       uses: golangci/golangci-lint-action@v6
       with:
         version: v1.60
+        only-new-issues: true

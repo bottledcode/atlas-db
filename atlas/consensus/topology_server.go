@@ -119,7 +119,9 @@ func (s *Server) nodeRemoveProposal(ctx context.Context, node *Node) (*PromiseTo
 		return nil, err
 	}
 	defer func() {
-		atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
+		if err != nil {
+			atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
+		}
 	}()
 
 	regionId, err := atlas.GetRegionIdFromName(ctx, conn, node.GetNodeRegion())

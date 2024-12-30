@@ -66,9 +66,26 @@ jobs:
           script: |
             const { context, github } = require('@actions/github');
             const pr = context.payload.pull_request;
-            await github.pulls.merge({
+            
+            // Verify PR status checks
+            const { data: checks } = await github.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: pr.number,
-              merge_method: 'squash'
             });
+            
+            if (!checks.mergeable) {
+              throw new Error('PR is not mergeable. Status checks might be failing.');
+            }
+            
+            try {
+              await github.pulls.merge({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+                merge_method: 'squash'
+              });
+            } catch (error) {
+              console.error('Failed to merge PR:', error);
+              throw error;
+            }

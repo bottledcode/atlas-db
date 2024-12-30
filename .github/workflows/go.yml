@@ -52,6 +52,7 @@ jobs:
         only-new-issues: true
 
   auto-merge:
+    name: Auto-merge Dependabot PR
     runs-on: self-hosted
     needs: [build, lint]
     if: github.actor == 'dependabot[bot]'

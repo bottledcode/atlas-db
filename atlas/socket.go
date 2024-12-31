@@ -282,7 +282,7 @@ func handleConnection(conn net.Conn) {
 				case sqlite.TypeText:
 					writeMessage(r + " TEXT " + stmt.ColumnText(i))
 				case sqlite.TypeInteger:
-					writeMessage(r + " INTEGER " + strconv.FormatInt(stmt.ColumnInt64(i), 10))
+					writeMessage(r + " INT " + strconv.FormatInt(stmt.ColumnInt64(i), 10))
 				case sqlite.TypeFloat:
 					writeMessage(r + " FLOAT " + strconv.FormatFloat(stmt.ColumnFloat(i), 'f', -1, 64))
 				case sqlite.TypeNull:

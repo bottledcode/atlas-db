@@ -13,9 +13,20 @@ The granularity of Atlas is at the table level.
 ## Ownership
 
 A single node owns each table in Atlas.
-This node is responsible for the table’s schema and data.
+This node is responsible for the table's schema and data.
 Another node can "steal" the table from the owner by providing a reason for the steal.
 If the cluster agrees that this is the best decision for the table, the table ownership is transferred to the new owner.
+
+Valid reasons for ownership transfer include:
+- Load balancing: When the current owner is overloaded
+- Locality optimization: Moving ownership closer to frequent accessors
+- Fault recovery: When the current owner is unreachable
+
+The transfer process requires:
+1. New owner proposes transfer with reason
+2. Cluster nodes vote based on current state
+3. If majority agrees, ownership is transferred
+4. All future writes are redirected to the new owner
 
 ## Replication
 

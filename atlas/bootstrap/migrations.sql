@@ -15,7 +15,7 @@ create table nodes
 );
 create table tables
 (
-    table_name         text not null primary key,
+    name               text not null primary key,
     replication_level  text check (replication_level in ('local', 'regional', 'global')),
     owner_node_id      integer
         constraint tables_nodes_id_fk
@@ -42,10 +42,7 @@ create table migrations
 );
 create table own
 (
-    table_id   integer not null primary key
+    table_id text not null
         constraint own_tables_id_fk
-            references tables,
-    table_name text    not null -- denormalized for easy access
+            references tables
 );
-create unique index own_table_name_uindex
-    on own (table_name);

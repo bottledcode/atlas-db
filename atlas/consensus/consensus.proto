@@ -97,7 +97,7 @@ message StealTableOwnershipResponse {
 message Node {
   int64 id = 1; // The ID of the node
   string address = 2;  // The address of the node
-  string region = 3; // The region the node is in
+  Region region = 3; // The region the node is in
   int64 port = 4; // The port the node listens on
   bool active = 5; // Whether the node is active
   google.protobuf.Duration rtt = 6; // The round trip time to the node

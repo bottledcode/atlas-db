@@ -58,6 +58,7 @@ type ValueColumn interface {
 	GetBlob() []byte
 	IsNull() bool
 	GetTime() time.Time
+	GetDuration() time.Duration
 }
 
 type UnknownValueColumn struct {
@@ -89,6 +90,10 @@ func (u *UnknownValueColumn) IsNull() bool {
 
 func (u *UnknownValueColumn) GetTime() time.Time {
 	panic("not a time")
+}
+
+func (u *UnknownValueColumn) GetDuration() time.Duration {
+	panic("not a duration")
 }
 
 type ValueColumnString struct {
@@ -123,6 +128,10 @@ func (v *ValueColumnInt) GetBool() bool {
 
 func (v *ValueColumnInt) GetString() string {
 	return fmt.Sprintf("%d", v.Value)
+}
+
+func (v *ValueColumnInt) GetDuration() time.Duration {
+	return time.Duration(v.Value)
 }
 
 type ValueColumnFloat struct {
@@ -214,6 +223,8 @@ func CaptureChanges(query string, db *sqlite.Conn, output bool, params ...Param)
 			} else {
 				stmt.SetInt64(param.Name, *v)
 			}
+		} else if v, ok := param.Value.(time.Duration); ok {
+			stmt.SetInt64(param.Name, int64(v))
 		} else {
 			return nil, fmt.Errorf("unsupported parameter type: %T", param.Value)
 		}

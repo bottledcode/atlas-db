@@ -4,12 +4,20 @@ package atlas.consensus;
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
+import "google/protobuf/empty.proto";
 
 option go_package = "/consensus";
 
 service Consensus {
   rpc StealTableOwnership(StealTableOwnershipRequest) returns (StealTableOwnershipRequest) {}
   rpc WriteMigration(WriteMigrationRequest) returns (WriteMigrationResponse) {}
+  rpc AcceptMigration(WriteMigrationRequest) returns (google.protobuf.Empty) {}
+  rpc LearnMigration(LearnMigrationRequest) returns (stream Migration) {}
+}
+
+message LearnMigrationRequest {
+  int64 tableId = 1; // the id of the table
+  int64 ownVersion = 2; // the most known version of the table
 }
 
 message SchemaMigration {

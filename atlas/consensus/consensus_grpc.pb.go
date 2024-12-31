@@ -7,6 +7,7 @@ import (
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
+	emptypb "google.golang.org/protobuf/types/known/emptypb"
 )
 
 // This is a compile-time assertion to ensure that this generated file
@@ -17,10 +18,10 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ConsensusClient interface {
-	ProposeTopologyChange(ctx context.Context, in *ProposeTopologyChangeRequest, opts ...grpc.CallOption) (*PromiseTopologyChange, error)
-	AcceptTopologyChange(ctx context.Context, in *AcceptTopologyChangeRequest, opts ...grpc.CallOption) (*AcceptedTopologyChange, error)
 	StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipRequest, error)
 	WriteMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*WriteMigrationResponse, error)
+	AcceptMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	LearnMigration(ctx context.Context, in *LearnMigrationRequest, opts ...grpc.CallOption) (Consensus_LearnMigrationClient, error)
 }
 
 type consensusClient struct {
@@ -29,24 +30,6 @@ type consensusClient struct {
 
 func NewConsensusClient(cc grpc.ClientConnInterface) ConsensusClient {
 	return &consensusClient{cc}
-}
-
-func (c *consensusClient) ProposeTopologyChange(ctx context.Context, in *ProposeTopologyChangeRequest, opts ...grpc.CallOption) (*PromiseTopologyChange, error) {
-	out := new(PromiseTopologyChange)
-	err := c.cc.Invoke(ctx, "/atlas.consensus.Consensus/ProposeTopologyChange", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *consensusClient) AcceptTopologyChange(ctx context.Context, in *AcceptTopologyChangeRequest, opts ...grpc.CallOption) (*AcceptedTopologyChange, error) {
-	out := new(AcceptedTopologyChange)
-	err := c.cc.Invoke(ctx, "/atlas.consensus.Consensus/AcceptTopologyChange", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 func (c *consensusClient) StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipRequest, error) {
@@ -67,14 +50,55 @@ func (c *consensusClient) WriteMigration(ctx context.Context, in *WriteMigration
 	return out, nil
 }
 
+func (c *consensusClient) AcceptMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, "/atlas.consensus.Consensus/AcceptMigration", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *consensusClient) LearnMigration(ctx context.Context, in *LearnMigrationRequest, opts ...grpc.CallOption) (Consensus_LearnMigrationClient, error) {
+	stream, err := c.cc.NewStream(ctx, &_Consensus_serviceDesc.Streams[0], "/atlas.consensus.Consensus/LearnMigration", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &consensusLearnMigrationClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type Consensus_LearnMigrationClient interface {
+	Recv() (*Migration, error)
+	grpc.ClientStream
+}
+
+type consensusLearnMigrationClient struct {
+	grpc.ClientStream
+}
+
+func (x *consensusLearnMigrationClient) Recv() (*Migration, error) {
+	m := new(Migration)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // ConsensusServer is the server API for Consensus service.
 // All implementations must embed UnimplementedConsensusServer
 // for forward compatibility
 type ConsensusServer interface {
-	ProposeTopologyChange(context.Context, *ProposeTopologyChangeRequest) (*PromiseTopologyChange, error)
-	AcceptTopologyChange(context.Context, *AcceptTopologyChangeRequest) (*AcceptedTopologyChange, error)
 	StealTableOwnership(context.Context, *StealTableOwnershipRequest) (*StealTableOwnershipRequest, error)
 	WriteMigration(context.Context, *WriteMigrationRequest) (*WriteMigrationResponse, error)
+	AcceptMigration(context.Context, *WriteMigrationRequest) (*emptypb.Empty, error)
+	LearnMigration(*LearnMigrationRequest, Consensus_LearnMigrationServer) error
 	mustEmbedUnimplementedConsensusServer()
 }
 
@@ -82,17 +106,17 @@ type ConsensusServer interface {
 type UnimplementedConsensusServer struct {
 }
 
-func (UnimplementedConsensusServer) ProposeTopologyChange(context.Context, *ProposeTopologyChangeRequest) (*PromiseTopologyChange, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ProposeTopologyChange not implemented")
-}
-func (UnimplementedConsensusServer) AcceptTopologyChange(context.Context, *AcceptTopologyChangeRequest) (*AcceptedTopologyChange, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method AcceptTopologyChange not implemented")
-}
 func (UnimplementedConsensusServer) StealTableOwnership(context.Context, *StealTableOwnershipRequest) (*StealTableOwnershipRequest, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method StealTableOwnership not implemented")
 }
 func (UnimplementedConsensusServer) WriteMigration(context.Context, *WriteMigrationRequest) (*WriteMigrationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method WriteMigration not implemented")
+}
+func (UnimplementedConsensusServer) AcceptMigration(context.Context, *WriteMigrationRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AcceptMigration not implemented")
+}
+func (UnimplementedConsensusServer) LearnMigration(*LearnMigrationRequest, Consensus_LearnMigrationServer) error {
+	return status.Errorf(codes.Unimplemented, "method LearnMigration not implemented")
 }
 func (UnimplementedConsensusServer) mustEmbedUnimplementedConsensusServer() {}
 
@@ -105,42 +129,6 @@ type UnsafeConsensusServer interface {
 
 func RegisterConsensusServer(s *grpc.Server, srv ConsensusServer) {
 	s.RegisterService(&_Consensus_serviceDesc, srv)
-}
-
-func _Consensus_ProposeTopologyChange_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ProposeTopologyChangeRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ConsensusServer).ProposeTopologyChange(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/atlas.consensus.Consensus/ProposeTopologyChange",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ConsensusServer).ProposeTopologyChange(ctx, req.(*ProposeTopologyChangeRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Consensus_AcceptTopologyChange_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(AcceptTopologyChangeRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ConsensusServer).AcceptTopologyChange(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/atlas.consensus.Consensus/AcceptTopologyChange",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ConsensusServer).AcceptTopologyChange(ctx, req.(*AcceptTopologyChangeRequest))
-	}
-	return interceptor(ctx, in, info, handler)
 }
 
 func _Consensus_StealTableOwnership_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -179,18 +167,49 @@ func _Consensus_WriteMigration_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Consensus_AcceptMigration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WriteMigrationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ConsensusServer).AcceptMigration(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/atlas.consensus.Consensus/AcceptMigration",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ConsensusServer).AcceptMigration(ctx, req.(*WriteMigrationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Consensus_LearnMigration_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(LearnMigrationRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(ConsensusServer).LearnMigration(m, &consensusLearnMigrationServer{stream})
+}
+
+type Consensus_LearnMigrationServer interface {
+	Send(*Migration) error
+	grpc.ServerStream
+}
+
+type consensusLearnMigrationServer struct {
+	grpc.ServerStream
+}
+
+func (x *consensusLearnMigrationServer) Send(m *Migration) error {
+	return x.ServerStream.SendMsg(m)
+}
+
 var _Consensus_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "atlas.consensus.Consensus",
 	HandlerType: (*ConsensusServer)(nil),
 	Methods: []grpc.MethodDesc{
-		{
-			MethodName: "ProposeTopologyChange",
-			Handler:    _Consensus_ProposeTopologyChange_Handler,
-		},
-		{
-			MethodName: "AcceptTopologyChange",
-			Handler:    _Consensus_AcceptTopologyChange_Handler,
-		},
 		{
 			MethodName: "StealTableOwnership",
 			Handler:    _Consensus_StealTableOwnership_Handler,
@@ -199,7 +218,17 @@ var _Consensus_serviceDesc = grpc.ServiceDesc{
 			MethodName: "WriteMigration",
 			Handler:    _Consensus_WriteMigration_Handler,
 		},
+		{
+			MethodName: "AcceptMigration",
+			Handler:    _Consensus_AcceptMigration_Handler,
+		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "LearnMigration",
+			Handler:       _Consensus_LearnMigration_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "consensus/consensus.proto",
 }

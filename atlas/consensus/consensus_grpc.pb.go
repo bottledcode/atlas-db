@@ -20,7 +20,7 @@ type ConsensusClient interface {
 	ProposeTopologyChange(ctx context.Context, in *ProposeTopologyChangeRequest, opts ...grpc.CallOption) (*PromiseTopologyChange, error)
 	AcceptTopologyChange(ctx context.Context, in *AcceptTopologyChangeRequest, opts ...grpc.CallOption) (*AcceptedTopologyChange, error)
 	StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipResponse, error)
-	StoleTableOwnership(ctx context.Context, in *Table, opts ...grpc.CallOption) (*Table, error)
+	StoleTableOwnership(ctx context.Context, in *StoleTableOwnershipRequest, opts ...grpc.CallOption) (*StoleTableOwnershipResponse, error)
 	WriteMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*WriteMigrationResponse, error)
 }
 
@@ -59,8 +59,8 @@ func (c *consensusClient) StealTableOwnership(ctx context.Context, in *StealTabl
 	return out, nil
 }
 
-func (c *consensusClient) StoleTableOwnership(ctx context.Context, in *Table, opts ...grpc.CallOption) (*Table, error) {
-	out := new(Table)
+func (c *consensusClient) StoleTableOwnership(ctx context.Context, in *StoleTableOwnershipRequest, opts ...grpc.CallOption) (*StoleTableOwnershipResponse, error) {
+	out := new(StoleTableOwnershipResponse)
 	err := c.cc.Invoke(ctx, "/atlas.consensus.Consensus/StoleTableOwnership", in, out, opts...)
 	if err != nil {
 		return nil, err
@@ -84,7 +84,7 @@ type ConsensusServer interface {
 	ProposeTopologyChange(context.Context, *ProposeTopologyChangeRequest) (*PromiseTopologyChange, error)
 	AcceptTopologyChange(context.Context, *AcceptTopologyChangeRequest) (*AcceptedTopologyChange, error)
 	StealTableOwnership(context.Context, *StealTableOwnershipRequest) (*StealTableOwnershipResponse, error)
-	StoleTableOwnership(context.Context, *Table) (*Table, error)
+	StoleTableOwnership(context.Context, *StoleTableOwnershipRequest) (*StoleTableOwnershipResponse, error)
 	WriteMigration(context.Context, *WriteMigrationRequest) (*WriteMigrationResponse, error)
 	mustEmbedUnimplementedConsensusServer()
 }
@@ -102,7 +102,7 @@ func (UnimplementedConsensusServer) AcceptTopologyChange(context.Context, *Accep
 func (UnimplementedConsensusServer) StealTableOwnership(context.Context, *StealTableOwnershipRequest) (*StealTableOwnershipResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method StealTableOwnership not implemented")
 }
-func (UnimplementedConsensusServer) StoleTableOwnership(context.Context, *Table) (*Table, error) {
+func (UnimplementedConsensusServer) StoleTableOwnership(context.Context, *StoleTableOwnershipRequest) (*StoleTableOwnershipResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method StoleTableOwnership not implemented")
 }
 func (UnimplementedConsensusServer) WriteMigration(context.Context, *WriteMigrationRequest) (*WriteMigrationResponse, error) {
@@ -176,7 +176,7 @@ func _Consensus_StealTableOwnership_Handler(srv interface{}, ctx context.Context
 }
 
 func _Consensus_StoleTableOwnership_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(Table)
+	in := new(StoleTableOwnershipRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -188,7 +188,7 @@ func _Consensus_StoleTableOwnership_Handler(srv interface{}, ctx context.Context
 		FullMethod: "/atlas.consensus.Consensus/StoleTableOwnership",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ConsensusServer).StoleTableOwnership(ctx, req.(*Table))
+		return srv.(ConsensusServer).StoleTableOwnership(ctx, req.(*StoleTableOwnershipRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }

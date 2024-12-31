@@ -362,8 +362,102 @@ values (:table_id, :node_id, :region_id, :version, 0)`, conn, false, atlas.Param
 	}, nil
 }
 
-func StoleTableOwnership(ctx context.Context, table *Table) (*Table, error) {
-	return nil, nil
+// StoleTableOwnership informs the server of the overall success in stealing a table.
+func StoleTableOwnership(ctx context.Context, req *StoleTableOwnershipRequest) (*StoleTableOwnershipResponse, error) {
+	// todo: this is probably wrong.
+
+	// for now, we will blindly write the table to the database
+	conn, err := atlas.MigrationsPool.Take(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer atlas.MigrationsPool.Put(conn)
+
+	defer func() {
+		if err != nil {
+			_, _ = atlas.ExecuteSQL(ctx, "rollback", conn, false)
+		}
+	}()
+
+	_, err = atlas.ExecuteSQL(ctx, "begin immediate", conn, false)
+	if err != nil {
+		return nil, err
+	}
+
+	var ownerId *int64
+
+	if req.GetTable().GetGlobalOwner() != nil {
+		n := req.GetTable().GetGlobalOwner().GetNodeId()
+		ownerId = &n
+	}
+
+	_, err = atlas.ExecuteSQL(ctx, `update tables
+set version         = :version,
+    promised        = 0,
+    owner_node_id   = :owner_node_id,
+    allowed_regions = :allowed_regions
+where id = :table_id
+`, conn, false, atlas.Param{
+		Name:  "version",
+		Value: req.GetTable().GetVersion(),
+	}, atlas.Param{
+		Name:  "owner_node_id",
+		Value: ownerId,
+	}, atlas.Param{
+		Name:  "allowed_regions",
+		Value: strings.Join(req.GetTable().GetAllowedRegions(), ","),
+	}, atlas.Param{
+		Name:  "table_id",
+		Value: req.GetTable().GetId(),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if req.GetTable().ReplicationLevel == ReplicationLevel_regional && req.GetReason() != StealReason_SCHEMA_MIGRATION {
+		// we need to update the leadership table as well
+		var regionId int64
+		regionId, err = atlas.GetRegionIdFromName(ctx, conn, req.GetSender().GetNodeRegion())
+		if err != nil {
+			return nil, err
+		}
+
+		// remove all nodes that are not the new owner
+		_, err = atlas.ExecuteSQL(ctx, `delete from leadership where table_id = :table and region_id = :region and node_id <> :owner`, conn, false, atlas.Param{
+			Name:  "region",
+			Value: regionId,
+		}, atlas.Param{
+			Name:  "owner",
+			Value: req.Sender.GetNodeId(),
+		}, atlas.Param{
+			Name:  "table",
+			Value: req.Table.GetId(),
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		// update the owner
+		_, err = atlas.ExecuteSQL(ctx, `update leadership set owner = 1 where table_id = :table and region_id = :region`, conn, false, atlas.Param{
+			Name:  "region",
+			Value: regionId,
+		}, atlas.Param{
+			Name:  "table",
+			Value: req.Table.GetId(),
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	_, err = atlas.ExecuteSQL(ctx, "commit", conn, false)
+	if err != nil {
+		return nil, err
+	}
+
+	return &StoleTableOwnershipResponse{
+		Success: true,
+	}, nil
 }
 
 func (s *Server) WriteMigration(context.Context, *WriteMigrationRequest) (*WriteMigrationResponse, error) {

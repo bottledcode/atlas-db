@@ -10,7 +10,7 @@ service Consensus {
   rpc ProposeTopologyChange(ProposeTopologyChangeRequest) returns (PromiseTopologyChange) {}
   rpc AcceptTopologyChange(AcceptTopologyChangeRequest) returns (AcceptedTopologyChange) {}
   rpc StealTableOwnership(StealTableOwnershipRequest) returns (StealTableOwnershipResponse) {}
-  rpc StoleTableOwnership(Table) returns (Table) {}
+  rpc StoleTableOwnership(StoleTableOwnershipRequest) returns (StoleTableOwnershipResponse) {}
   rpc WriteMigration(WriteMigrationRequest) returns (WriteMigrationResponse) {}
 }
 
@@ -52,6 +52,16 @@ message WriteMigrationResponse {
   Table table = 2; // The table if the operation was not successful
   repeated Node leadership = 3; // The nodes that are the new leaders
   repeated Migration migrations = 4; // missing migrations if the operation was not successful
+}
+
+message StoleTableOwnershipRequest {
+  Node sender = 1; // The node sending the request
+  Table table = 2; // The table to be stolen
+  StealReason reason = 3; // The reason for the steal
+}
+
+message StoleTableOwnershipResponse {
+  bool success = 1; // Whether the operation was successful
 }
 
 enum ReplicationLevel {

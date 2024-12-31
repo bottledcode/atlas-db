@@ -1,6 +1,7 @@
 package consensus
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"slices"
 	"strings"
+	"zombiezen.com/go/sqlite"
 )
 
 func (t *Table) FromSqlRow(row *atlas.Row) error {
@@ -460,6 +462,114 @@ where id = :table_id
 	}, nil
 }
 
-func (s *Server) WriteMigration(context.Context, *WriteMigrationRequest) (*WriteMigrationResponse, error) {
-	return nil, nil
+// WriteMigration applies migrations to the database.
+func (s *Server) WriteMigration(ctx context.Context, req *WriteMigrationRequest) (*WriteMigrationResponse, error) {
+	// For now, we always write migrations to the migration tables.
+	//This increases database size significantly, but it provides useful debugging data.
+	//In the future, this may change to a more efficient method.
+
+	mig, err := atlas.MigrationsPool.Take(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer atlas.MigrationsPool.Put(mig)
+
+	main, err := atlas.Pool.Take(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer atlas.Pool.Put(main)
+
+	_, err = atlas.ExecuteSQL(ctx, "begin immediate", mig, false)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			_, _ = atlas.ExecuteSQL(ctx, "rollback", mig, false)
+		}
+	}()
+	_, err = atlas.ExecuteSQL(ctx, "begin immediate", main, false)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			_, _ = atlas.ExecuteSQL(ctx, "rollback", main, false)
+		}
+	}()
+
+	// todo: determine if the sender is a table owner?
+
+	switch req.GetMigration().GetMigration().(type) {
+	case *Migration_Schema:
+		// todo: validate table version and id
+		for _, stmt := range req.GetMigration().GetSchema().GetCommands() {
+			_, err = atlas.ExecuteSQL(ctx, stmt, main, false)
+			if err != nil {
+				return nil, err
+			}
+			_, err = atlas.ExecuteSQL(ctx, `
+insert into schema_migrations (table_id, version, command, applied_at)
+values (:table_id, :version, :command, current_timestamp)`, mig, false, atlas.Param{
+				Name:  "table_id",
+				Value: req.GetMigration().GetSchema().GetTableId(),
+			}, atlas.Param{
+				Name:  "version",
+				Value: req.GetMigration().GetSchema().GetVersion(),
+			}, atlas.Param{
+				Name:  "command",
+				Value: stmt,
+			})
+			if err != nil {
+				return nil, err
+			}
+		}
+	case *Migration_Data:
+		for _, data := range req.GetMigration().GetData().GetData() {
+			reader := bytes.NewReader(data)
+			err = main.ApplyChangeset(reader, func(tableName string) bool {
+				// todo: only apply to non-local tables?
+				return true
+			}, func(conflictType sqlite.ConflictType, iterator *sqlite.ChangesetIterator) sqlite.ConflictAction {
+				// todo: this indicates a bad replica?
+				return sqlite.ChangesetReplace
+			})
+			if err != nil {
+				return nil, err
+			}
+
+			_, err = atlas.ExecuteSQL(ctx, `
+insert into data_migrations (table_id, version, data)
+VALUES (:table_id, :version, :data)`, mig, false, atlas.Param{
+				Name:  "table_id",
+				Value: req.GetMigration().GetData().GetTableId(),
+			}, atlas.Param{
+				Name:  "version",
+				Value: req.GetMigration().GetData().GetVersion(),
+			}, atlas.Param{
+				Name:  "data",
+				Value: data,
+			})
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	_, err = atlas.ExecuteSQL(ctx, "commit", mig, false)
+	if err != nil {
+		return nil, err
+	}
+	_, err = atlas.ExecuteSQL(ctx, "commit", main, false)
+	if err != nil {
+		return nil, err
+	}
+
+	return &WriteMigrationResponse{
+		Success:    true,
+		Table:      nil,
+		Leadership: nil,
+		Migrations: nil,
+	}, nil
 }

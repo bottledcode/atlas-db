@@ -49,10 +49,7 @@ func (s *Server) regionAddProposal(ctx context.Context, region *Region) (*Promis
 		}
 	}()
 
-	_, err = atlas.ExecuteSQL(ctx, "insert into regions values (:id, :name)", conn, false, atlas.Param{
-		Name:  "id",
-		Value: region.GetRegionId(),
-	}, atlas.Param{
+	_, err = atlas.ExecuteSQL(ctx, "insert into regions values (:name)", conn, false, atlas.Param{
 		Name:  "name",
 		Value: PlaceholderName,
 	})

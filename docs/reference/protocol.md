@@ -125,8 +125,8 @@ BIND <ID> <param> <TYPE> [value]
 
 #### Description
 
-Binds a value to a prepared query. Note that the
-
+Binds a value to a prepared query. The param can be either a positional parameter (number) or a named parameter (starting with ':'). 
+The value must match the specified type. For NULL values, omit the value parameter.
 #### Example
 
 ```

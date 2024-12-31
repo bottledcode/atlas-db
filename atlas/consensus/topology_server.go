@@ -271,7 +271,7 @@ func (s *Server) AcceptTopologyChange(ctx context.Context, accept *AcceptTopolog
 	}
 	defer func() {
 		if err != nil {
-			atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
+			_, _ = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
 		}
 	}()
 

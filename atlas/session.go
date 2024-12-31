@@ -12,14 +12,18 @@ import (
 
 var Logger *zap.Logger
 
+type sessionKeyType struct{}
+
+var sessionKey = sessionKeyType{}
+
 func GetCurrentSession(ctx context.Context) *sqlite.Session {
-	return ctx.Value("atlas-session").(*sqlite.Session)
+	return ctx.Value(sessionKey).(*sqlite.Session)
 }
 
 // InitializeSession creates a new session for the provided SQLite connection and attaches all tables with a replication
 // level of "regional" or "global" to it. It returns the updated context with the session attached. If an error occurs
 // during session creation or table attachment, it returns the original context and the error.
-func InitializeSession(ctx context.Context, conn *sqlite.Conn, key string) (context.Context, error) {
+func InitializeSession(ctx context.Context, conn *sqlite.Conn) (context.Context, error) {
 	var err error
 	session, err := conn.CreateSession("")
 	if err != nil {
@@ -43,7 +47,7 @@ func InitializeSession(ctx context.Context, conn *sqlite.Conn, key string) (cont
 		}
 	}
 
-	return context.WithValue(ctx, key+"-session", session), nil
+	return context.WithValue(ctx, sessionKey, session), nil
 }
 
 type ValueColumn interface {

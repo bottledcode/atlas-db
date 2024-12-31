@@ -50,9 +50,9 @@ type ErrorCode string
 
 const (
 	OK      ErrorCode = "OK"
-	Info              = "INFO"
-	Warning           = "WARN"
-	Fatal             = "ERROR"
+	Info    ErrorCode = "INFO"
+	Warning ErrorCode = "WARN"
+	Fatal   ErrorCode = "ERROR"
 )
 
 type commandString struct {
@@ -207,7 +207,7 @@ func handleConnection(conn net.Conn) {
 				return ctx
 			}
 
-			ctx, err = InitializeSession(ctx, sql, "atlas")
+			ctx, err = InitializeSession(ctx, sql)
 			if err != nil {
 				Logger.Error("Error initializing session", zap.Error(err))
 				writeError(Fatal, err)

@@ -14,24 +14,6 @@ import (
 	"zombiezen.com/go/sqlite/sqlitemigration"
 )
 
-type authPrinter struct {
-	conn *sqlite.Conn
-}
-
-func (a authPrinter) Authorize(action sqlite.Action) sqlite.AuthResult {
-	op := action.String()
-	op = strings.Fields(op)[0]
-
-	switch op {
-	case "SQLITE_CREATE_TABLE":
-		// todo: handle this here?
-	}
-
-	return sqlite.AuthResultOK
-}
-
-var pool *sqlitemigration.Pool
-
 func parseOptions(opts []string, defaults *atlas.Options) (opt *atlas.Options) {
 	if len(opts) == 0 {
 		return defaults
@@ -132,5 +114,5 @@ func repl(conn *sqlitemigration.Pool) {
 }
 
 func processInput(input string, conn *sqlite.Conn) {
-	atlas.ExecuteSQL(context.Background(), input, conn, true)
+	_, _ = atlas.ExecuteSQL(context.Background(), input, conn, true)
 }

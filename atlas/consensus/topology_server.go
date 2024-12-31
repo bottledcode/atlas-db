@@ -45,7 +45,7 @@ func (s *Server) regionAddProposal(ctx context.Context, region *Region) (*Promis
 	}
 	defer func() {
 		if err != nil {
-			atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
+			_, _ = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
 		}
 	}()
 
@@ -120,7 +120,7 @@ func (s *Server) nodeRemoveProposal(ctx context.Context, node *Node) (*PromiseTo
 	}
 	defer func() {
 		if err != nil {
-			atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
+			_, _ = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
 		}
 	}()
 
@@ -186,7 +186,7 @@ func (s *Server) nodeAddProposal(ctx context.Context, node *Node) (*PromiseTopol
 	}
 	defer func() {
 		if err != nil {
-			atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
+			_, _ = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
 		}
 	}()
 

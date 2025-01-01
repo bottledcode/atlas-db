@@ -1,28 +1,31 @@
 package bootstrap
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
 	"github.com/bottledcode/atlas-db/atlas"
+	"github.com/bottledcode/atlas-db/atlas/consensus"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"io"
 	"os"
+	"zombiezen.com/go/sqlite"
 )
 
 // InitializeMaybe checks if the database is empty and initializes it if it is
-func InitializeMaybe() error {
-	ctx := context.Background()
-
+func InitializeMaybe(ctx context.Context) error {
 	conn, err := atlas.MigrationsPool.Take(ctx)
 	if err != nil {
 		return err
 	}
 	defer atlas.MigrationsPool.Put(conn)
-	_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", conn, false)
+	_, err = atlas.ExecuteSQL(ctx, "BEGIN", conn, false)
 	if err != nil {
 		return err
 	}
@@ -37,45 +40,172 @@ func InitializeMaybe() error {
 	if err != nil {
 		return err
 	}
-	if results.GetIndex(0).GetColumn("c").GetInt() == 0 {
-		// see if there is a region
-		regionId, err := atlas.GetOrAddRegion(ctx, conn, atlas.CurrentOptions.Region)
-		if err != nil {
-			return err
-		}
+	if results.GetIndex(0).GetColumn("c").GetInt() > 0 {
+		atlas.Logger.Info("Atlas database is not empty; skipping initialization and continuing normal operations")
+		return nil
+	}
 
-		if atlas.CurrentOptions.Region == "" {
-			atlas.Logger.Warn("No region specified, using default region", zap.String("region", atlas.CurrentOptions.Region))
-			atlas.CurrentOptions.Region = "default"
-		}
+	var region string
 
-		if atlas.CurrentOptions.AdvertisePort == 0 {
-			atlas.Logger.Warn("No port specified, using default port", zap.Uint("port", atlas.CurrentOptions.AdvertisePort))
-			atlas.CurrentOptions.AdvertisePort = 8080
-		}
+	if atlas.CurrentOptions.Region == "" {
+		atlas.CurrentOptions.Region = "default"
+		atlas.Logger.Warn("No region specified, using default region", zap.String("region", atlas.CurrentOptions.Region))
+	}
 
-		if atlas.CurrentOptions.AdvertiseAddress == "" {
-			atlas.Logger.Warn("No address specified, using default address", zap.String("address", atlas.CurrentOptions.AdvertiseAddress))
-			atlas.CurrentOptions.AdvertiseAddress = "localhost"
-		}
+	if atlas.CurrentOptions.AdvertisePort == 0 {
+		atlas.CurrentOptions.AdvertisePort = 8080
+		atlas.Logger.Warn("No port specified, using the default port", zap.Uint("port", atlas.CurrentOptions.AdvertisePort))
+	}
 
-		// No nodes currently exist, and we didn't bootstrap. So, start writing!
-		_, err = atlas.ExecuteSQL(ctx, "insert into nodes (address, port, region_id, active) values (:address, :port, :region, 1)", conn, false, atlas.Param{
-			Name:  "address",
-			Value: atlas.CurrentOptions.AdvertiseAddress,
-		}, atlas.Param{
-			Name:  "port",
-			Value: atlas.CurrentOptions.AdvertisePort,
-		}, atlas.Param{
-			Name:  "region",
-			Value: regionId,
-		})
-		if err != nil {
-			return err
+	if atlas.CurrentOptions.AdvertiseAddress == "" {
+		atlas.CurrentOptions.AdvertiseAddress = "localhost"
+		atlas.Logger.Warn("No address specified, using the default address", zap.String("address", atlas.CurrentOptions.AdvertiseAddress))
+	}
+
+	// no nodes exist in the database, so we need to configure things here
+	server := consensus.Server{}
+
+	// define the new node:
+	node := &consensus.Node{
+		Id:      1,
+		Address: atlas.CurrentOptions.AdvertiseAddress,
+		Region:  &consensus.Region{Name: region},
+		Port:    int64(atlas.CurrentOptions.AdvertisePort),
+		Active:  true,
+		Rtt:     durationpb.New(0),
+	}
+
+	table := &consensus.Table{
+		Name:              "atlas.nodes",
+		ReplicationLevel:  consensus.ReplicationLevel_global,
+		Owner:             node,
+		CreatedAt:         timestamppb.Now(),
+		Version:           1,
+		AllowedRegions:    []string{},
+		RestrictedRegions: []string{},
+	}
+
+	var steal *consensus.StealTableOwnershipResponse
+	steal, err = server.StealTableOwnership(ctx, &consensus.StealTableOwnershipRequest{
+		Sender: node,
+		Reason: consensus.StealReason_queryReason,
+		Table:  table,
+	})
+	if err != nil {
+		return err
+	}
+
+	if !steal.GetPromised() {
+		return fmt.Errorf("could not steal table ownership")
+	}
+
+	var sess *sqlite.Session
+	sess, err = conn.CreateSession("")
+	if err != nil {
+		return err
+	}
+	err = sess.Attach("nodes")
+	if err != nil {
+		return err
+	}
+
+	nextVersion := int64(1)
+
+	for _, missing := range steal.GetSuccess().GetMissingMigrations() {
+		nextVersion = missing.GetVersion() + 1
+		switch missing.GetMigration().(type) {
+		case *consensus.Migration_Data:
+			for _, data := range missing.GetData().GetSession() {
+				reader := bytes.NewReader(data)
+				err = conn.ApplyChangeset(reader, nil, func(conflictType sqlite.ConflictType, iterator *sqlite.ChangesetIterator) sqlite.ConflictAction {
+					return sqlite.ChangesetReplace
+				})
+				if err != nil {
+					return err
+				}
+			}
+		case *consensus.Migration_Schema:
+			for _, command := range missing.GetSchema().GetCommands() {
+				var stmt *sqlite.Stmt
+				stmt, _, err = conn.PrepareTransient(command)
+				if err != nil {
+					return err
+				}
+				_, err = stmt.Step()
+				if err != nil {
+					return err
+				}
+				err = stmt.Finalize()
+				if err != nil {
+					return err
+				}
+			}
 		}
 	}
 
-	_, err = atlas.ExecuteSQL(ctx, "COMMIT", conn, false)
+	_, err = atlas.ExecuteSQL(ctx, `
+insert into nodes (id, address, port, region, active, created_at, rtt)
+values (:id, :address, :port, :region, 1, current_timestamp, 0) on conflict do UPDATE
+SET address = :address, port = :port, region = :region, active = 1
+`, conn, false, atlas.Param{
+		Name:  "id",
+		Value: node.Id,
+	}, atlas.Param{
+		Name:  "address",
+		Value: node.Address,
+	}, atlas.Param{
+		Name:  "port",
+		Value: node.Port,
+	}, atlas.Param{
+		Name:  "region",
+		Value: region,
+	})
+	if err != nil {
+		return err
+	}
+
+	var sessData bytes.Buffer
+	err = sess.WritePatchset(&sessData)
+
+	_, err = atlas.ExecuteSQL(ctx, "rollback", conn, false)
+	if err != nil {
+		return err
+	}
+	sess.Delete()
+
+	// we are not outside the transaction and we can commit the migration
+
+	// now we exclusively own the table in our single node cluster...
+	migration := &consensus.WriteMigrationRequest{
+		TableId:      "atlas.nodes",
+		TableVersion: 1,
+		Sender:       node,
+		Migration: &consensus.Migration{
+			TableId: "atlas.nodes",
+			Version: nextVersion,
+			Migration: &consensus.Migration_Data{
+				Data: &consensus.DataMigration{
+					Session: [][]byte{sessData.Bytes()},
+				},
+			},
+		},
+	}
+
+	// err intentionally shadowed here to prevent a rollback outside the transaction
+	writeMigrationResponse, err := server.WriteMigration(ctx, migration)
+	if err != nil {
+		return err
+	}
+
+	if !writeMigrationResponse.GetSuccess() {
+		return fmt.Errorf("could not write migration")
+	}
+
+	_, err = server.AcceptMigration(ctx, migration)
+	if err != nil {
+		return err
+	}
+
 	return err
 }
 

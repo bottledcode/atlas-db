@@ -9,7 +9,7 @@ import "google/protobuf/empty.proto";
 option go_package = "/consensus";
 
 service Consensus {
-  rpc StealTableOwnership(StealTableOwnershipRequest) returns (StealTableOwnershipRequest) {}
+  rpc StealTableOwnership(StealTableOwnershipRequest) returns (StealTableOwnershipResponse) {}
   rpc WriteMigration(WriteMigrationRequest) returns (WriteMigrationResponse) {}
   rpc AcceptMigration(WriteMigrationRequest) returns (google.protobuf.Empty) {}
   rpc LearnMigration(LearnMigrationRequest) returns (stream Migration) {}
@@ -30,31 +30,25 @@ message DataMigration {
   repeated bytes session = 1; // The data to be written
 }
 
-message SelfMigration {
-  repeated string commands = 1;
-}
-
 message Migration {
-  int64 tableId = 1; // The id of the table (aka, ballot)
+  string tableId = 1; // The id of the table (aka, ballot)
   int64 version = 2; // The version of the table (aka, slot)
   oneof migration {
     SchemaMigration schema = 3; // The schema migration
     DataMigration data = 4; // The data migration
-    SelfMigration self = 5;
   }
 }
 
 message WriteMigrationRequest {
-  int64 tableId = 1; // The ID of the table
-  Node sender = 2; // The node sending the migration
-  Migration migration = 3; // The migration to be written
+  string tableId = 1; // The ID of the table
+  int64 tableVersion = 2; // The version of the table
+  Node sender = 3; // The node sending the migration
+  Migration migration = 4; // The migration to be written
 }
 
 message WriteMigrationResponse {
   bool success = 1; // Whether the operation was successful
   Table table = 2; // The table if the operation was not successful
-  repeated Node leadership = 3; // The nodes that are the new leaders
-  repeated Migration migrations = 4; // missing migrations if the operation was not successful
 }
 
 enum ReplicationLevel {
@@ -74,13 +68,12 @@ message Table {
 }
 
 message StealTableOwnershipFailure {
-  Table table = 2; // The table that was not stolen
+  Table table = 1; // The table that was not stolen
 }
 
 message StealTableOwnershipSuccess {
-  Table table = 2; // The table that was stolen
-  Migration migration = 3; // The migration to be written
-  repeated Migration missingMigrations = 4; // The missing migrations, if any
+  Table table = 1; // The table that was stolen
+  repeated Migration missingMigrations = 2; // The missing migrations, if any
 }
 
 enum StealReason {
@@ -90,16 +83,16 @@ enum StealReason {
 
 message StealTableOwnershipRequest {
   Node sender = 1; // The node sending the request
+  StealReason reason = 4; // The reason the table was stolen
+  Table table = 2; // The table to be stolen
+}
+
+message StealTableOwnershipResponse {
+  bool promised = 1; // Whether the operation was successful
   oneof response {
     StealTableOwnershipFailure failure = 2; // The table that was not stolen
     StealTableOwnershipSuccess success = 3; // The table that was stolen
   }
-  StealReason reason = 4; // The reason the table was stolen
-}
-
-message StealTableOwnershipResponse {
-  bool success = 1; // Whether the operation was successful
-  Table table = 2; // The table if the operation was not successful
 }
 
 message Node {

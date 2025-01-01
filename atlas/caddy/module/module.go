@@ -58,13 +58,12 @@ func (m *Module) Provision(ctx caddy.Context) (err error) {
 		atlas.Logger.Info("🚀 Bootstrapping Complete")
 		atlas.Logger.Info("☄️ Joining Atlas Cluster...")
 		atlas.CreatePool(atlas.CurrentOptions)
-		_ = consensus.ProposeRegion(ctx, atlas.CurrentOptions)
-		_ = consensus.ProposeNode(ctx, atlas.CurrentOptions)
+		// todo: join cluster
 
 		atlas.Logger.Info("☄️ Atlas Cluster Joined", zap.Int("NodeID", atlas.CurrentOptions.ServerId))
 	} else {
 		atlas.CreatePool(atlas.CurrentOptions)
-		err = bootstrap.InitializeMaybe()
+		err = bootstrap.InitializeMaybe(ctx)
 		if err != nil {
 			return
 		}

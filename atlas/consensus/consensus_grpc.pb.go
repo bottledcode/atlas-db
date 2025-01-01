@@ -18,7 +18,7 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ConsensusClient interface {
-	StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipRequest, error)
+	StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipResponse, error)
 	WriteMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*WriteMigrationResponse, error)
 	AcceptMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	LearnMigration(ctx context.Context, in *LearnMigrationRequest, opts ...grpc.CallOption) (Consensus_LearnMigrationClient, error)
@@ -32,8 +32,8 @@ func NewConsensusClient(cc grpc.ClientConnInterface) ConsensusClient {
 	return &consensusClient{cc}
 }
 
-func (c *consensusClient) StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipRequest, error) {
-	out := new(StealTableOwnershipRequest)
+func (c *consensusClient) StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipResponse, error) {
+	out := new(StealTableOwnershipResponse)
 	err := c.cc.Invoke(ctx, "/atlas.consensus.Consensus/StealTableOwnership", in, out, opts...)
 	if err != nil {
 		return nil, err
@@ -95,7 +95,7 @@ func (x *consensusLearnMigrationClient) Recv() (*Migration, error) {
 // All implementations must embed UnimplementedConsensusServer
 // for forward compatibility
 type ConsensusServer interface {
-	StealTableOwnership(context.Context, *StealTableOwnershipRequest) (*StealTableOwnershipRequest, error)
+	StealTableOwnership(context.Context, *StealTableOwnershipRequest) (*StealTableOwnershipResponse, error)
 	WriteMigration(context.Context, *WriteMigrationRequest) (*WriteMigrationResponse, error)
 	AcceptMigration(context.Context, *WriteMigrationRequest) (*emptypb.Empty, error)
 	LearnMigration(*LearnMigrationRequest, Consensus_LearnMigrationServer) error
@@ -106,7 +106,7 @@ type ConsensusServer interface {
 type UnimplementedConsensusServer struct {
 }
 
-func (UnimplementedConsensusServer) StealTableOwnership(context.Context, *StealTableOwnershipRequest) (*StealTableOwnershipRequest, error) {
+func (UnimplementedConsensusServer) StealTableOwnership(context.Context, *StealTableOwnershipRequest) (*StealTableOwnershipResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method StealTableOwnership not implemented")
 }
 func (UnimplementedConsensusServer) WriteMigration(context.Context, *WriteMigrationRequest) (*WriteMigrationResponse, error) {

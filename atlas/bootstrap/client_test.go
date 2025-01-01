@@ -137,18 +137,15 @@ func TestInitializeMaybe(t *testing.T) {
 		DbFilename:   f,
 		MetaFilename: m,
 	})
+
 	ctx := context.Background()
 
-	// Mock the database state
-	conn, err := atlas.MigrationsPool.Take(ctx)
+	conn, err := atlas.MigrationsPool.Get(ctx)
 	require.NoError(t, err)
 	defer atlas.MigrationsPool.Put(conn)
 
-	_, err = atlas.ExecuteSQL(ctx, "DELETE FROM nodes", conn, false)
-	require.NoError(t, err)
-
 	// Test with an empty database
-	err = bootstrap.InitializeMaybe()
+	err = bootstrap.InitializeMaybe(ctx)
 	require.NoError(t, err)
 
 	results, err := atlas.ExecuteSQL(ctx, "SELECT count(*) as c FROM nodes", conn, false)
@@ -156,7 +153,7 @@ func TestInitializeMaybe(t *testing.T) {
 	require.Equal(t, int64(1), results.GetIndex(0).GetColumn("c").GetInt())
 
 	// Test with a non-empty database
-	err = bootstrap.InitializeMaybe()
+	err = bootstrap.InitializeMaybe(ctx)
 	require.NoError(t, err)
 
 	results, err = atlas.ExecuteSQL(ctx, "SELECT count(*) FROM nodes", conn, false)

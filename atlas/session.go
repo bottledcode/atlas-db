@@ -55,7 +55,7 @@ type ValueColumn interface {
 	GetInt() int64
 	GetFloat() float64
 	GetBool() bool
-	GetBlob() []byte
+	GetBlob() *[]byte
 	IsNull() bool
 	GetTime() time.Time
 	GetDuration() time.Duration
@@ -80,7 +80,7 @@ func (u *UnknownValueColumn) GetBool() bool {
 	panic("not a boolean")
 }
 
-func (u *UnknownValueColumn) GetBlob() []byte {
+func (u *UnknownValueColumn) GetBlob() *[]byte {
 	panic("not a blob")
 }
 
@@ -145,10 +145,11 @@ func (v *ValueColumnFloat) GetFloat() float64 {
 
 type ValueColumnBlob struct {
 	UnknownValueColumn
+	Value *[]byte
 }
 
-func (v *ValueColumnBlob) GetBlob() []byte {
-	panic("attempted to read blob from select, use open blob")
+func (v *ValueColumnBlob) GetBlob() *[]byte {
+	return v.Value
 }
 
 type ValueColumnNull struct {
@@ -201,6 +202,12 @@ func CaptureChanges(query string, db *sqlite.Conn, output bool, params ...Param)
 		}
 		if v, ok := param.Value.(string); ok {
 			stmt.SetText(param.Name, v)
+		} else if v, ok := param.Value.(*string); ok {
+			if v == nil {
+				stmt.SetNull(param.Name)
+			} else {
+				stmt.SetText(param.Name, *v)
+			}
 		} else if v, ok := param.Value.(int); ok {
 			stmt.SetInt64(param.Name, int64(v))
 		} else if v, ok := param.Value.(int64); ok {
@@ -211,6 +218,12 @@ func CaptureChanges(query string, db *sqlite.Conn, output bool, params ...Param)
 			stmt.SetFloat(param.Name, v)
 		} else if v, ok := param.Value.([]byte); ok {
 			stmt.SetBytes(param.Name, v)
+		} else if v, ok := param.Value.(*[]byte); ok {
+			if v == nil {
+				stmt.SetNull(param.Name)
+			} else {
+				stmt.SetBytes(param.Name, *v)
+			}
 		} else if v, ok := param.Value.(bool); ok {
 			stmt.SetBool(param.Name, v)
 		} else if param.Value == nil {
@@ -267,7 +280,18 @@ func CaptureChanges(query string, db *sqlite.Conn, output bool, params ...Param)
 					Value: stmt.ColumnFloat(i),
 				})
 			case sqlite.TypeBlob:
-				row.Columns = append(row.Columns, &ValueColumnBlob{})
+				data := make([]byte, stmt.ColumnLen(i))
+				total := 0
+				for {
+					read := stmt.ColumnBytes(i, data)
+					total += read
+					if total >= len(data) {
+						break
+					}
+				}
+				row.Columns = append(row.Columns, &ValueColumnBlob{
+					Value: &data,
+				})
 			case sqlite.TypeNull:
 				row.Columns = append(row.Columns, &ValueColumnNull{})
 			}

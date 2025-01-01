@@ -1,9 +1,8 @@
-package repository
+package consensus
 
 import (
 	"context"
 	"github.com/bottledcode/atlas-db/atlas"
-	"github.com/bottledcode/atlas-db/atlas/consensus"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"strings"
@@ -11,9 +10,10 @@ import (
 )
 
 type TableRepository interface {
-	GetTable(name string) (*consensus.Table, error)
-	UpdateTable(table *consensus.Table) error
-	InsertTable(table *consensus.Table) error
+	GetTable(name string) (*Table, error)
+	UpdateTable(table *Table) error
+	InsertTable(table *Table) error
+	RemoveOwnership(table *Table) error
 }
 
 func GetDefaultTableRepository(ctx context.Context, conn *sqlite.Conn) TableRepository {
@@ -28,6 +28,14 @@ type tableRepository struct {
 	conn *sqlite.Conn
 }
 
+func (r *tableRepository) RemoveOwnership(table *Table) error {
+	_, err := atlas.ExecuteSQL(r.ctx, "delete from own where table_id = :name", r.conn, false, atlas.Param{
+		Name:  "name",
+		Value: table.Name,
+	})
+	return err
+}
+
 type tableField string
 
 const (
@@ -40,7 +48,7 @@ const (
 	TableCreatedAt         tableField = "created_at"
 )
 
-func (r *tableRepository) getTableParameters(table *consensus.Table, names ...tableField) []atlas.Param {
+func (r *tableRepository) getTableParameters(table *Table, names ...tableField) []atlas.Param {
 	params := make([]atlas.Param, len(names))
 
 	for i, name := range names {
@@ -95,13 +103,13 @@ func (r *tableRepository) getTableParameters(table *consensus.Table, names ...ta
 	return params
 }
 
-func (r *tableRepository) UpdateTable(table *consensus.Table) error {
+func (r *tableRepository) UpdateTable(table *Table) error {
 	_, err := atlas.ExecuteSQL(
 		r.ctx,
 		`
 update tables
 set version = :version and replication_level = :replication_level and allowed_regions = :allowed_regions and
-              restricted_regions = :restricted_regions and owner_node_id = :owner_node_id
+              restricted_regions = :restricted_regions and owner_node_id = :owner_node_id and version = :version
 where name = :name`,
 		r.conn,
 		false,
@@ -112,12 +120,13 @@ where name = :name`,
 			TableRestrictedRegions,
 			TableOwnerNodeId,
 			TableName,
+			TableVersion,
 		)...,
 	)
 	return err
 }
 
-func (r *tableRepository) InsertTable(table *consensus.Table) error {
+func (r *tableRepository) InsertTable(table *Table) error {
 	_, err := atlas.ExecuteSQL(
 		r.ctx,
 		`
@@ -145,8 +154,8 @@ func getCommaFields(s string) []string {
 	})
 }
 
-func (r *tableRepository) GetTable(name string) (*consensus.Table, error) {
-	var table *consensus.Table
+func (r *tableRepository) GetTable(name string) (*Table, error) {
+	var table *Table
 	results, err := atlas.ExecuteSQL(r.ctx, `
 select name,
        owner_node_id,
@@ -178,12 +187,12 @@ where name = :name
 		return nil, nil
 	}
 
-	replicationLevel := consensus.ReplicationLevel_value[results.GetIndex(0).GetColumn("replication_level").GetString()]
+	replicationLevel := ReplicationLevel_value[results.GetIndex(0).GetColumn("replication_level").GetString()]
 
 	result := results.GetIndex(0)
-	table = &consensus.Table{
+	table = &Table{
 		Name:              result.GetColumn("name").GetString(),
-		ReplicationLevel:  consensus.ReplicationLevel(replicationLevel),
+		ReplicationLevel:  ReplicationLevel(replicationLevel),
 		Owner:             nil,
 		CreatedAt:         timestamppb.New(result.GetColumn("created_at").GetTime()),
 		Version:           result.GetColumn("version").GetInt(),
@@ -192,11 +201,11 @@ where name = :name
 	}
 
 	if result.GetColumn("node_exists").GetBool() {
-		table.Owner = &consensus.Node{
+		table.Owner = &Node{
 			Id:      result.GetColumn("node_id").GetInt(),
 			Address: result.GetColumn("node_address").GetString(),
 			Port:    result.GetColumn("node_port").GetInt(),
-			Region:  &consensus.Region{Name: result.GetColumn("node_region").GetString()},
+			Region:  &Region{Name: result.GetColumn("node_region").GetString()},
 			Active:  result.GetColumn("node_active").GetBool(),
 			Rtt:     durationpb.New(result.GetColumn("node_rtt").GetDuration()),
 		}

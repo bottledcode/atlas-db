@@ -11,8 +11,8 @@ type Server struct {
 	UnimplementedConsensusServer
 }
 
-func (s *Server) StealTableOwnership(context.Context, *StealTableOwnershipRequest) (*StealTableOwnershipRequest, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method StealTableOwnership not implemented")
+func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnershipRequest) (*StealTableOwnershipRequest, error) {
+
 }
 func (s *Server) WriteMigration(context.Context, *WriteMigrationRequest) (*WriteMigrationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method WriteMigration not implemented")

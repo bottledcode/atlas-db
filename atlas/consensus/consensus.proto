@@ -18,6 +18,8 @@ service Consensus {
 message LearnMigrationRequest {
   int64 tableId = 1; // the id of the table
   int64 ownVersion = 2; // the most known version of the table
+  int64 versionBounds = 3; // the version bounds for a batch of migrations
+  google.protobuf.Duration maxTime = 4; // the maximum time to wait for a batch of migrations
 }
 
 message SchemaMigration {
@@ -81,12 +83,18 @@ message StealTableOwnershipSuccess {
   repeated Migration missingMigrations = 4; // The missing migrations, if any
 }
 
+enum StealReason {
+  queryReason = 0; // The table was stolen due to a query
+  schemaReason = 1; // The table was stolen due to a schema change
+}
+
 message StealTableOwnershipRequest {
   Node sender = 1; // The node sending the request
   oneof response {
     StealTableOwnershipFailure failure = 2; // The table that was not stolen
     StealTableOwnershipSuccess success = 3; // The table that was stolen
   }
+  StealReason reason = 4; // The reason the table was stolen
 }
 
 message StealTableOwnershipResponse {

@@ -277,6 +277,46 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 
 	return &emptypb.Empty{}, nil
 }
+
 func (s *Server) LearnMigration(*LearnMigrationRequest, Consensus_LearnMigrationServer) error {
 	return status.Errorf(codes.Unimplemented, "method LearnMigration not implemented")
+}
+
+// JoinCluster adds a node to the cluster on behalf of the node.
+func (s *Server) JoinCluster(ctx context.Context, req *Node) (*JoinClusterResponse, error) {
+	conn, err := atlas.MigrationsPool.Take(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			_, _ = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
+		}
+		atlas.MigrationsPool.Put(conn)
+	}()
+
+	_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", conn, false)
+	if err != nil {
+		return nil, err
+	}
+
+	// check if we currently are the owner for node configuration
+	tableRepo := GetDefaultTableRepository(ctx, conn)
+	table, err := tableRepo.GetTable("atlas.node")
+	if err != nil {
+		return nil, err
+	}
+
+	if table == nil {
+		return nil, status.Errorf(codes.Internal, "node table not found")
+	}
+
+	if table.GetOwner().GetId() != atlas.CurrentOptions.ServerId {
+		return &JoinClusterResponse{
+			Success: false,
+			Table:   table,
+		}, nil
+	}
+
+	// add the node to the cluster as a migration to be replicated
 }

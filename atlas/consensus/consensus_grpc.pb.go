@@ -22,6 +22,7 @@ type ConsensusClient interface {
 	WriteMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*WriteMigrationResponse, error)
 	AcceptMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	LearnMigration(ctx context.Context, in *LearnMigrationRequest, opts ...grpc.CallOption) (Consensus_LearnMigrationClient, error)
+	JoinCluster(ctx context.Context, in *Node, opts ...grpc.CallOption) (*JoinClusterResponse, error)
 }
 
 type consensusClient struct {
@@ -91,6 +92,15 @@ func (x *consensusLearnMigrationClient) Recv() (*Migration, error) {
 	return m, nil
 }
 
+func (c *consensusClient) JoinCluster(ctx context.Context, in *Node, opts ...grpc.CallOption) (*JoinClusterResponse, error) {
+	out := new(JoinClusterResponse)
+	err := c.cc.Invoke(ctx, "/atlas.consensus.Consensus/JoinCluster", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ConsensusServer is the server API for Consensus service.
 // All implementations must embed UnimplementedConsensusServer
 // for forward compatibility
@@ -99,6 +109,7 @@ type ConsensusServer interface {
 	WriteMigration(context.Context, *WriteMigrationRequest) (*WriteMigrationResponse, error)
 	AcceptMigration(context.Context, *WriteMigrationRequest) (*emptypb.Empty, error)
 	LearnMigration(*LearnMigrationRequest, Consensus_LearnMigrationServer) error
+	JoinCluster(context.Context, *Node) (*JoinClusterResponse, error)
 	mustEmbedUnimplementedConsensusServer()
 }
 
@@ -117,6 +128,9 @@ func (UnimplementedConsensusServer) AcceptMigration(context.Context, *WriteMigra
 }
 func (UnimplementedConsensusServer) LearnMigration(*LearnMigrationRequest, Consensus_LearnMigrationServer) error {
 	return status.Errorf(codes.Unimplemented, "method LearnMigration not implemented")
+}
+func (UnimplementedConsensusServer) JoinCluster(context.Context, *Node) (*JoinClusterResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method JoinCluster not implemented")
 }
 func (UnimplementedConsensusServer) mustEmbedUnimplementedConsensusServer() {}
 
@@ -206,6 +220,24 @@ func (x *consensusLearnMigrationServer) Send(m *Migration) error {
 	return x.ServerStream.SendMsg(m)
 }
 
+func _Consensus_JoinCluster_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Node)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ConsensusServer).JoinCluster(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/atlas.consensus.Consensus/JoinCluster",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ConsensusServer).JoinCluster(ctx, req.(*Node))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var _Consensus_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "atlas.consensus.Consensus",
 	HandlerType: (*ConsensusServer)(nil),
@@ -221,6 +253,10 @@ var _Consensus_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AcceptMigration",
 			Handler:    _Consensus_AcceptMigration_Handler,
+		},
+		{
+			MethodName: "JoinCluster",
+			Handler:    _Consensus_JoinCluster_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

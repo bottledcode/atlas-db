@@ -18,6 +18,53 @@ import (
 	"zombiezen.com/go/sqlite"
 )
 
+func JoinCluster(ctx context.Context) error {
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: true,
+	}
+
+	creds := credentials.NewTLS(tlsConfig)
+
+	conn, err := atlas.MigrationsPool.Take(ctx)
+	if err != nil {
+		return err
+	}
+	defer atlas.MigrationsPool.Put(conn)
+	_, err = atlas.ExecuteSQL(ctx, "BEGIN", conn, false)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_, _ = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
+		}
+	}()
+
+	// find the current owner of the nodes table
+	results, err := atlas.ExecuteSQL(ctx, "select owner_node_id from tables where name = 'atlas.nodes'", conn, false)
+	if err != nil {
+		return err
+	}
+	if len(results.Rows) == 0 {
+		// todo: this may happen on a new cluster that is forming
+		return fmt.Errorf("no owner for table atlas.nodes")
+	}
+
+	conn, err := grpc.NewClient(url, grpc.WithTransportCredentials(creds), grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+		ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", "Bearer "+atlas.CurrentOptions.ApiKey)
+		ctx = metadata.AppendToOutgoingContext(ctx, "Atlas-Service", "Bootstrap")
+		return invoker(ctx, method, req, reply, cc, opts...)
+	}), grpc.WithStreamInterceptor(func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+		ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", "Bearer "+atlas.CurrentOptions.ApiKey)
+		ctx = metadata.AppendToOutgoingContext(ctx, "Atlas-Service", "Bootstrap")
+		return streamer(ctx, desc, cc, method, opts...)
+	}))
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+}
+
 // InitializeMaybe checks if the database is empty and initializes it if it is
 func InitializeMaybe(ctx context.Context) error {
 	conn, err := atlas.MigrationsPool.Take(ctx)
@@ -206,11 +253,22 @@ SET address = :address, port = :port, region = :region, active = 1
 		return err
 	}
 
+	_, err = atlas.ExecuteSQL(ctx, "begin immediate", conn, false)
+	if err != nil {
+		return err
+	}
+	// add the table to "own" table
+	_, err = atlas.ExecuteSQL(ctx, `insert into own (table_id) values ('atlas.nodes') on conflict do nothing`, conn, false)
+	if err != nil {
+		return err
+	}
+	_, err = atlas.ExecuteSQL(ctx, "commit", conn, false)
+
 	return err
 }
 
 // DoBootstrap connects to the bootstrap server and writes the data to the meta file
-func DoBootstrap(url string, metaFilename string) error {
+func DoBootstrap(ctx context.Context, url string, metaFilename string) error {
 
 	atlas.Logger.Info("Connecting to bootstrap server", zap.String("url", url))
 
@@ -235,7 +293,7 @@ func DoBootstrap(url string, metaFilename string) error {
 	defer conn.Close()
 
 	client := NewBootstrapClient(conn)
-	resp, err := client.GetBootstrapData(context.Background(), &BootstrapRequest{
+	resp, err := client.GetBootstrapData(ctx, &BootstrapRequest{
 		Version: 1,
 	})
 	if err != nil {
@@ -280,6 +338,17 @@ func DoBootstrap(url string, metaFilename string) error {
 			goto writeRest
 		}
 	}
+
+	// we are now ready to connect to the database
+	atlas.CreatePool(atlas.CurrentOptions)
+	m, err := atlas.MigrationsPool.Take(ctx)
+	if err != nil {
+		return err
+	}
+	defer atlas.MigrationsPool.Put(m)
+
+	// remove all data in the own table as this node owns no tables.
+	_, err = atlas.ExecuteSQL(ctx, "delete from own", m, false)
 
 	return nil
 }

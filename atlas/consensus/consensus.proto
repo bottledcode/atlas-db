@@ -13,6 +13,12 @@ service Consensus {
   rpc WriteMigration(WriteMigrationRequest) returns (WriteMigrationResponse) {}
   rpc AcceptMigration(WriteMigrationRequest) returns (google.protobuf.Empty) {}
   rpc LearnMigration(LearnMigrationRequest) returns (stream Migration) {}
+  rpc JoinCluster(Node) returns (JoinClusterResponse) {}
+}
+
+message JoinClusterResponse {
+  bool success = 1; // Whether the operation was successful
+  Table table = 2; // The current node table if the requested node is not the owner
 }
 
 message LearnMigrationRequest {

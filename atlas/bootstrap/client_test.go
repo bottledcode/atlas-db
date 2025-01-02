@@ -140,7 +140,7 @@ func TestInitializeMaybe(t *testing.T) {
 
 	ctx := context.Background()
 
-	conn, err := atlas.MigrationsPool.Get(ctx)
+	conn, err := atlas.MigrationsPool.Take(ctx)
 	require.NoError(t, err)
 	defer atlas.MigrationsPool.Put(conn)
 

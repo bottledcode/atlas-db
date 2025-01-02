@@ -157,8 +157,14 @@ func InitializeMaybe(ctx context.Context) error {
 			Name:  "port",
 			Value: atlas.CurrentOptions.AdvertisePort,
 		})
+		if err != nil {
+			return err
+		}
 
-		// this will crash...
+		if results.Empty() {
+			atlas.Logger.Fatal("Could not find the current node in the database, but a node currently exists; please connect to the cluster.")
+		}
+
 		atlas.CurrentOptions.ServerId = results.GetIndex(0).GetColumn("id").GetInt()
 
 		return nil

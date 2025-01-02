@@ -50,7 +50,25 @@ func JoinCluster(ctx context.Context) error {
 		return fmt.Errorf("no owner for table atlas.nodes")
 	}
 
-	conn, err := grpc.NewClient(url, grpc.WithTransportCredentials(creds), grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	owner, err := atlas.ExecuteSQL(ctx, "select address from nodes where id = :id", conn, false, atlas.Param{
+		Name:  "id",
+		Value: results.GetIndex(0).GetColumn("owner_node_id").GetInt(),
+	})
+	if err != nil {
+		return err
+	}
+
+	nextIds, err := atlas.ExecuteSQL(ctx, "select max(id) + 1 as id from nodes", conn, false)
+	if err != nil {
+		return err
+	}
+
+	_, err = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
+	if err != nil {
+		return err
+	}
+
+	c, err := grpc.NewClient(owner.GetIndex(0).GetColumn("address").GetString(), grpc.WithTransportCredentials(creds), grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 		ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", "Bearer "+atlas.CurrentOptions.ApiKey)
 		ctx = metadata.AppendToOutgoingContext(ctx, "Atlas-Service", "Bootstrap")
 		return invoker(ctx, method, req, reply, cc, opts...)
@@ -63,6 +81,26 @@ func JoinCluster(ctx context.Context) error {
 		return err
 	}
 	defer conn.Close()
+
+	client := consensus.NewConsensusClient(c)
+	result, err := client.JoinCluster(ctx, &consensus.Node{
+		Id:      nextIds.GetIndex(0).GetColumn("id").GetInt(),
+		Address: atlas.CurrentOptions.AdvertiseAddress,
+		Port:    int64(atlas.CurrentOptions.AdvertisePort),
+		Region:  &consensus.Region{Name: atlas.CurrentOptions.Region},
+		Active:  true,
+		Rtt:     durationpb.New(0),
+	})
+
+	if err != nil {
+		return err
+	}
+
+	if !result.GetSuccess() {
+		return fmt.Errorf("could not join a cluster")
+	}
+
+	return nil
 }
 
 // InitializeMaybe checks if the database is empty and initializes it if it is
@@ -89,6 +127,19 @@ func InitializeMaybe(ctx context.Context) error {
 	}
 	if results.GetIndex(0).GetColumn("c").GetInt() > 0 {
 		atlas.Logger.Info("Atlas database is not empty; skipping initialization and continuing normal operations")
+
+		// get our current node id
+		results, err = atlas.ExecuteSQL(ctx, "select id from nodes where address = :address and port = :port", conn, false, atlas.Param{
+			Name:  "address",
+			Value: atlas.CurrentOptions.AdvertiseAddress,
+		}, atlas.Param{
+			Name:  "port",
+			Value: atlas.CurrentOptions.AdvertisePort,
+		})
+
+		// this will crash...
+		atlas.CurrentOptions.ServerId = results.GetIndex(0).GetColumn("id").GetInt()
+
 		return nil
 	}
 
@@ -262,6 +313,7 @@ SET address = :address, port = :port, region = :region, active = 1
 	if err != nil {
 		return err
 	}
+	atlas.CurrentOptions.ServerId = node.Id
 	_, err = atlas.ExecuteSQL(ctx, "commit", conn, false)
 
 	return err

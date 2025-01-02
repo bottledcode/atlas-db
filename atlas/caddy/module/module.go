@@ -51,16 +51,16 @@ func (m *Module) Provision(ctx caddy.Context) (err error) {
 
 	if atlas.CurrentOptions.BootstrapConnect != "" {
 		atlas.Logger.Info("🚀 Bootstrapping Atlas...")
-		err = bootstrap.DoBootstrap(atlas.CurrentOptions.BootstrapConnect, atlas.CurrentOptions.MetaFilename)
+		err = bootstrap.DoBootstrap(ctx, atlas.CurrentOptions.BootstrapConnect, atlas.CurrentOptions.MetaFilename)
 		if err != nil {
 			return
 		}
 		atlas.Logger.Info("🚀 Bootstrapping Complete")
 		atlas.Logger.Info("☄️ Joining Atlas Cluster...")
 		atlas.CreatePool(atlas.CurrentOptions)
-		// todo: join cluster
+		err = bootstrap.JoinCluster(ctx)
 
-		atlas.Logger.Info("☄️ Atlas Cluster Joined", zap.Int("NodeID", atlas.CurrentOptions.ServerId))
+		atlas.Logger.Info("☄️ Atlas Cluster Joined", zap.Int64("NodeID", atlas.CurrentOptions.ServerId))
 	} else {
 		atlas.CreatePool(atlas.CurrentOptions)
 		err = bootstrap.InitializeMaybe(ctx)

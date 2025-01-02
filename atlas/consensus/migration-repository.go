@@ -11,6 +11,7 @@ type MigrationRepository interface {
 	AddMigration(migration *Migration, sender *Node) error
 	GetMigrationVersion(table string, version int64) ([]*Migration, error)
 	CommitMigration(table string, version int64) error
+	GetNextVersion(table string) (int64, error)
 }
 
 func GetDefaultMigrationRepository(ctx context.Context, conn *sqlite.Conn) MigrationRepository {
@@ -23,6 +24,18 @@ func GetDefaultMigrationRepository(ctx context.Context, conn *sqlite.Conn) Migra
 type migrationRepository struct {
 	ctx  context.Context
 	conn *sqlite.Conn
+}
+
+func (m *migrationRepository) GetNextVersion(table string) (int64, error) {
+	results, err := atlas.ExecuteSQL(m.ctx, `select max(version) + 1 as version from migrations where table_id = :table_id`, m.conn, false, atlas.Param{
+		Name:  "table_id",
+		Value: table,
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	return results.Rows[0].GetColumn("version").GetInt(), nil
 }
 
 func (m *migrationRepository) GetMigrationVersion(table string, version int64) ([]*Migration, error) {

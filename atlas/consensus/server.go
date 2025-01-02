@@ -7,6 +7,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"strings"
 	"zombiezen.com/go/sqlite"
@@ -282,6 +283,19 @@ func (s *Server) LearnMigration(*LearnMigrationRequest, Consensus_LearnMigration
 	return status.Errorf(codes.Unimplemented, "method LearnMigration not implemented")
 }
 
+func constructCurrentNode() *Node {
+	return &Node{
+		Id:      atlas.CurrentOptions.ServerId,
+		Address: atlas.CurrentOptions.AdvertiseAddress,
+		Port:    int64(atlas.CurrentOptions.AdvertisePort),
+		Region: &Region{
+			Name: atlas.CurrentOptions.Region,
+		},
+		Active: true,
+		Rtt:    durationpb.New(0),
+	}
+}
+
 // JoinCluster adds a node to the cluster on behalf of the node.
 func (s *Server) JoinCluster(ctx context.Context, req *Node) (*JoinClusterResponse, error) {
 	conn, err := atlas.MigrationsPool.Take(ctx)
@@ -319,4 +333,90 @@ func (s *Server) JoinCluster(ctx context.Context, req *Node) (*JoinClusterRespon
 	}
 
 	// add the node to the cluster as a migration to be replicated
+	qm := QuorumManager{}
+
+	sess, err := conn.CreateSession("")
+	if err != nil {
+		return nil, err
+	}
+	defer sess.Delete()
+	err = sess.Attach("nodes")
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = atlas.ExecuteSQL(ctx, `
+insert into nodes (id, address, port, region, active, created_at, rtt)
+VALUES (:id, :address, :port, :region, 1, current_timestamp, 0)`, conn, false, atlas.Param{
+		Name:  "id",
+		Value: req.GetId(),
+	}, atlas.Param{
+		Name:  "address",
+		Value: req.GetAddress(),
+	}, atlas.Param{
+		Name:  "port",
+		Value: req.GetPort(),
+	}, atlas.Param{
+		Name:  "region",
+		Value: req.GetRegion(),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	migrationData := bytes.Buffer{}
+	err = sess.WritePatchset(&migrationData)
+	if err != nil {
+		return nil, err
+	}
+
+	tr := GetDefaultTableRepository(ctx, conn)
+	nodeTable, err := tr.GetTable("atlas.nodes")
+	if err != nil {
+		return nil, err
+	}
+
+	mr := GetDefaultMigrationRepository(ctx, conn)
+	nextVersion, err := mr.GetNextVersion("atlas.nodes")
+
+	q, err := qm.GetMigrationQuorum(ctx, "atlas.nodes", conn)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
+
+	// create a new migration
+	migration := &Migration{
+		TableId: "atlas.nodes",
+		Version: nextVersion,
+		Migration: &Migration_Data{
+			Data: &DataMigration{
+				Session: [][]byte{
+					migrationData.Bytes(),
+				},
+			},
+		},
+	}
+
+	resp, err := q.WriteMigration(ctx, &WriteMigrationRequest{
+		TableId:      "atlas.nodes",
+		TableVersion: table.Version,
+		Sender:       constructCurrentNode(),
+		Migration:    migration,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if !resp.Success {
+		return &JoinClusterResponse{
+			Success: false,
+			Table:   nodeTable,
+		}, nil
+	}
+
+	return &JoinClusterResponse{
+		Success: true,
+	}, nil
 }

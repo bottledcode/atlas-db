@@ -108,8 +108,12 @@ func (r *tableRepository) UpdateTable(table *Table) error {
 		r.ctx,
 		`
 update tables
-set version = :version and replication_level = :replication_level and allowed_regions = :allowed_regions and
-              restricted_regions = :restricted_regions and owner_node_id = :owner_node_id and version = :version
+set version            = :version,
+    replication_level  = :replication_level,
+    allowed_regions    = :allowed_regions,
+    restricted_regions = :restricted_regions,
+    owner_node_id      = :owner_node_id,
+    version            = :version
 where name = :name`,
 		r.conn,
 		false,

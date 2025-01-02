@@ -21,7 +21,7 @@ type majorityQuorum struct {
 	nodes []*QuorumNode
 }
 
-func (m *majorityQuorum) runQuorum(runCmd func(ctx context.Context, node *QuorumNode, i int) error) error {
+func (m *majorityQuorum) runQuorum(ctx context.Context, runCmd func(ctx context.Context, node *QuorumNode, i int) error) error {
 	wg := sync.WaitGroup{}
 	wg.Add(len(m.nodes))
 
@@ -31,7 +31,7 @@ func (m *majorityQuorum) runQuorum(runCmd func(ctx context.Context, node *Quorum
 		go func(i int) {
 			defer wg.Done()
 
-			err := runCmd(context.Background(), m.nodes[i], i)
+			err := runCmd(ctx, m.nodes[i], i)
 			errs[i] = err
 		}(i)
 	}
@@ -44,7 +44,7 @@ func (m *majorityQuorum) StealTableOwnership(ctx context.Context, in *StealTable
 	// phase 1a
 	results := make([]*StealTableOwnershipResponse, len(m.nodes))
 
-	err := m.runQuorum(func(ctx context.Context, node *QuorumNode, i int) (err error) {
+	err := m.runQuorum(ctx, func(ctx context.Context, node *QuorumNode, i int) (err error) {
 		results[i], err = node.client.StealTableOwnership(ctx, in)
 		if err != nil {
 			return err
@@ -103,7 +103,7 @@ func (m *majorityQuorum) WriteMigration(ctx context.Context, in *WriteMigrationR
 	successes := atomic.Int64{}
 	mu := sync.Mutex{}
 	var table *Table
-	err := m.runQuorum(func(ctx context.Context, node *QuorumNode, i int) (err error) {
+	err := m.runQuorum(ctx, func(ctx context.Context, node *QuorumNode, i int) (err error) {
 		result, err := node.client.WriteMigration(ctx, in)
 		if err != nil {
 			return err
@@ -141,7 +141,7 @@ func (m *majorityQuorum) WriteMigration(ctx context.Context, in *WriteMigrationR
 
 func (m *majorityQuorum) AcceptMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	// phase 3
-	err := m.runQuorum(func(ctx context.Context, node *QuorumNode, i int) (err error) {
+	err := m.runQuorum(ctx, func(ctx context.Context, node *QuorumNode, i int) (err error) {
 		_, err = node.client.AcceptMigration(ctx, in)
 		if err != nil {
 			return err
@@ -165,7 +165,7 @@ func (m *majorityQuorum) LearnMigration(ctx context.Context, in *LearnMigrationR
 func (m *majorityQuorum) JoinCluster(ctx context.Context, in *Node, opts ...grpc.CallOption) (*JoinClusterResponse, error) {
 	mu := sync.Mutex{}
 	var table *Table
-	err := m.runQuorum(func(ctx context.Context, node *QuorumNode, i int) (err error) {
+	err := m.runQuorum(ctx, func(ctx context.Context, node *QuorumNode, i int) (err error) {
 		resp, err := node.client.JoinCluster(ctx, in)
 		if err != nil {
 			return err

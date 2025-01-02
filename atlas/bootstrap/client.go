@@ -174,7 +174,7 @@ func InitializeMaybe(ctx context.Context) error {
 	}
 
 	table := &consensus.Table{
-		Name:              "atlas.nodes",
+		Name:              consensus.NodeTable,
 		ReplicationLevel:  consensus.ReplicationLevel_global,
 		Owner:             node,
 		CreatedAt:         timestamppb.Now(),
@@ -275,11 +275,11 @@ SET address = :address, port = :port, region = :region, active = 1
 
 	// now we exclusively own the table in our single node cluster...
 	migration := &consensus.WriteMigrationRequest{
-		TableId:      "atlas.nodes",
+		TableId:      consensus.NodeTable,
 		TableVersion: 1,
 		Sender:       node,
 		Migration: &consensus.Migration{
-			TableId: "atlas.nodes",
+			TableId: consensus.NodeTable,
 			Version: nextVersion,
 			Migration: &consensus.Migration_Data{
 				Data: &consensus.DataMigration{
@@ -309,7 +309,10 @@ SET address = :address, port = :port, region = :region, active = 1
 		return err
 	}
 	// add the table to "own" table
-	_, err = atlas.ExecuteSQL(ctx, `insert into own (table_id) values ('atlas.nodes') on conflict do nothing`, conn, false)
+	_, err = atlas.ExecuteSQL(ctx, `insert into own (table_id) values (:table) on conflict do nothing`, conn, false, atlas.Param{
+		Name:  "table",
+		Value: consensus.NodeTable,
+	})
 	if err != nil {
 		return err
 	}

@@ -13,6 +13,8 @@ import (
 	"zombiezen.com/go/sqlite"
 )
 
+const NodeTable = "atlas.nodes"
+
 type Server struct {
 	UnimplementedConsensusServer
 }
@@ -316,7 +318,7 @@ func (s *Server) JoinCluster(ctx context.Context, req *Node) (*JoinClusterRespon
 
 	// check if we currently are the owner for node configuration
 	tableRepo := GetDefaultTableRepository(ctx, conn)
-	table, err := tableRepo.GetTable("atlas.node")
+	table, err := tableRepo.GetTable(NodeTable)
 	if err != nil {
 		return nil, err
 	}
@@ -371,15 +373,15 @@ VALUES (:id, :address, :port, :region, 1, current_timestamp, 0)`, conn, false, a
 	}
 
 	tr := GetDefaultTableRepository(ctx, conn)
-	nodeTable, err := tr.GetTable("atlas.nodes")
+	nodeTable, err := tr.GetTable(NodeTable)
 	if err != nil {
 		return nil, err
 	}
 
 	mr := GetDefaultMigrationRepository(ctx, conn)
-	nextVersion, err := mr.GetNextVersion("atlas.nodes")
+	nextVersion, err := mr.GetNextVersion(NodeTable)
 
-	q, err := qm.GetMigrationQuorum(ctx, "atlas.nodes", conn)
+	q, err := qm.GetMigrationQuorum(ctx, NodeTable, conn)
 	if err != nil {
 		return nil, err
 	}
@@ -388,7 +390,7 @@ VALUES (:id, :address, :port, :region, 1, current_timestamp, 0)`, conn, false, a
 
 	// create a new migration
 	migration := &Migration{
-		TableId: "atlas.nodes",
+		TableId: NodeTable,
 		Version: nextVersion,
 		Migration: &Migration_Data{
 			Data: &DataMigration{
@@ -400,7 +402,7 @@ VALUES (:id, :address, :port, :region, 1, current_timestamp, 0)`, conn, false, a
 	}
 
 	resp, err := q.WriteMigration(ctx, &WriteMigrationRequest{
-		TableId:      "atlas.nodes",
+		TableId:      NodeTable,
 		TableVersion: table.Version,
 		Sender:       constructCurrentNode(),
 		Migration:    migration,

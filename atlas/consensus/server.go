@@ -355,7 +355,11 @@ func (s *Server) JoinCluster(ctx context.Context, req *Node) (*JoinClusterRespon
 	if err != nil {
 		return nil, err
 	}
-	defer sess.Delete()
+	defer func() {
+		if sess != nil {
+			sess.Delete()
+		}
+	}()
 	err = sess.Attach("nodes")
 	if err != nil {
 		return nil, err

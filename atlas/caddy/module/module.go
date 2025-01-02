@@ -258,4 +258,5 @@ var (
 	_ caddy.Provisioner           = (*Module)(nil)
 	_ caddyhttp.MiddlewareHandler = (*Module)(nil)
 	_ caddyfile.Unmarshaler       = (*Module)(nil)
+	_ caddy.CleanerUpper          = (*Module)(nil)
 )

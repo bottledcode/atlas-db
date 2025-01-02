@@ -3,6 +3,7 @@ package consensus
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"github.com/bottledcode/atlas-db/atlas"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -157,6 +158,22 @@ func (s *Server) WriteMigration(ctx context.Context, req *WriteMigrationRequest)
 
 	tableRepo := GetDefaultTableRepository(ctx, conn)
 	existingTable, err := tableRepo.GetTable(req.GetTableId())
+	if err != nil {
+		return nil, err
+	}
+
+	if existingTable == nil {
+		atlas.Logger.Warn("table not found, but expected", zap.String("table", req.GetTableId()))
+		_, err = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
+		if err != nil {
+			return nil, err
+		}
+
+		return &WriteMigrationResponse{
+			Success: false,
+			Table:   nil,
+		}, fmt.Errorf("table %s not found", req.GetTableId())
+	}
 
 	if existingTable.GetVersion() > req.GetTableVersion() {
 

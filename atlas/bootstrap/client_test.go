@@ -116,7 +116,7 @@ func TestDoBootstrap(t *testing.T) {
 	metaFilename, c := test.GetTempDb(t)
 	defer c()
 
-	err := bootstrap.DoBootstrap(serverAddr, metaFilename)
+	err := bootstrap.DoBootstrap(context.Background(), serverAddr, metaFilename)
 	require.NoError(t, err)
 
 	file, err := os.Open(metaFilename)

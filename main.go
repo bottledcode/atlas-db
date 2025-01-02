@@ -75,7 +75,7 @@ func main() {
 	// Initialize Atlas
 	if atlas.CurrentOptions.BootstrapConnect != "" {
 		// we are connecting to a bootstrap server
-		err = bootstrap.DoBootstrap(atlas.CurrentOptions.BootstrapConnect, atlas.CurrentOptions.MetaFilename)
+		err = bootstrap.DoBootstrap(context.Background(), atlas.CurrentOptions.BootstrapConnect, atlas.CurrentOptions.MetaFilename)
 		if err != nil {
 			fmt.Println("Error bootstrapping:", err)
 			return

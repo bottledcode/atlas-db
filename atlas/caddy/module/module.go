@@ -238,11 +238,12 @@ func init() {
 						goto keepReading
 					}
 					fmt.Println(strings.TrimSpace(buf.String()))
-					buf.Reset()
 
 					if strings.HasPrefix(buf.String(), string(atlas.OK)) || strings.HasPrefix(buf.String(), string(atlas.Fatal)) {
 						continue
 					}
+
+					buf.Reset()
 
 					goto keepReading
 				}

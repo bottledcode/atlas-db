@@ -12,9 +12,7 @@ create table tables
 (
     name               text not null primary key,
     replication_level  text check (replication_level in ('local', 'regional', 'global')),
-    owner_node_id      integer
-        constraint tables_nodes_id_fk
-            references nodes,
+    owner_node_id      integer,
     created_at         timestamp     default CURRENT_TIMESTAMP,
     version            int  not null default 0,
     allowed_regions    text not null default '',
@@ -34,10 +32,4 @@ create table migrations
     data       blob             default null, -- data to apply to the user table
     committed  int     not null default 0,
     primary key (table_id, version, batch_part, by_node_id)
-);
-create table own
-(
-    table_id text not null
-        constraint own_tables_id_fk
-            references tables
 );

@@ -19,6 +19,7 @@ service Consensus {
 message JoinClusterResponse {
   bool success = 1; // Whether the operation was successful
   Table table = 2; // The current node table if the requested node is not the owner
+  int64 nodeId = 3; // The ID of the newly joined node
 }
 
 message LearnMigrationRequest {

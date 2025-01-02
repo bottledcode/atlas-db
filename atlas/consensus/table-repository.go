@@ -13,7 +13,6 @@ type TableRepository interface {
 	GetTable(name string) (*Table, error)
 	UpdateTable(table *Table) error
 	InsertTable(table *Table) error
-	RemoveOwnership(table *Table) error
 }
 
 func GetDefaultTableRepository(ctx context.Context, conn *sqlite.Conn) TableRepository {
@@ -26,14 +25,6 @@ func GetDefaultTableRepository(ctx context.Context, conn *sqlite.Conn) TableRepo
 type tableRepository struct {
 	ctx  context.Context
 	conn *sqlite.Conn
-}
-
-func (r *tableRepository) RemoveOwnership(table *Table) error {
-	_, err := atlas.ExecuteSQL(r.ctx, "delete from own where table_id = :name", r.conn, false, atlas.Param{
-		Name:  "name",
-		Value: table.Name,
-	})
-	return err
 }
 
 type tableField string

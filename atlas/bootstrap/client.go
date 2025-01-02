@@ -40,8 +40,25 @@ func JoinCluster(ctx context.Context) error {
 		}
 	}()
 
+	// check if we are already in the cluster
+	results, err := atlas.ExecuteSQL(ctx, "select id from nodes where address = :address and port = :port", conn, false, atlas.Param{
+		Name:  "address",
+		Value: atlas.CurrentOptions.AdvertiseAddress,
+	}, atlas.Param{
+		Name:  "port",
+		Value: atlas.CurrentOptions.AdvertisePort,
+	})
+	if err != nil {
+		return err
+	}
+
+	if len(results.Rows) > 0 {
+		atlas.CurrentOptions.ServerId = results.GetIndex(0).GetColumn("id").GetInt()
+		return nil
+	}
+
 	// find the current owner of the nodes table
-	results, err := atlas.ExecuteSQL(ctx, "select owner_node_id from tables where name = 'atlas.nodes'", conn, false)
+	results, err = atlas.ExecuteSQL(ctx, "select owner_node_id from tables where name = 'atlas.nodes'", conn, false)
 	if err != nil {
 		return err
 	}
@@ -50,7 +67,7 @@ func JoinCluster(ctx context.Context) error {
 		return fmt.Errorf("no owner for table atlas.nodes")
 	}
 
-	owner, err := atlas.ExecuteSQL(ctx, "select address from nodes where id = :id", conn, false, atlas.Param{
+	owner, err := atlas.ExecuteSQL(ctx, "select address, port from nodes where id = :id", conn, false, atlas.Param{
 		Name:  "id",
 		Value: results.GetIndex(0).GetColumn("owner_node_id").GetInt(),
 	})
@@ -68,7 +85,9 @@ func JoinCluster(ctx context.Context) error {
 		return err
 	}
 
-	c, err := grpc.NewClient(owner.GetIndex(0).GetColumn("address").GetString(), grpc.WithTransportCredentials(creds), grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	url := owner.GetIndex(0).GetColumn("address").GetString() + ":" + owner.GetIndex(0).GetColumn("port").GetString()
+
+	c, err := grpc.NewClient(url, grpc.WithTransportCredentials(creds), grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 		ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", "Bearer "+atlas.CurrentOptions.ApiKey)
 		ctx = metadata.AppendToOutgoingContext(ctx, "Atlas-Service", "Bootstrap")
 		return invoker(ctx, method, req, reply, cc, opts...)
@@ -80,7 +99,7 @@ func JoinCluster(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer c.Close()
 
 	client := consensus.NewConsensusClient(c)
 	result, err := client.JoinCluster(ctx, &consensus.Node{
@@ -99,6 +118,8 @@ func JoinCluster(ctx context.Context) error {
 	if !result.GetSuccess() {
 		return fmt.Errorf("could not join a cluster")
 	}
+
+	atlas.CurrentOptions.ServerId = result.NodeId
 
 	return nil
 }
@@ -143,12 +164,12 @@ func InitializeMaybe(ctx context.Context) error {
 		return nil
 	}
 
-	var region string
-
 	if atlas.CurrentOptions.Region == "" {
 		atlas.CurrentOptions.Region = "default"
 		atlas.Logger.Warn("No region specified, using default region", zap.String("region", atlas.CurrentOptions.Region))
 	}
+
+	region := atlas.CurrentOptions.Region
 
 	if atlas.CurrentOptions.AdvertisePort == 0 {
 		atlas.CurrentOptions.AdvertisePort = 8080
@@ -197,12 +218,22 @@ func InitializeMaybe(ctx context.Context) error {
 		return fmt.Errorf("could not steal table ownership")
 	}
 
+	_, err = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
+	if err != nil {
+		return err
+	}
+
 	var sess *sqlite.Session
 	sess, err = conn.CreateSession("")
 	if err != nil {
 		return err
 	}
 	err = sess.Attach("nodes")
+	if err != nil {
+		return err
+	}
+
+	_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", conn, false)
 	if err != nil {
 		return err
 	}
@@ -304,20 +335,7 @@ SET address = :address, port = :port, region = :region, active = 1
 		return err
 	}
 
-	_, err = atlas.ExecuteSQL(ctx, "begin immediate", conn, false)
-	if err != nil {
-		return err
-	}
-	// add the table to "own" table
-	_, err = atlas.ExecuteSQL(ctx, `insert into own (table_id) values (:table) on conflict do nothing`, conn, false, atlas.Param{
-		Name:  "table",
-		Value: consensus.NodeTable,
-	})
-	if err != nil {
-		return err
-	}
 	atlas.CurrentOptions.ServerId = node.Id
-	_, err = atlas.ExecuteSQL(ctx, "commit", conn, false)
 
 	return err
 }
@@ -401,9 +419,6 @@ func DoBootstrap(ctx context.Context, url string, metaFilename string) error {
 		return err
 	}
 	defer atlas.MigrationsPool.Put(m)
-
-	// remove all data in the own table as this node owns no tables.
-	_, err = atlas.ExecuteSQL(ctx, "delete from own", m, false)
 
 	return nil
 }

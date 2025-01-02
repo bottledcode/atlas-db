@@ -17,6 +17,30 @@ type Quorum interface {
 	ConsensusClient
 }
 
+type selfQuorum struct {
+	server *Server
+}
+
+func (s *selfQuorum) StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipResponse, error) {
+	return s.server.StealTableOwnership(ctx, in)
+}
+
+func (s *selfQuorum) WriteMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*WriteMigrationResponse, error) {
+	return s.server.WriteMigration(ctx, in)
+}
+
+func (s *selfQuorum) AcceptMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	return s.server.AcceptMigration(ctx, in)
+}
+
+func (s *selfQuorum) LearnMigration(ctx context.Context, in *LearnMigrationRequest, opts ...grpc.CallOption) (Consensus_LearnMigrationClient, error) {
+	return s.LearnMigration(ctx, in)
+}
+
+func (s *selfQuorum) JoinCluster(ctx context.Context, in *Node, opts ...grpc.CallOption) (*JoinClusterResponse, error) {
+	return s.server.JoinCluster(ctx, in)
+}
+
 type majorityQuorum struct {
 	nodes []*QuorumNode
 }
@@ -258,7 +282,7 @@ func (q *QuorumManager) GetStealQuorum(ctx context.Context, table string) (Quoru
 
 func (q *QuorumManager) GetMigrationQuorum(ctx context.Context, table string, conn *sqlite.Conn) (Quorum, error) {
 	// count the number of regions that have a node
-	results, err := atlas.ExecuteSQL(ctx, `select count(distinct region) from nodes where active = 1`, conn, false)
+	results, err := atlas.ExecuteSQL(ctx, `select count(distinct region) as c from nodes where active = 1`, conn, false)
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +290,10 @@ func (q *QuorumManager) GetMigrationQuorum(ctx context.Context, table string, co
 
 	if regionCount == 1 {
 		// this is a single region cluster, so we just need to get a simple majority
-		results, err = atlas.ExecuteSQL(ctx, `select address, port from nodes where active = 1`, conn, false)
+		results, err = atlas.ExecuteSQL(ctx, `select address, port from nodes where active = 1 and id != :self`, conn, false, atlas.Param{
+			Name:  "self",
+			Value: atlas.CurrentOptions.ServerId,
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -283,6 +310,13 @@ func (q *QuorumManager) GetMigrationQuorum(ctx context.Context, table string, co
 				closer:  closer,
 				client:  client,
 			}
+		}
+
+		// this is a fledgling cluster, so we just need ourselves
+		if len(nodes) == 0 {
+			return &selfQuorum{
+				server: &Server{},
+			}, nil
 		}
 
 		return &majorityQuorum{

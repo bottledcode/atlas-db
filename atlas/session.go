@@ -36,12 +36,12 @@ func InitializeSession(ctx context.Context, conn *sqlite.Conn) (context.Context,
 	}
 	defer MigrationsPool.Put(m)
 
-	results, err := ExecuteSQL(ctx, "select table_name from tables where replication_level in ('regional', 'global')", m, false)
+	results, err := ExecuteSQL(ctx, "select name from tables where replication_level in ('regional', 'global')", m, false)
 	if err != nil {
 		return ctx, err
 	}
 	for _, row := range results.Rows {
-		tableName := row.GetColumn("table_name").GetString()
+		tableName := row.GetColumn("name").GetString()
 		if err = session.Attach(tableName); err != nil {
 			return ctx, err
 		}

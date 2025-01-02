@@ -116,9 +116,6 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 		return nil, err
 	}
 
-	// remove the table from ownership
-	err = tableRepo.RemoveOwnership(existingTable)
-
 	migrationRepo := GetDefaultMigrationRepository(ctx, conn)
 
 	missing, err := migrationRepo.GetUncommittedMigrations(req.GetTable())
@@ -360,7 +357,7 @@ VALUES (:id, :address, :port, :region, 1, current_timestamp, 0)`, conn, false, a
 		Value: req.GetPort(),
 	}, atlas.Param{
 		Name:  "region",
-		Value: req.GetRegion(),
+		Value: req.GetRegion().GetName(),
 	})
 	if err != nil {
 		return nil, err
@@ -368,6 +365,11 @@ VALUES (:id, :address, :port, :region, 1, current_timestamp, 0)`, conn, false, a
 
 	migrationData := bytes.Buffer{}
 	err = sess.WritePatchset(&migrationData)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
 	if err != nil {
 		return nil, err
 	}
@@ -386,8 +388,6 @@ VALUES (:id, :address, :port, :region, 1, current_timestamp, 0)`, conn, false, a
 		return nil, err
 	}
 
-	_, err = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
-
 	// create a new migration
 	migration := &Migration{
 		TableId: NodeTable,
@@ -401,12 +401,14 @@ VALUES (:id, :address, :port, :region, 1, current_timestamp, 0)`, conn, false, a
 		},
 	}
 
-	resp, err := q.WriteMigration(ctx, &WriteMigrationRequest{
+	mreq := &WriteMigrationRequest{
 		TableId:      NodeTable,
 		TableVersion: table.Version,
 		Sender:       constructCurrentNode(),
 		Migration:    migration,
-	})
+	}
+
+	resp, err := q.WriteMigration(ctx, mreq)
 	if err != nil {
 		return nil, err
 	}
@@ -418,7 +420,13 @@ VALUES (:id, :address, :port, :region, 1, current_timestamp, 0)`, conn, false, a
 		}, nil
 	}
 
+	_, err = q.AcceptMigration(ctx, mreq)
+	if err != nil {
+		return nil, err
+	}
+
 	return &JoinClusterResponse{
 		Success: true,
+		NodeId:  req.GetId(),
 	}, nil
 }

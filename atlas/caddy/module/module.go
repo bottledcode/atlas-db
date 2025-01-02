@@ -254,7 +254,6 @@ func init() {
 
 // Interface guards
 var (
-	//_ caddy.App                   = (*FrankenPHPApp)(nil)
 	_ caddy.Provisioner           = (*Module)(nil)
 	_ caddyhttp.MiddlewareHandler = (*Module)(nil)
 	_ caddyfile.Unmarshaler       = (*Module)(nil)

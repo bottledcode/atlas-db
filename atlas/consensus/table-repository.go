@@ -103,7 +103,7 @@ set version            = :version,
     replication_level  = :replication_level,
     allowed_regions    = :allowed_regions,
     restricted_regions = :restricted_regions,
-    owner_node_id      = :owner_node_id,
+    owner_node_id      = :owner_node_id
 where name = :name`,
 		r.conn,
 		false,

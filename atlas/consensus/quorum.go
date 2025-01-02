@@ -233,10 +233,15 @@ func (q *QuorumManager) GetStealQuorum(ctx context.Context, table string) (Quoru
 		}
 
 		nodes := make([]*QuorumNode, len(results.Rows))
+		errs := make([]error, len(results.Rows))
 		for i, row := range results.Rows {
 			var client ConsensusClient
 			var closer func()
 			client, err, closer = getNewClient(row.GetColumn("address").GetString() + ":" + row.GetColumn("port").GetString())
+
+			if err != nil {
+				errs[i] = err
+			}
 
 			nodes[i] = &QuorumNode{
 				address: row.GetColumn("address").GetString(),
@@ -244,6 +249,16 @@ func (q *QuorumManager) GetStealQuorum(ctx context.Context, table string) (Quoru
 				closer:  closer,
 				client:  client,
 			}
+		}
+
+		err = errors.Join(errs...)
+		if err != nil {
+			for _, node := range nodes {
+				if node != nil {
+					node.closer()
+				}
+			}
+			return nil, err
 		}
 
 		return &majorityQuorum{
@@ -275,12 +290,14 @@ func (q *QuorumManager) GetMigrationQuorum(ctx context.Context, table string, co
 		}
 
 		nodes := make([]*QuorumNode, len(results.Rows))
+		errs := make([]error, len(results.Rows))
 		for i, row := range results.Rows {
 			var client ConsensusClient
 			var closer func()
 			client, err, closer = getNewClient(row.GetColumn("address").GetString() + ":" + row.GetColumn("port").GetString())
+
 			if err != nil {
-				return nil, err
+				errs[i] = err
 			}
 
 			nodes[i] = &QuorumNode{
@@ -289,6 +306,16 @@ func (q *QuorumManager) GetMigrationQuorum(ctx context.Context, table string, co
 				closer:  closer,
 				client:  client,
 			}
+		}
+
+		err = errors.Join(errs...)
+		if err != nil {
+			for _, node := range nodes {
+				if node != nil {
+					node.closer()
+				}
+			}
+			return nil, err
 		}
 
 		// this is a fledgling cluster, so we just need ourselves

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"go.uber.org/zap"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"zombiezen.com/go/sqlite"
@@ -18,7 +19,12 @@ func ServeSocket(ctx context.Context) (func() error, error) {
 	// create the unix socket
 	ln, err := net.Listen("unix", CurrentOptions.SocketPath)
 	if err != nil {
-		return nil, err
+		// try to remove the socket file if it exists
+		_ = os.Remove(CurrentOptions.SocketPath)
+		ln, err = net.Listen("unix", CurrentOptions.SocketPath)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// start the server
@@ -261,9 +267,9 @@ func handleConnection(conn net.Conn) {
 		rowNum := 0
 
 		// write out the column names
-		writeMessage("META COLUMN_COUNT" + strconv.Itoa(stmt.ColumnCount()))
+		writeMessage("META COLUMN_COUNT " + strconv.Itoa(stmt.ColumnCount()))
 		for i := 0; i < stmt.ColumnCount(); i++ {
-			writeMessage("META COLUMN_NAME " + strconv.Itoa(i) + stmt.ColumnName(i))
+			writeMessage("META COLUMN_NAME " + strconv.Itoa(i) + " " + stmt.ColumnName(i))
 		}
 
 		for {
@@ -292,8 +298,8 @@ func handleConnection(conn net.Conn) {
 				}
 			}
 		}
-		writeMessage("META LAST_INSERT_ID" + strconv.FormatInt(sql.LastInsertRowID(), 10))
-		writeMessage("META ROWS_AFFECTED" + strconv.Itoa(sql.Changes()))
+		writeMessage("META LAST_INSERT_ID " + strconv.FormatInt(sql.LastInsertRowID(), 10))
+		writeMessage("META ROWS_AFFECTED " + strconv.Itoa(sql.Changes()))
 
 		err := stmt.ClearBindings()
 		if err != nil {
@@ -308,13 +314,6 @@ func handleConnection(conn net.Conn) {
 	defer func() {
 		for _, stmt := range stmts {
 			_ = stmt.Finalize()
-		}
-	}()
-
-	defer func() {
-		sess := GetCurrentSession(ctx)
-		if sess != nil {
-			sess.Delete()
 		}
 	}()
 
@@ -616,7 +615,7 @@ func handleConnection(conn net.Conn) {
 				hasFatalled = true
 				break
 			}
-			if err := command.validate(3); err != nil {
+			if err := command.validate(3); err == nil {
 				// we are probably executing a savepoint
 				if command.selectNormalizedCommand(1) == "TO" {
 					_, err := ExecuteSQL(ctx, "ROLLBACK TO "+command.selectCommand(3), sql, false)

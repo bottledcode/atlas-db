@@ -51,20 +51,22 @@ func (m *Module) Provision(ctx caddy.Context) (err error) {
 
 	if atlas.CurrentOptions.BootstrapConnect != "" {
 		atlas.Logger.Info("🚀 Bootstrapping Atlas...")
-		err = bootstrap.DoBootstrap(atlas.CurrentOptions.BootstrapConnect, atlas.CurrentOptions.MetaFilename)
+		err = bootstrap.DoBootstrap(ctx, atlas.CurrentOptions.BootstrapConnect, atlas.CurrentOptions.MetaFilename)
 		if err != nil {
 			return
 		}
 		atlas.Logger.Info("🚀 Bootstrapping Complete")
 		atlas.Logger.Info("☄️ Joining Atlas Cluster...")
 		atlas.CreatePool(atlas.CurrentOptions)
-		_ = consensus.ProposeRegion(ctx, atlas.CurrentOptions)
-		_ = consensus.ProposeNode(ctx, atlas.CurrentOptions)
+		err = bootstrap.JoinCluster(ctx)
+		if err != nil {
+			return
+		}
 
-		atlas.Logger.Info("☄️ Atlas Cluster Joined", zap.Int("NodeID", atlas.CurrentOptions.ServerId))
+		atlas.Logger.Info("☄️ Atlas Cluster Joined", zap.Int64("NodeID", atlas.CurrentOptions.ServerId))
 	} else {
 		atlas.CreatePool(atlas.CurrentOptions)
-		err = bootstrap.InitializeMaybe()
+		err = bootstrap.InitializeMaybe(ctx)
 		if err != nil {
 			return
 		}
@@ -239,11 +241,12 @@ func init() {
 						goto keepReading
 					}
 					fmt.Println(strings.TrimSpace(buf.String()))
-					buf.Reset()
 
 					if strings.HasPrefix(buf.String(), string(atlas.OK)) || strings.HasPrefix(buf.String(), string(atlas.Fatal)) {
 						continue
 					}
+
+					buf.Reset()
 
 					goto keepReading
 				}
@@ -254,8 +257,8 @@ func init() {
 
 // Interface guards
 var (
-	//_ caddy.App                   = (*FrankenPHPApp)(nil)
 	_ caddy.Provisioner           = (*Module)(nil)
 	_ caddyhttp.MiddlewareHandler = (*Module)(nil)
 	_ caddyfile.Unmarshaler       = (*Module)(nil)
+	_ caddy.CleanerUpper          = (*Module)(nil)
 )

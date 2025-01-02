@@ -3,65 +3,59 @@ syntax = "proto3";
 package atlas.consensus;
 
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/empty.proto";
 
 option go_package = "/consensus";
 
 service Consensus {
-  rpc ProposeTopologyChange(ProposeTopologyChangeRequest) returns (PromiseTopologyChange) {}
-  rpc AcceptTopologyChange(AcceptTopologyChangeRequest) returns (AcceptedTopologyChange) {}
   rpc StealTableOwnership(StealTableOwnershipRequest) returns (StealTableOwnershipResponse) {}
-  rpc StoleTableOwnership(StoleTableOwnershipRequest) returns (StoleTableOwnershipResponse) {}
   rpc WriteMigration(WriteMigrationRequest) returns (WriteMigrationResponse) {}
+  rpc AcceptMigration(WriteMigrationRequest) returns (google.protobuf.Empty) {}
+  rpc LearnMigration(LearnMigrationRequest) returns (stream Migration) {}
+  rpc JoinCluster(Node) returns (JoinClusterResponse) {}
 }
 
-enum StealReason {
-  UNKNOWN_REASON = 0; // Unknown reason
-  OWNER_DOWN = 1; // The owner is down
-  LOCAL_JOIN = 2; // The node wants to perform a join with another table it owns
-  POLICY = 3; // The policy dictates the table should be stolen
-  SCHEMA_MIGRATION = 4; // The table's schema is being migrated
+message JoinClusterResponse {
+  bool success = 1; // Whether the operation was successful
+  Table table = 2; // The current node table if the requested node is not the owner
+  int64 nodeId = 3; // The ID of the newly joined node
+}
+
+message LearnMigrationRequest {
+  int64 tableId = 1; // the id of the table
+  int64 ownVersion = 2; // the most known version of the table
+  int64 versionBounds = 3; // the version bounds for a batch of migrations
+  google.protobuf.Duration maxTime = 4; // the maximum time to wait for a batch of migrations
 }
 
 message SchemaMigration {
-  int64 tableId = 1; // The ID of the table
-  int64 version = 2; // The version of the table
-  repeated string commands = 3; // The commands to be executed
+  repeated string commands = 1; // The commands to be executed
 }
 
 message DataMigration {
-  int64 tableId = 1; // The ID of the table
-  int64 version = 2; // The version of the table
-  repeated bytes data = 3; // The data to be written
+  repeated bytes session = 1; // The data to be written
 }
 
 message Migration {
+  string tableId = 1; // The id of the table (aka, ballot)
+  int64 version = 2; // The version of the table (aka, slot)
   oneof migration {
-    SchemaMigration schema = 1; // The schema migration
-    DataMigration data = 2; // The data migration
+    SchemaMigration schema = 3; // The schema migration
+    DataMigration data = 4; // The data migration
   }
 }
 
 message WriteMigrationRequest {
-  int64 tableId = 1; // The ID of the table
-  Node sender = 2; // The node sending the migration
-  Migration migration = 3; // The migration to be written
+  string tableId = 1; // The ID of the table
+  int64 tableVersion = 2; // The version of the table
+  Node sender = 3; // The node sending the migration
+  Migration migration = 4; // The migration to be written
 }
 
 message WriteMigrationResponse {
   bool success = 1; // Whether the operation was successful
   Table table = 2; // The table if the operation was not successful
-  repeated Node leadership = 3; // The nodes that are the new leaders
-  repeated Migration migrations = 4; // missing migrations if the operation was not successful
-}
-
-message StoleTableOwnershipRequest {
-  Node sender = 1; // The node sending the request
-  Table table = 2; // The table to be stolen
-  StealReason reason = 3; // The reason for the steal
-}
-
-message StoleTableOwnershipResponse {
-  bool success = 1; // Whether the operation was successful
 }
 
 enum ReplicationLevel {
@@ -71,80 +65,52 @@ enum ReplicationLevel {
 }
 
 message Table {
-  int64 id = 1; // The ID of the table
-  string name = 2; // The name of the table
-  int64 version = 3; // The version of the table
-  Node globalOwner = 4; // The global owner of the table
-  google.protobuf.Timestamp createdAt = 5; // The time the table was created
-  ReplicationLevel replicationLevel = 6; // The replication level of the table
-  repeated string allowedRegions = 7; // The regions the global table is allowed in
+  string name = 1; // The name of the table
+  ReplicationLevel replicationLevel = 2; // The replication level of the table
+  Node owner = 3; // The global owner of the table
+  google.protobuf.Timestamp createdAt = 4; // The time the table was created
+  int64 version = 5; // The version of the table
+  repeated string allowedRegions = 6; // The regions the table data can be replicated to
+  repeated string restrictedRegions = 7; // The regions the table data cannot be replicated to
+}
+
+message StealTableOwnershipFailure {
+  Table table = 1; // The table that was not stolen
+}
+
+message StealTableOwnershipSuccess {
+  Table table = 1; // The table that was stolen
+  repeated Migration missingMigrations = 2; // The missing migrations, if any
+}
+
+enum StealReason {
+  queryReason = 0; // The table was stolen due to a query
+  schemaReason = 1; // The table was stolen due to a schema change
 }
 
 message StealTableOwnershipRequest {
   Node sender = 1; // The node sending the request
+  StealReason reason = 4; // The reason the table was stolen
   Table table = 2; // The table to be stolen
-  StealReason reason = 3; // The reason for the steal
 }
 
 message StealTableOwnershipResponse {
-  bool success = 1; // Whether the operation was successful
-  Table table = 2; // The table if the operation was not successful
+  bool promised = 1; // Whether the operation was successful
+  oneof response {
+    StealTableOwnershipFailure failure = 2; // The table that was not stolen
+    StealTableOwnershipSuccess success = 3; // The table that was stolen
+  }
 }
 
 message Node {
-  int64 nodeId = 1; // The ID of the node
-  string nodeAddress = 2;  // The address of the node
-  string nodeRegion = 3; // The region the node is in
-  int64 nodePort = 4; // The port the node listens on
-  bool isActive = 5; // Whether the node is active
+  int64 id = 1; // The ID of the node
+  string address = 2;  // The address of the node
+  Region region = 3; // The region the node is in
+  int64 port = 4; // The port the node listens on
+  bool active = 5; // Whether the node is active
+  google.protobuf.Duration rtt = 6; // The round trip time to the node
 }
 
 message Region {
-  string regionName = 1; // The region name
-  int64 regionId = 2; // The region ID
-}
-
-enum TopologyChange {
-  UNKNOWN = 0; // Unknown change
-  ADD = 1; // Add a node or region
-  REMOVE = 2; // Remove a node or region
-}
-
-message ProposeTopologyChangeRequest {
-  oneof change {
-    ProposeRegionTopologyChange regionChange = 1; // The region to be added or removed
-    ProposeNodeTopologyChange nodeChange = 2; // The node to be added or removed
-  }
-}
-
-message ProposeRegionTopologyChange {
-  Region region = 1; // The region to be added or removed
-  TopologyChange kind = 2; // The kind of change to be made
-}
-
-message ProposeNodeTopologyChange {
-  Node node = 1; // The node to be added or removed
-  TopologyChange kind = 2; // The kind of change to be made
-}
-
-message PromiseTopologyChange {
-  bool promise = 1; // A promise to accept the topology change
-  oneof response {
-    Node node = 2; // The node if the promise is not accepted
-    Region region = 3; // The region if the promise is not accepted
-  }
-}
-
-message AcceptTopologyChangeRequest {
-  oneof change {
-    Node node = 1; // The node to be added or removed
-    Region region = 2; // The region to be added or removed
-  }
-}
-
-message AcceptedTopologyChange {
-  oneof response {
-    Node node = 2; // The post-write node
-    Region region = 3; // The post-write region
-  }
+  string name = 1; // The region name
 }

@@ -26,6 +26,18 @@ func CreatePool(options *Options) {
 		PoolSize: runtime.NumCPU() * 2,
 		PrepareConn: func(conn *sqlite.Conn) (err error) {
 			// todo: err = conn.SetAuthorizer(authPrinter{})
+			err = conn.SetDefensive(true)
+			if err != nil {
+				return
+			}
+			_, err = conn.Prep("PRAGMA foreign_keys = ON;").Step()
+			if err != nil {
+				return
+			}
+			_, err = conn.Prep("attach database '" + options.MetaFilename + "' as atlas").Step()
+			if err != nil {
+				return
+			}
 			return
 		},
 	})

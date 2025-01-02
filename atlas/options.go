@@ -5,7 +5,7 @@ type Options struct {
 	MetaFilename     string
 	DoReset          bool
 	BootstrapConnect string
-	ServerId         int
+	ServerId         int64
 	Region           string
 	AdvertiseAddress string
 	AdvertisePort    uint

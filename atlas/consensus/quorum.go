@@ -279,6 +279,9 @@ func (q *QuorumManager) GetMigrationQuorum(ctx context.Context, table string, co
 			var client ConsensusClient
 			var closer func()
 			client, err, closer = getNewClient(row.GetColumn("address").GetString() + ":" + row.GetColumn("port").GetString())
+			if err != nil {
+				return nil, err
+			}
 
 			nodes[i] = &QuorumNode{
 				address: row.GetColumn("address").GetString(),

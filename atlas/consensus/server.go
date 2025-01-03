@@ -112,6 +112,7 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 
 	// the ballot number is higher
 
+	atlas.Ownership.Remove(req.GetTable().GetName())
 	err = tableRepo.UpdateTable(req.GetTable())
 	if err != nil {
 		return nil, err
@@ -291,6 +292,8 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 	if err != nil {
 		return nil, err
 	}
+
+	atlas.Ownership.Commit(req.GetTableId(), req.GetMigration().GetVersion())
 
 	return &emptypb.Empty{}, nil
 }

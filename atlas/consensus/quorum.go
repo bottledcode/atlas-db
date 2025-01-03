@@ -128,11 +128,15 @@ func (m *majorityQuorum) WriteMigration(ctx context.Context, in *WriteMigrationR
 
 	// phase 2b
 	if successes.Load() <= int64(len(m.nodes)/2) {
+		atlas.Ownership.Remove(in.TableId)
+
 		return &WriteMigrationResponse{
 			Success: false,
 			Table:   table,
 		}, nil
 	}
+
+	atlas.Ownership.Add(in.TableId, in.TableVersion)
 
 	return &WriteMigrationResponse{
 		Success: true,
@@ -149,10 +153,11 @@ func (m *majorityQuorum) AcceptMigration(ctx context.Context, in *WriteMigration
 
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
+
+	atlas.Ownership.Commit(in.TableId, in.GetMigration().GetVersion())
 
 	return &emptypb.Empty{}, nil
 }

@@ -1,30 +1,34 @@
 package atlas
 
 type Options struct {
-	DbFilename       string
-	MetaFilename     string
-	DoReset          bool
-	BootstrapConnect string
-	ServerId         int64
-	Region           string
-	AdvertiseAddress string
-	AdvertisePort    uint
-	ApiKey           string
-	SocketPath       string
+	DbFilename                   string
+	MetaFilename                 string
+	DoReset                      bool
+	BootstrapConnect             string
+	ServerId                     int64
+	Region                       string
+	AdvertiseAddress             string
+	AdvertisePort                uint
+	ApiKey                       string
+	SocketPath                   string
+	ToleratedZoneFailures        int64
+	ToleratedNodePerZoneFailures int64
 }
 
 var CurrentOptions *Options
 
 func init() {
 	CurrentOptions = &Options{
-		DbFilename:       "atlas.db",
-		MetaFilename:     "atlas.meta",
-		DoReset:          false,
-		BootstrapConnect: "",
-		ServerId:         0,
-		Region:           "local",
-		AdvertiseAddress: "localhost",
-		AdvertisePort:    8080,
-		SocketPath:       "atlas.sock",
+		DbFilename:                   "atlas.db",
+		MetaFilename:                 "atlas.meta",
+		DoReset:                      false,
+		BootstrapConnect:             "",
+		ServerId:                     0,
+		Region:                       "local",
+		AdvertiseAddress:             "localhost",
+		AdvertisePort:                8080,
+		SocketPath:                   "atlas.sock",
+		ToleratedZoneFailures:        1,
+		ToleratedNodePerZoneFailures: 1,
 	}
 }

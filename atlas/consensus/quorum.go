@@ -230,18 +230,23 @@ func (q *QuorumManager) GetStealQuorum(ctx context.Context, table string) (Quoru
 	}
 	regionCount := results.GetIndex(0).GetColumn("c").GetInt()
 
+	// single region clusters need a simple majority
 	if regionCount == 1 {
-		// this is a single region cluster, so we just need to get a simple majority
 		results, err = atlas.ExecuteSQL(ctx, `select address, port from nodes where active = 1`, conn, false)
 		if err != nil {
 			return nil, err
 		}
 
-		nodes := make([]*QuorumNode, len(results.Rows))
+		nodes := make([]*QuorumNode, len(results.Rows)/2+1)
 		errs := make([]error, len(results.Rows))
 		for i, row := range results.Rows {
+			if i > len(results.Rows)/2 {
+				break
+			}
+
 			var client ConsensusClient
 			var closer func()
+
 			client, err, closer = getNewClient(row.GetColumn("address").GetString() + ":" + row.GetColumn("port").GetString())
 
 			if err != nil {
@@ -271,8 +276,6 @@ func (q *QuorumManager) GetStealQuorum(ctx context.Context, table string) (Quoru
 		}, nil
 	}
 
-	// this is a multi-region cluster...
-	// todo: implement the rest of the function
 	return nil, nil
 }
 

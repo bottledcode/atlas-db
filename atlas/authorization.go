@@ -37,7 +37,6 @@ type Authorizer struct {
 	boundTime  time.Duration
 	mu         sync.RWMutex
 	lastReason DenyReason
-	Wants      chan Want
 }
 
 var writeOps []sqlite.OpType = []sqlite.OpType{
@@ -133,7 +132,7 @@ func (a *Authorizer) Authorize(action sqlite.Action) sqlite.AuthResult {
 		wait := Ownership.Subscribe(table)
 		defer Ownership.Unsubscribe(table, wait)
 		if !Ownership.IsOwner(table) {
-			a.Wants <- Want{
+			Ownership.Wants <- Want{
 				Table:     table,
 				Ownership: true,
 			}

@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"io"
 	"os"
+	"strconv"
 	"zombiezen.com/go/sqlite"
 )
 
@@ -40,39 +41,29 @@ func JoinCluster(ctx context.Context) error {
 		}
 	}()
 
-	// check if we are already in the cluster
-	results, err := atlas.ExecuteSQL(ctx, "select id from nodes where address = :address and port = :port", conn, false, atlas.Param{
-		Name:  "address",
-		Value: atlas.CurrentOptions.AdvertiseAddress,
-	}, atlas.Param{
-		Name:  "port",
-		Value: atlas.CurrentOptions.AdvertisePort,
-	})
+	nodeRepo := consensus.GetDefaultNodeRepository(ctx, conn)
+
+	self, err := nodeRepo.GetNodeByAddress(atlas.CurrentOptions.AdvertiseAddress, uint(atlas.CurrentOptions.AdvertisePort))
 	if err != nil {
 		return err
 	}
-
-	if len(results.Rows) > 0 {
-		atlas.CurrentOptions.ServerId = results.GetIndex(0).GetColumn("id").GetInt()
+	if self != nil {
+		// go ahead and add nodes to the internal cache
+		atlas.CurrentOptions.ServerId = self.GetId()
+		err = nodeRepo.Iterate(func(node *consensus.Node) error {
+			consensus.GetDefaultQuorumManager(ctx).AddNode(node)
+			return nil
+		})
 		return nil
 	}
 
-	// find the current owner of the nodes table
-	results, err = atlas.ExecuteSQL(ctx, "select owner_node_id from tables where name = 'atlas.nodes'", conn, false)
+	tableRepo := consensus.GetDefaultTableRepository(ctx, conn)
+	nodeEntry, err := tableRepo.GetTable(consensus.NodeTable)
 	if err != nil {
 		return err
 	}
-	if len(results.Rows) == 0 {
-		// todo: this may happen on a new cluster that is forming
-		return fmt.Errorf("no owner for table atlas.nodes")
-	}
-
-	owner, err := atlas.ExecuteSQL(ctx, "select address, port from nodes where id = :id", conn, false, atlas.Param{
-		Name:  "id",
-		Value: results.GetIndex(0).GetColumn("owner_node_id").GetInt(),
-	})
-	if err != nil {
-		return err
+	if nodeEntry == nil {
+		return fmt.Errorf("no node table found, cannot join cluster")
 	}
 
 	nextIds, err := atlas.ExecuteSQL(ctx, "select max(id) + 1 as id from nodes", conn, false)
@@ -85,7 +76,7 @@ func JoinCluster(ctx context.Context) error {
 		return err
 	}
 
-	url := owner.GetIndex(0).GetColumn("address").GetString() + ":" + owner.GetIndex(0).GetColumn("port").GetString()
+	url := nodeEntry.GetOwner().GetAddress() + ":" + strconv.Itoa(int(nodeEntry.GetOwner().GetPort()))
 
 	c, err := grpc.NewClient(url, grpc.WithTransportCredentials(creds), grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 		ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", "Bearer "+atlas.CurrentOptions.ApiKey)
@@ -141,31 +132,36 @@ func InitializeMaybe(ctx context.Context) error {
 		}
 	}()
 
-	// are we dealing with an empty database?
-	results, err := atlas.ExecuteSQL(ctx, "select count(*) as c from nodes", conn, false)
+	nodeRepo := consensus.GetDefaultNodeRepository(ctx, conn)
+
+	count, err := nodeRepo.TotalCount()
 	if err != nil {
 		return err
 	}
-	if results.GetIndex(0).GetColumn("c").GetInt() > 0 {
+	qm := consensus.GetDefaultQuorumManager(ctx)
+
+	if count > int64(0) {
 		atlas.Logger.Info("Atlas database is not empty; skipping initialization and continuing normal operations")
 
-		// get our current node id
-		results, err = atlas.ExecuteSQL(ctx, "select id from nodes where address = :address and port = :port", conn, false, atlas.Param{
-			Name:  "address",
-			Value: atlas.CurrentOptions.AdvertiseAddress,
-		}, atlas.Param{
-			Name:  "port",
-			Value: atlas.CurrentOptions.AdvertisePort,
-		})
+		self, err := nodeRepo.GetNodeByAddress(atlas.CurrentOptions.AdvertiseAddress, uint(atlas.CurrentOptions.AdvertisePort))
 		if err != nil {
 			return err
 		}
 
-		if results.Empty() {
+		if self == nil {
 			atlas.Logger.Fatal("Could not find the current node in the database, but a node currently exists; please connect to the cluster.")
 		}
 
-		atlas.CurrentOptions.ServerId = results.GetIndex(0).GetColumn("id").GetInt()
+		atlas.CurrentOptions.ServerId = self.GetId()
+
+		// add all known nodes to the internal cache
+		err = nodeRepo.Iterate(func(node *consensus.Node) error {
+			qm.AddNode(node)
+			return nil
+		})
+		if err != nil {
+			return err
+		}
 
 		return nil
 	}

@@ -13,6 +13,7 @@
  *
  * You should have received a copy of the GNU Affero General Public License
  * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
+ *
  */
 
 package consensus
@@ -21,7 +22,6 @@ import (
 	"context"
 	"errors"
 	"github.com/bottledcode/atlas-db/atlas"
-	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"slices"
@@ -44,9 +44,6 @@ func GetDefaultQuorumManager(ctx context.Context) QuorumManager {
 		manager = &defaultQuorumManager{
 			nodes: make(map[RegionName][]*QuorumNode),
 		}
-
-		// control loop for handling the system's quorum and node membership
-		go manager.controlLoop(ctx)
 	})
 
 	return manager
@@ -72,87 +69,6 @@ func (q *defaultQuorumManager) AddNode(node *Node) {
 		closer: nil,
 		client: nil,
 	})
-}
-
-func (q *defaultQuorumManager) controlLoop(ctx context.Context) {
-	nodeChanges := atlas.Ownership.Subscribe(NodeTable)
-
-	conn, err := atlas.MigrationsPool.Take(ctx)
-	if err != nil {
-		atlas.Logger.Fatal("failed to get a connection from the migration pool", zap.Error(err))
-	}
-	defer atlas.MigrationsPool.Put(conn)
-
-	nodeRepo := GetDefaultNodeRepository(ctx, conn)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case want := <-atlas.Ownership.Wants:
-			switch want.Ownership {
-			case false:
-				// todo: implement replicating a table
-			case true:
-				// todo: an in-progress commit needs ownership of a table
-			}
-		case node := <-nodeChanges:
-			// we are only interested in changes to the node table
-			if node.OwnershipType != atlas.Change {
-				continue
-			}
-
-			// construct a new node map
-			regions, err := nodeRepo.GetRegions()
-			if err != nil {
-				atlas.Logger.Fatal("failed to get regions", zap.Error(err))
-				continue
-			}
-
-			newNodes := make(map[RegionName][]*QuorumNode)
-
-			// what follows is a very inefficient algorithm for reconciling the new node list with the current one.
-			// it uses goto to prevent allocations and to break out of nested loops.
-			for _, region := range regions {
-				list, err := nodeRepo.GetNodesByRegion(region.GetName())
-				if err != nil {
-					atlas.Logger.Fatal("failed to get nodes by region", zap.Error(err))
-					continue
-				}
-				newNodes[RegionName(region.GetName())] = make([]*QuorumNode, len(list))
-				for i, node := range list {
-					// search for an already active node in the current list
-					if currentList, ok := q.nodes[RegionName(region.GetName())]; ok {
-						for _, currentNode := range currentList {
-							if currentNode.GetId() == node.GetId() {
-								newNodes[RegionName(region.GetName())][i] = currentNode
-								// continue the outer loop
-								goto next
-							}
-						}
-						// the node isn't found, so create a new one
-						goto createNew
-					next:
-						continue
-					}
-
-				createNew:
-
-					// we explicitly do not create a client yet, as we don't want to connect to the node until we need to
-					newNodes[RegionName(region.GetName())][i] = &QuorumNode{
-						Node:   node,
-						closer: nil,
-						client: nil,
-					}
-				}
-			}
-
-			// now we have constructed the new node list, we can replace the old one
-			q.mu.Lock()
-			q.nodes = newNodes
-			q.mu.Unlock()
-		}
-	}
 }
 
 type Quorum interface {

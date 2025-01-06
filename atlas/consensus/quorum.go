@@ -315,6 +315,8 @@ func (q *defaultQuorumManager) GetQuorum(ctx context.Context, table string) (Quo
 	if err != nil {
 		return nil, err
 	}
+	defer atlas.MigrationsPool.Put(conn)
+
 	tableRepo := GetDefaultTableRepository(ctx, conn)
 	tableConfig, err := tableRepo.GetTable(table)
 	if err != nil {

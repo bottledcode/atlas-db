@@ -189,6 +189,10 @@ func (r *Rows) Empty() bool {
 	return len(r.Rows) == 0
 }
 
+func (r *Rows) NonSingle() bool {
+	return len(r.Rows) > 1
+}
+
 // Each row is converted to a Row struct with corresponding ValueColumn implementations.
 func CaptureChanges(query string, db *sqlite.Conn, output bool, params ...Param) (*Rows, error) {
 	stmt, err := db.Prepare(query)

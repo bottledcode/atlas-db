@@ -1,90 +1,190 @@
 # Consensus
 
-Atlas works through distributed consensus based upon the [W-Paxos algorithm](https://arxiv.org/abs/1703.08905).
-This algorithm is a variant of the [Paxos algorithm](https://en.wikipedia.org/wiki/Paxos_(computer_science)) that is
-designed to be performed over a wide area network.
+Atlas works through distributed consensus based upon the [WPaxos algorithm](https://arxiv.org/abs/1703.08905). This
+algorithm is a variant of the [Paxos algorithm](https://en.wikipedia.org/wiki/Paxos_(computer_science)) designed to
+operate efficiently over wide-area networks (WANs).
+
+---
 
 ## Overview
 
-Atlas is designed to work as an edge database, deployed in a distributed manner, and able to work in a wide area
-network.
-The granularity of Atlas is at the table level.
+Atlas is an edge database deployed in a distributed manner, designed to work across a wide-area network. The system
+operates at the granularity of individual tables, with a single node owning each table’s schema and data. Ownership can
+transfer dynamically to optimize locality, load balance, or recover from faults.
+
+---
 
 ## Ownership
 
+### Ownership Transfer
+
 A single node owns each table in Atlas.
-This node is responsible for the table's schema and data.
-Another node can "steal" the table from the owner by providing a reason for the steal.
-If the cluster agrees that this is the best decision for the table, the table ownership is transferred to the new owner.
+Ownership is essential for maintaining consistency, as all Writes must be
+directed to the table’s owner. A table’s ownership can be transferred to another node when:
 
-Valid reasons for ownership transfer include:
-- Load balancing: When the current owner is overloaded
-- Locality optimization: Moving ownership closer to frequent accessors
-- Fault recovery: When the current owner is unreachable
+- **Load balancing**: The current owner is overloaded.
+- **Locality optimization**: Moving ownership closer to frequent accessors reduces latency.
+- **Fault recovery**: The current owner becomes unreachable.
 
-The transfer process requires:
-1. New owner proposes transfer with reason
-2. Cluster nodes vote based on current state
-3. If majority agrees, ownership is transferred
-4. All future writes are redirected to the new owner
+#### Ownership Transfer Process
+
+1. A new owner proposes a transfer with a valid reason.
+2. Cluster nodes vote on the proposal based on the current state.
+3. If the majority agrees, ownership is transferred to the new owner.
+4. Future writes are redirected to the new owner.
+
+---
 
 ## Replication
 
-Any Atlas node can replicate any table. In fact, all Atlas nodes _always_ replicate all table schemas, even if the data
-is not replicated.
-A node may register an 'interest' in a table, which will cause the node to replicate the data for that table.
+Atlas supports table-level replication, with all nodes replicating table schemas, even if the data itself is not
+replicated.
+A node can register an "interest" in a table, triggering data replication for that table.
 
-### Availability
+### Replication Types
 
-There are three types of replication in Atlas:
+1. **Global Replication**:
+    - Data is replicated to all regions in the cluster.
+    - Updates are batched based on time (default: 30 seconds) or count (default: 100 updates).
+    - Replication is performed using flexible quorums.
 
-1. global
-2. regional
-3. local
+2. **Regional Replication**:
+    - Each region has a unique copy of the data stored durably.
+    - Enables region-specific caches for performance.
 
-Global replication is when the data is replicated to all regions of the cluster.
-This is in the form of a "bounded"
-replication in which updates are batched based on time (30 seconds by default) or updates (100 by default).
-These updates are then accepted by all replicas for that table in the cluster (using a flexible quorum approach).
+3. **Local Replication**:
+    - Data is not replicated beyond a single node.
+    - Useful for development, testing, or node-level caches.
 
-Regional replication ensures that every region has a unique copy of the data, and is stored durably in each region.
-This allows for region-specific caches and is the most similar to other distributed databases that rely on the RAFT
-algorithm.
+Once configured, a table’s replication type cannot be changed. However, data can be copied into a new table with a
+different replication type.
 
-Local replication disables replication and acts like a single-node database.
-This is useful for development and testing, as well as for node-level caches.
+---
 
-A table is created with a default replication, and it **cannot be changed** once configured.
-However, tables can be copied to new tables with different replication settings.
+## Quorum Selection and Management
 
-Atlas attempts to have at-most 4 replicas per region per table.
+### Quorum Definitions
 
-### Consistency
+1. **Phase-1 Quorum (Q1)**:
+    - Used for leader election or table stealing.
+    - Spans multiple regions and ensures intersection with Q2.
 
-Atlas uses a flexible quorum approach to ensure consistency.
-Via a `pragma` statement, the user can specify what kind of consistency they want for following queries.
+   **Formula**:
 
-The consistency levels are:
+```
+Cardinality(Q1) = (fn + 1) x (Z - fz)
+```
 
-1. strong
-2. bounded
-3. linearizable
-3. eventual
+Where:
 
-Strong consistency queries at least two replicas in the current region and takes the most recent value,
-while bounded ensures that the data is no older than the specified bounds.
-Linearizable queries the owner of the table directly, while eventual queries any nearby replica.
+- `fn`: Nodes allowed to fail in each region.
+- `fz`: Regions allowed to fail.
+- `Z`: Total number of regions.
 
-All writes _must_ go through the owner of the table.
-In fact, any attempted write to a non-owner replica will migrate the current query to the owner.
+2. **Phase-2 Quorum (Q2)**:
 
-## Transactions and Session Migration
+- Used for committing Writes during normal operation.
+- Optimized for latency and fault tolerance.
 
-Atlas supports transactions implicitly.
-It does this through "session migration" where a session started on one node can be migrated to another node
-transparently.
-This is done in certain cases to support joins where one table exists on one node and another table exists on another
-node.
-In the worst case, one of the nodes will have to copy over the data and become a new replica.
-This should only happen once (for example, a new application version is deployed)
-as applications tend to continuously run the same query patterns.
+**Formula**:
+
+```
+Cardinality(Q2) = (l - fn) x (fz + 1)
+```
+
+Where:
+
+- `l`: Total nodes in a region.
+
+### Quorum Selection Process
+
+1. **Current Owner Anchoring**:
+
+- Always include the current owner in Q1 to ensure consistency and avoid "lost" writes.
+- Always include the new owner in both Q1 and Q2 to ensure future data consistency.
+
+2. **RTT-Based Region Selection**:
+
+- Select regions dynamically based on recent RTT measurements for low-latency quorum formation.
+- Fallback to deterministic rules (e.g., node IDs) in cases of conflict.
+
+3. **Fallback for Owner Unavailability**:
+
+- If the owner is unavailable:
+    - Temporarily set `fz = 0` and `fn = 0`, requiring all nodes to form Q1.
+    - Recover state and elect a new owner.
+
+---
+
+### Example
+
+#### Scenario
+
+- **Regions**:
+- Region A: 2 nodes.
+- Region B: 5 nodes (leader).
+- Region C: 3 nodes.
+- **Parameters**: `fz = 1`, `fn = 1`.
+
+#### Q1 Selection
+
+1. Include the leader (Region B).
+2. Select:
+
+```
+(fn + 1) * (Z - fz) = (1 + 1) * (3 - 1) = 4 nodes
+```
+
+- 2 nodes from Region B (leader + another).
+- 2 nodes from Region C (RTT-based).
+
+#### Q2 Selection
+
+1. Include the leader (Region B).
+2. Select:
+
+```
+(l - fn) * (fz + 1) = (5 - 1) * (1 + 1) = 5 nodes
+```
+
+- 4 nodes from Region B.
+- 1 node from Region A (closest RTT).
+
+#### Validation
+
+- **Intersection**: The leader is in both Q1 and Q2.
+- **Fault Tolerance**:
+
+```
+Fmin = min(Cardinality(Q1), Cardinality(Q2)) - 1 Fmin = 4
+Fmax = N - Cardinality(Q1) - Cardinality(Q2) + (fz + 1) * (fn + 1) Fmax = 10 - 4 - 5 + (1 + 1) * (1 + 1) = 5
+```
+
+---
+
+### Handling Failures
+
+#### Owner Down
+
+1. Detect owner unavailability.
+2. Increase quorum size (`fz = 0, fn = 0`) to recover state.
+3. Elect a new owner from the recovered quorum.
+4. Revert to normal operation once the new owner is established.
+
+#### Quorum Adjustments
+
+- Dynamically adjust quorums as nodes or regions join or leave.
+- Ensure intersection between old and new quorums during transitions.
+
+---
+
+## Summary
+
+Atlas ensures fault tolerance and performance through flexible quorum selection and ownership anchoring:
+
+1. Anchors quorums to the current and future owner.
+2. Optimize quorums for latency while guaranteeing intersection.
+3. Adjust dynamically during failures to recover state.
+4. Validate configurations to avoid data loss.
+
+These strategies enable Atlas to remain resilient and performant in wide-area, distributed environments.

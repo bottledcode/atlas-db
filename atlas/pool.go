@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"runtime"
 	"strings"
+	"sync"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitemigration"
 )
@@ -15,29 +16,59 @@ var migrations string
 var Pool *sqlitemigration.Pool
 var MigrationsPool *sqlitemigration.Pool
 
+var authorizers = map[*sqlite.Conn]*Authorizer{}
+
 // CreatePool creates a new connection pool for the database and the migrations database.
 func CreatePool(options *Options) {
 	if Pool != nil {
 		return
 	}
 
+	authorizers = make(map[*sqlite.Conn]*Authorizer)
+	amu := sync.Mutex{}
+
 	Pool = sqlitemigration.NewPool(options.DbFilename, sqlitemigration.Schema{}, sqlitemigration.Options{
 		Flags:    sqlite.OpenReadWrite | sqlite.OpenCreate | sqlite.OpenWAL,
 		PoolSize: runtime.NumCPU() * 2,
 		PrepareConn: func(conn *sqlite.Conn) (err error) {
-			// todo: err = conn.SetAuthorizer(authPrinter{})
+			auth := &Authorizer{}
+
+			amu.Lock()
+			authorizers[conn] = auth
+			amu.Unlock()
+
+			err = conn.SetAuthorizer(auth)
+			if err != nil {
+				return
+			}
+
 			err = conn.SetDefensive(true)
 			if err != nil {
 				return
 			}
-			_, err = conn.Prep("PRAGMA foreign_keys = ON;").Step()
-			if err != nil {
-				return
+
+			se := func(query string) {
+				st, _, err := conn.PrepareTransient(query)
+				if err != nil {
+					panic("Error preparing transient statement: " + err.Error())
+				}
+				defer func() {
+					err = st.Finalize()
+					if err != nil {
+						panic("Error finalizing transient statement: " + err.Error())
+					}
+				}()
+				_, err = st.Step()
+				if err != nil {
+					panic("Error executing transient statement: " + err.Error())
+				}
 			}
-			_, err = conn.Prep("attach database '" + options.MetaFilename + "' as atlas").Step()
-			if err != nil {
-				return
-			}
+
+			se("PRAGMA foreign_keys = ON;")
+			se("PRAGMA synchronous = NORMAL;")
+			se("PRAGMA cache_size = -2000;")
+			se("attach database '" + options.MetaFilename + "' as atlas")
+
 			return
 		},
 	})

@@ -112,6 +112,7 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 
 	// the ballot number is higher
 
+	atlas.Ownership.Remove(req.GetTable().GetName())
 	err = tableRepo.UpdateTable(req.GetTable())
 	if err != nil {
 		return nil, err
@@ -292,6 +293,8 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 		return nil, err
 	}
 
+	atlas.Ownership.Commit(req.GetTableId(), req.GetMigration().GetVersion())
+
 	return &emptypb.Empty{}, nil
 }
 
@@ -348,9 +351,13 @@ func (s *Server) JoinCluster(ctx context.Context, req *Node) (*JoinClusterRespon
 		}, nil
 	}
 
-	// add the node to the cluster as a migration to be replicated
-	qm := QuorumManager{}
+	qm := GetDefaultQuorumManager(ctx)
+	q, err := qm.GetQuorum(ctx, NodeTable)
+	if err != nil {
+		return nil, err
+	}
 
+	// add the node to the cluster as a migration to be replicated
 	sess, err := conn.CreateSession("")
 	if err != nil {
 		return nil, err
@@ -403,11 +410,6 @@ VALUES (:id, :address, :port, :region, 1, current_timestamp, 0)`, conn, false, a
 
 	mr := GetDefaultMigrationRepository(ctx, conn)
 	nextVersion, err := mr.GetNextVersion(NodeTable)
-
-	q, err := qm.GetMigrationQuorum(ctx, NodeTable, conn)
-	if err != nil {
-		return nil, err
-	}
 
 	// create a new migration
 	migration := &Migration{

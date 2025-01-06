@@ -5,7 +5,6 @@ go 1.23.4
 require (
 	github.com/caddyserver/caddy/v2 v2.9.0
 	github.com/chzyer/readline v1.5.1
-	github.com/go-faker/faker/v4 v4.5.0
 	github.com/spf13/cobra v1.8.1
 	github.com/stretchr/testify v1.10.0
 	go.uber.org/zap v1.27.0

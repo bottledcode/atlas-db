@@ -15,7 +15,7 @@ import (
 )
 
 type QuorumManager interface {
-	GetQuorum() (Quorum, error)
+	GetQuorum(ctx context.Context, table string) (Quorum, error)
 	AddNode(node *Node)
 }
 
@@ -211,20 +211,20 @@ func (q *QuorumNode) Close() {
 }
 
 // calculateLfn calculates (l-Fn) for the given region name, used in calculating Q2 quorums.
-func (q *defaultQuorumManager) calculateLfn(region RegionName, Fn int64) int64 {
+func (q *defaultQuorumManager) calculateLfn(nodes map[RegionName][]*QuorumNode, region RegionName, Fn int64) int64 {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
-	return int64(len(q.nodes[region])) - Fn
+	return int64(len(nodes[region])) - Fn
 }
 
 // calculateN calculates the total number of nodes in the cluster, used in validating quorums.
-func (q *defaultQuorumManager) calculateN() int64 {
+func (q *defaultQuorumManager) calculateN(nodes map[RegionName][]*QuorumNode) int64 {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
 	total := int64(0)
-	for _, nodes := range q.nodes {
+	for _, nodes := range nodes {
 		total += int64(len(nodes))
 	}
 
@@ -237,17 +237,17 @@ func (q *defaultQuorumManager) calculateTotalNodesPerZoneQ1(Fn int64) int64 {
 }
 
 // calculateNumberZonesQ1 calculates the number of zones required for a Q1 quorum.
-func (q *defaultQuorumManager) calculateNumberZonesQ1(Fz int64) int64 {
+func (q *defaultQuorumManager) calculateNumberZonesQ1(nodes map[RegionName][]*QuorumNode, Fz int64) int64 {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
-	totalRegions := len(q.nodes)
+	totalRegions := len(nodes)
 	return int64(totalRegions) - Fz
 }
 
 // calculateQ1Size calculates the size required for a Q1 quorum
-func (q *defaultQuorumManager) calculateQ1Size(Fz, Fn int64) int64 {
-	return q.calculateNumberZonesQ1(Fz) * q.calculateTotalNodesPerZoneQ1(Fn)
+func (q *defaultQuorumManager) calculateQ1Size(nodes map[RegionName][]*QuorumNode, Fz, Fn int64) int64 {
+	return q.calculateNumberZonesQ1(nodes, Fz) * q.calculateTotalNodesPerZoneQ1(Fn)
 }
 
 // calculateNumberZonesQ2 calculates the number of zones required for a Q2 quorum.
@@ -256,10 +256,10 @@ func (q *defaultQuorumManager) calculateNumberZonesQ2(Fz int64) int64 {
 }
 
 // calculateQ2Size calculates the size required for a Q2 quorum.
-func (q *defaultQuorumManager) calculateQ2Size(Fn int64, regions ...RegionName) int64 {
+func (q *defaultQuorumManager) calculateQ2Size(nodes map[RegionName][]*QuorumNode, Fn int64, regions ...RegionName) int64 {
 	lfn := int64(0)
 	for _, region := range regions {
-		lfn += q.calculateLfn(region, Fn)
+		lfn += q.calculateLfn(nodes, region, Fn)
 	}
 	return lfn
 }
@@ -270,18 +270,18 @@ func (q *defaultQuorumManager) calculateFmin(q1Size, q2Size int64) int64 {
 }
 
 // calculateFmax calculates the minimum number of random failures that will disrupt the quorum.
-func (q *defaultQuorumManager) calculateFmax(q1Size, q2Size, Fz, Fn int64) int64 {
-	return q.calculateN() - q1Size - q2Size + (Fz+1)*(Fn+1)
+func (q *defaultQuorumManager) calculateFmax(nodes map[RegionName][]*QuorumNode, q1Size, q2Size, Fz, Fn int64) int64 {
+	return q.calculateN(nodes) - q1Size - q2Size + (Fz+1)*(Fn+1)
 }
 
 // getClosestRegions returns a list of regions sorted by the average rtt of each node.
-func (q *defaultQuorumManager) getClosestRegions() []RegionName {
+func (q *defaultQuorumManager) getClosestRegions(nodes map[RegionName][]*QuorumNode) []RegionName {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
 	// extract the list of regions from the node map
-	regions := make([]RegionName, 0, len(q.nodes))
-	for region := range q.nodes {
+	regions := make([]RegionName, 0, len(nodes))
+	for region := range nodes {
 		regions = append(regions, region)
 	}
 
@@ -290,10 +290,10 @@ func (q *defaultQuorumManager) getClosestRegions() []RegionName {
 		// calculate the average rtt for each region
 		iRtt := time.Duration(0)
 		jRtt := time.Duration(0)
-		for _, node := range q.nodes[regions[i]] {
+		for _, node := range nodes[regions[i]] {
 			iRtt += node.GetRtt().AsDuration()
 		}
-		for _, node := range q.nodes[regions[j]] {
+		for _, node := range nodes[regions[j]] {
 			jRtt += node.GetRtt().AsDuration()
 		}
 
@@ -304,7 +304,7 @@ func (q *defaultQuorumManager) getClosestRegions() []RegionName {
 }
 
 // GetQuorum returns the quorum for stealing a table. It uses a grid-based approach to determine the best solution.
-func (q *defaultQuorumManager) GetQuorum() (Quorum, error) {
+func (q *defaultQuorumManager) GetQuorum(ctx context.Context, table string) (Quorum, error) {
 	// get the number of regions we have active nodes in
 	q.mu.RLock()
 	defer q.mu.RUnlock()
@@ -312,10 +312,45 @@ func (q *defaultQuorumManager) GetQuorum() (Quorum, error) {
 	Fz := atlas.CurrentOptions.GetFz()
 	Fn := atlas.CurrentOptions.GetFn()
 
+	conn, err := atlas.MigrationsPool.Take(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tableRepo := GetDefaultTableRepository(ctx, conn)
+	tableConfig, err := tableRepo.GetTable(table)
+	if err != nil {
+		return nil, err
+	}
+	if tableConfig == nil {
+		return nil, errors.New("table not found")
+	}
+
+	// allow regions allowed by the table config
+	nodes := make(map[RegionName][]*QuorumNode)
+	if len(tableConfig.GetAllowedRegions()) > 0 {
+		for _, region := range tableConfig.GetAllowedRegions() {
+			if _, ok := q.nodes[RegionName(region)]; ok {
+				nodes[RegionName(region)] = q.nodes[RegionName(region)]
+			}
+		}
+	} else {
+		nodes = q.nodes
+		if len(tableConfig.GetRestrictedRegions()) > 0 {
+			// restrict regions allowed by the table config
+			for region := range q.nodes {
+				for _, restricted := range tableConfig.GetRestrictedRegions() {
+					if string(region) == restricted {
+						delete(nodes, region)
+					}
+				}
+			}
+		}
+	}
+
 recalculate:
 
 	// before we can calculate the quorum, we need to validate the quorum is possible
-	q1RegionCount := q.calculateNumberZonesQ1(Fz)
+	q1RegionCount := q.calculateNumberZonesQ1(nodes, Fz)
 	if q1RegionCount < 1 {
 		Fz = Fz - 1
 		if Fz < 0 {
@@ -324,7 +359,7 @@ recalculate:
 		goto recalculate
 	}
 
-	farRegions := q.getClosestRegions()
+	farRegions := q.getClosestRegions(nodes)
 	slices.Reverse(farRegions)
 
 	// since we don't steal very often, we will select regions from the farthest away first
@@ -359,7 +394,7 @@ recalculate:
 
 	// we will select regions from the closest first
 	for _, region := range farRegions {
-		lfn := q.calculateLfn(region, Fn)
+		lfn := q.calculateLfn(nodes, region, Fn)
 		if lfn == 0 {
 			// this region cannot be selected, so we skip it
 			continue
@@ -381,9 +416,9 @@ recalculate:
 	}
 
 	// we have now selected our Q2 regions, so we can now validate the quorum
-	q1S := q.calculateQ1Size(Fz, Fn)
-	q2S := q.calculateQ2Size(Fn, selectedQ2Regions...)
-	Fmax := q.calculateFmax(q1S, q2S, Fz, Fn)
+	q1S := q.calculateQ1Size(nodes, Fz, Fn)
+	q2S := q.calculateQ2Size(nodes, Fn, selectedQ2Regions...)
+	Fmax := q.calculateFmax(nodes, q1S, q2S, Fz, Fn)
 	Fmin := q.calculateFmin(q1S, q2S)
 
 	if Fmax < 0 || Fmin < 0 {
@@ -408,7 +443,7 @@ recalculate:
 	}
 
 	for _, region := range selectedQ2Regions {
-		for i := int64(0); i < q.calculateLfn(region, Fn); i++ {
+		for i := int64(0); i < q.calculateLfn(nodes, region, Fn); i++ {
 			q2 = append(q2, q.nodes[region][i])
 		}
 	}

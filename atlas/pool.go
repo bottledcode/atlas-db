@@ -52,7 +52,12 @@ func CreatePool(options *Options) {
 				if err != nil {
 					panic("Error preparing transient statement: " + err.Error())
 				}
-				defer st.Finalize()
+				defer func() {
+					err = st.Finalize()
+					if err != nil {
+						panic("Error finalizing transient statement: " + err.Error())
+					}
+				}()
 				_, err = st.Step()
 				if err != nil {
 					panic("Error executing transient statement: " + err.Error())

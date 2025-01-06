@@ -106,6 +106,7 @@ func (a *Authorizer) isAtlasChange(action sqlite.Action) bool {
 }
 
 func (a *Authorizer) Authorize(action sqlite.Action) sqlite.AuthResult {
+	Logger.Info("Auth", zap.Any("action", action), zap.String("table", action.Table()))
 	if a.isJournalModeChange(action) {
 		a.lastReason = ReasonJournalModeChange
 		return sqlite.AuthResultDeny

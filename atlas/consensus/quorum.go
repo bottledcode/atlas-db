@@ -20,18 +20,17 @@ type QuorumManager interface {
 }
 
 var manager *defaultQuorumManager
+var managerOnce sync.Once
 
 func GetDefaultQuorumManager(ctx context.Context) QuorumManager {
-	if manager != nil {
-		return manager
-	}
+	managerOnce.Do(func() {
+		manager = &defaultQuorumManager{
+			nodes: make(map[RegionName][]*QuorumNode),
+		}
 
-	manager = &defaultQuorumManager{
-		nodes: make(map[RegionName][]*QuorumNode),
-	}
-
-	// control loop for handling the system's quorum and node membership
-	go manager.controlLoop(ctx)
+		// control loop for handling the system's quorum and node membership
+		go manager.controlLoop(ctx)
+	})
 
 	return manager
 }

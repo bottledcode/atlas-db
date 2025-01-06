@@ -118,7 +118,7 @@ func (a *Authorizer) Authorize(action sqlite.Action) sqlite.AuthResult {
 	}
 
 	// we allow all other operations
-	if action.Database() != "main" || action.Database() != "atlas" {
+	if action.Database() != "main" && action.Database() != "atlas" {
 		return sqlite.AuthResultOK
 	}
 

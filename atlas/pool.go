@@ -16,7 +16,7 @@ var migrations string
 var Pool *sqlitemigration.Pool
 var MigrationsPool *sqlitemigration.Pool
 
-var authorizers = map[*sqlite.Conn]Authorizer{}
+var authorizers = map[*sqlite.Conn]*Authorizer{}
 
 // CreatePool creates a new connection pool for the database and the migrations database.
 func CreatePool(options *Options) {
@@ -24,7 +24,7 @@ func CreatePool(options *Options) {
 		return
 	}
 
-	authorizers = make(map[*sqlite.Conn]Authorizer)
+	authorizers = make(map[*sqlite.Conn]*Authorizer)
 	amu := sync.Mutex{}
 
 	Pool = sqlitemigration.NewPool(options.DbFilename, sqlitemigration.Schema{}, sqlitemigration.Options{
@@ -34,7 +34,7 @@ func CreatePool(options *Options) {
 			auth := &Authorizer{}
 
 			amu.Lock()
-			authorizers[conn] = *auth
+			authorizers[conn] = auth
 			amu.Unlock()
 
 			err = conn.SetAuthorizer(auth)

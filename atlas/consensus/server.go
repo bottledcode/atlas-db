@@ -352,7 +352,7 @@ func (s *Server) JoinCluster(ctx context.Context, req *Node) (*JoinClusterRespon
 	}
 
 	qm := GetDefaultQuorumManager(ctx)
-	q, err := qm.GetQuorum()
+	q, err := qm.GetQuorum(ctx, NodeTable)
 	if err != nil {
 		return nil, err
 	}

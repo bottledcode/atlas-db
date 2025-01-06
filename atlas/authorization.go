@@ -181,7 +181,7 @@ func (a *Authorizer) Authorize(action sqlite.Action) sqlite.AuthResult {
 		// todo: check if we have the table in our local cache
 
 		// if the owner has committed the change more than the bound time ago, deny the read
-		if Ownership.GetCommitTime(action.Table()).Sub(time.Now()) > a.boundTime {
+		if time.Until(Ownership.GetCommitTime(action.Table())) > a.boundTime {
 			return sqlite.AuthResultDeny
 		}
 

@@ -30,6 +30,9 @@ type MigrationRepository interface {
 	GetMigrationVersion(table string, version int64) ([]*Migration, error)
 	CommitMigration(table string, version int64) error
 	CommitMigrationExact(table string, sender *Node, version int64) error
+	AddGossipMigration(migration *Migration, sender *Node) error
+	GetUncommittedGossipMigrations(table *Table) ([]*Migration, error)
+	GetMissingMigrations(table *Table) ([]int64, error)
 	GetNextVersion(table string) (int64, error)
 }
 
@@ -43,6 +46,33 @@ func GetDefaultMigrationRepository(ctx context.Context, conn *sqlite.Conn) Migra
 type migrationRepository struct {
 	ctx  context.Context
 	conn *sqlite.Conn
+}
+
+func (m *migrationRepository) GetMissingMigrations(table *Table) ([]int64, error) {
+	results, err := atlas.ExecuteSQL(m.ctx, `
+WITH RECURSIVE all_version(version) AS (
+    SELECT min(version) as version FROM migrations WHERE table_id = :table_id
+    UNION ALL
+    SELECT version + 1 FROM all_version WHERE version < (SELECT max(version) FROM migrations WHERE table_id = :table_id)
+)
+SELECT av.version
+FROM all_version av
+         LEFT JOIN migrations m
+                   ON av.version = m.version AND m.table_id = :table_id
+WHERE m.version IS NULL
+`, m.conn, false, atlas.Param{
+		Name:  "table_id",
+		Value: table.Name,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	missingMigrations := make([]int64, len(results.Rows))
+	for i, row := range results.Rows {
+		missingMigrations[i] = row.GetColumn("version").GetInt()
+	}
+	return missingMigrations, nil
 }
 
 func (m *migrationRepository) GetNextVersion(table string) (int64, error) {
@@ -133,7 +163,7 @@ func (m *migrationRepository) CommitMigrationExact(table string, sender *Node, v
 
 func (m *migrationRepository) GetUncommittedMigrations(table *Table) ([]*Migration, error) {
 	results, err := atlas.ExecuteSQL(m.ctx, `
-select table_id, version, committed, batch_part, by_node_id, command, data from migrations where table_id = :table_id and committed = 0
+select table_id, version, committed, batch_part, by_node_id, command, data from migrations where table_id = :table_id and committed = 0 and gossip = 0
 `, m.conn, false, atlas.Param{
 		Name:  "table_id",
 		Value: table.Name,
@@ -147,10 +177,44 @@ select table_id, version, committed, batch_part, by_node_id, command, data from 
 	return migrations, nil
 }
 
-func (m *migrationRepository) insertMigration(migration *Migration, batchPart int, sender *Node, command *string, data *[]byte) error {
+// GetUncommittedGossipMigrations returns all uncommitted gossip migrations for a table
+// but only up to the most contiguous version.
+// In other words, if there are migration versions 1, 2, 5, 6, it will only return 1 and 2.
+func (m *migrationRepository) GetUncommittedGossipMigrations(table *Table) ([]*Migration, error) {
+	results, err := atlas.ExecuteSQL(m.ctx, `
+WITH RECURSIVE vers(version) AS (
+    SELECT min(version)
+    FROM migrations
+    WHERE table_id = :table_id AND gossip = 1 AND committed = 0
+    UNION ALL
+    SELECT v.version + 1
+    FROM vers v
+             JOIN migrations m
+                  ON m.table_id = :table_id
+                      AND m.version = v.version + 1
+                      AND m.gossip = 1
+                      AND m.committed = 0
+)
+SELECT table_id, version, committed, batch_part, by_node_id, command, data
+FROM migrations
+WHERE table_id = :table_id
+  AND version IN vers
+  AND gossip = 1
+  AND committed = 0
+`, m.conn, false, atlas.Param{
+		Name:  "table_id",
+		Value: table.Name,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return m.fromResults(results), nil
+}
+
+func (m *migrationRepository) insertMigration(migration *Migration, batchPart int, sender *Node, command *string, data *[]byte, gossip bool) error {
 	_, err := atlas.ExecuteSQL(m.ctx, `
-insert into migrations (table_id, version, batch_part, by_node_id, command, data, committed)
-values (:table_id, :version, :batch_part, :by_node_id, :command, :data, :committed)
+insert into migrations (table_id, version, batch_part, by_node_id, command, data, committed, gossip)
+values (:table_id, :version, :batch_part, :by_node_id, :command, :data, :committed, :gossip)
 on conflict do nothing
 `, m.conn, false, atlas.Param{
 		Name:  "table_id",
@@ -173,6 +237,9 @@ on conflict do nothing
 	}, atlas.Param{
 		Name:  "committed",
 		Value: false,
+	}, atlas.Param{
+		Name:  "gossip",
+		Value: gossip,
 	})
 	return err
 }
@@ -183,7 +250,7 @@ func (m *migrationRepository) AddMigration(migration *Migration, sender *Node) e
 	switch migration.GetMigration().(type) {
 	case *Migration_Schema:
 		for _, command := range migration.GetSchema().GetCommands() {
-			err := m.insertMigration(migration, batch, sender, &command, nil)
+			err := m.insertMigration(migration, batch, sender, &command, nil, false)
 			if err != nil {
 				return err
 			}
@@ -191,7 +258,7 @@ func (m *migrationRepository) AddMigration(migration *Migration, sender *Node) e
 		}
 	case *Migration_Data:
 		for _, data := range migration.GetData().GetSession() {
-			err := m.insertMigration(migration, batch, sender, nil, &data)
+			err := m.insertMigration(migration, batch, sender, nil, &data, false)
 			if err != nil {
 				return err
 			}
@@ -199,5 +266,29 @@ func (m *migrationRepository) AddMigration(migration *Migration, sender *Node) e
 		}
 	}
 
+	return nil
+}
+
+// AddGossipMigration adds a migration to the migration table as a gossiped migration.
+func (m *migrationRepository) AddGossipMigration(migration *Migration, sender *Node) error {
+	batch := 0
+	switch migration.GetMigration().(type) {
+	case *Migration_Schema:
+		for _, command := range migration.GetSchema().GetCommands() {
+			err := m.insertMigration(migration, batch, sender, &command, nil, true)
+			if err != nil {
+				return err
+			}
+			batch++
+		}
+	case *Migration_Data:
+		for _, data := range migration.GetData().GetSession() {
+			err := m.insertMigration(migration, batch, sender, nil, &data, true)
+			if err != nil {
+				return err
+			}
+			batch++
+		}
+	}
 	return nil
 }

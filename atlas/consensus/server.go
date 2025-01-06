@@ -262,36 +262,9 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 		return nil, err
 	}
 
-	var stmt *sqlite.Stmt
-	for _, migration := range migrations {
-		switch migration.GetMigration().(type) {
-		case *Migration_Schema:
-			for _, command := range migration.GetSchema().GetCommands() {
-				stmt, _, err = commitConn.PrepareTransient(command)
-				if err != nil {
-					return nil, err
-				}
-				_, err = stmt.Step()
-				if err != nil {
-					return nil, err
-				}
-				err = stmt.Finalize()
-				if err != nil {
-					return nil, err
-				}
-			}
-		case *Migration_Data:
-			for _, data := range migration.GetData().GetSession() {
-				reader := bytes.NewReader(data)
-				err = commitConn.ApplyChangeset(reader, nil, func(conflictType sqlite.ConflictType, iterator *sqlite.ChangesetIterator) sqlite.ConflictAction {
-					// todo: handle conflicts
-					return sqlite.ChangesetReplace
-				})
-				if err != nil {
-					return nil, err
-				}
-			}
-		}
+	err = s.applyMigration(migrations, commitConn)
+	if err != nil {
+		return nil, err
 	}
 
 	err = mr.CommitMigration(req.GetTableId(), req.GetMigration().GetVersion())
@@ -316,8 +289,38 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 	return &emptypb.Empty{}, nil
 }
 
-func (s *Server) LearnMigration(*LearnMigrationRequest, Consensus_LearnMigrationServer) error {
-	return status.Errorf(codes.Unimplemented, "method LearnMigration not implemented")
+func (s *Server) applyMigration(migrations []*Migration, commitConn *sqlite.Conn) error {
+	for _, migration := range migrations {
+		switch migration.GetMigration().(type) {
+		case *Migration_Schema:
+			for _, command := range migration.GetSchema().GetCommands() {
+				stmt, _, err := commitConn.PrepareTransient(command)
+				if err != nil {
+					return err
+				}
+				_, err = stmt.Step()
+				if err != nil {
+					return err
+				}
+				err = stmt.Finalize()
+				if err != nil {
+					return err
+				}
+			}
+		case *Migration_Data:
+			for _, data := range migration.GetData().GetSession() {
+				reader := bytes.NewReader(data)
+				err := commitConn.ApplyChangeset(reader, nil, func(conflictType sqlite.ConflictType, iterator *sqlite.ChangesetIterator) sqlite.ConflictAction {
+					// todo: handle conflicts
+					return sqlite.ChangesetReplace
+				})
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func constructCurrentNode() *Node {
@@ -470,4 +473,87 @@ VALUES (:id, :address, :port, :region, 1, current_timestamp, 0)`, conn, false, a
 		Success: true,
 		NodeId:  req.GetId(),
 	}, nil
+}
+
+// Gossip is a method that randomly disseminates information to other nodes in the cluster.
+// A leader disseminates this to every node in the cluster after a commit.
+// We are guaranteed to get the gossip command in the order it was received.
+// In other words, this is not a true gossip protocol.
+func (s *Server) Gossip(ctx context.Context, req *GossipMigration) (*emptypb.Empty, error) {
+	// determine if we have already applied this data or not
+	conn, err := atlas.MigrationsPool.Take(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer atlas.MigrationsPool.Put(conn)
+
+	// rollback on err
+	defer func() {
+		if err != nil {
+			_, _ = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
+		}
+	}()
+
+	commitConn := conn
+	if strings.HasPrefix(req.GetTable().GetName(), "atlas.") {
+		commitConn, err = atlas.Pool.Take(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer atlas.Pool.Put(commitConn)
+
+		_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", commitConn, false)
+		if err != nil {
+			return nil, err
+		}
+
+		defer func() {
+			if err != nil {
+				_, _ = atlas.ExecuteSQL(ctx, "ROLLBACK", commitConn, false)
+			}
+		}()
+	}
+
+	_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", conn, false)
+	if err != nil {
+		return nil, err
+	}
+
+	mr := GetDefaultMigrationRepository(ctx, conn)
+	mig, err := mr.GetMigrationVersion(req.GetTable().GetName(), req.GetMigrationRequest().GetVersion())
+	if err != nil {
+		return nil, err
+	}
+
+	if mig == nil {
+		// First, we store the migration in the Migrations table.
+		err = mr.AddMigration(req.GetMigrationRequest(), req.GetTable().GetOwner())
+
+		// Then, we apply it to the database.
+		// Note: we do not commit any uncommitted migrations here as that is part of the consensus protocol.
+		// This only applies the Migration per the leader's state, which starts this process.
+		err = s.applyMigration([]*Migration{req.GetMigrationRequest()}, commitConn)
+		if err != nil {
+			return nil, err
+		}
+
+		err = mr.CommitMigrationExact(req.GetTable().GetName(), req.GetTable().GetOwner(), req.GetMigrationRequest().GetVersion())
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if commitConn != conn {
+		_, err = atlas.ExecuteSQL(ctx, "COMMIT", commitConn, false)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	_, err = atlas.ExecuteSQL(ctx, "COMMIT", conn, false)
+	if err != nil {
+		return nil, err
+	}
+
+	return &emptypb.Empty{}, nil
 }

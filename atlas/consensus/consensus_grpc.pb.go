@@ -21,8 +21,8 @@ type ConsensusClient interface {
 	StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipResponse, error)
 	WriteMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*WriteMigrationResponse, error)
 	AcceptMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	LearnMigration(ctx context.Context, in *LearnMigrationRequest, opts ...grpc.CallOption) (Consensus_LearnMigrationClient, error)
 	JoinCluster(ctx context.Context, in *Node, opts ...grpc.CallOption) (*JoinClusterResponse, error)
+	Gossip(ctx context.Context, in *GossipMigration, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
 type consensusClient struct {
@@ -60,41 +60,18 @@ func (c *consensusClient) AcceptMigration(ctx context.Context, in *WriteMigratio
 	return out, nil
 }
 
-func (c *consensusClient) LearnMigration(ctx context.Context, in *LearnMigrationRequest, opts ...grpc.CallOption) (Consensus_LearnMigrationClient, error) {
-	stream, err := c.cc.NewStream(ctx, &_Consensus_serviceDesc.Streams[0], "/atlas.consensus.Consensus/LearnMigration", opts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &consensusLearnMigrationClient{stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	return x, nil
-}
-
-type Consensus_LearnMigrationClient interface {
-	Recv() (*Migration, error)
-	grpc.ClientStream
-}
-
-type consensusLearnMigrationClient struct {
-	grpc.ClientStream
-}
-
-func (x *consensusLearnMigrationClient) Recv() (*Migration, error) {
-	m := new(Migration)
-	if err := x.ClientStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
 func (c *consensusClient) JoinCluster(ctx context.Context, in *Node, opts ...grpc.CallOption) (*JoinClusterResponse, error) {
 	out := new(JoinClusterResponse)
 	err := c.cc.Invoke(ctx, "/atlas.consensus.Consensus/JoinCluster", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *consensusClient) Gossip(ctx context.Context, in *GossipMigration, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, "/atlas.consensus.Consensus/Gossip", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -108,8 +85,8 @@ type ConsensusServer interface {
 	StealTableOwnership(context.Context, *StealTableOwnershipRequest) (*StealTableOwnershipResponse, error)
 	WriteMigration(context.Context, *WriteMigrationRequest) (*WriteMigrationResponse, error)
 	AcceptMigration(context.Context, *WriteMigrationRequest) (*emptypb.Empty, error)
-	LearnMigration(*LearnMigrationRequest, Consensus_LearnMigrationServer) error
 	JoinCluster(context.Context, *Node) (*JoinClusterResponse, error)
+	Gossip(context.Context, *GossipMigration) (*emptypb.Empty, error)
 	mustEmbedUnimplementedConsensusServer()
 }
 
@@ -126,11 +103,11 @@ func (UnimplementedConsensusServer) WriteMigration(context.Context, *WriteMigrat
 func (UnimplementedConsensusServer) AcceptMigration(context.Context, *WriteMigrationRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AcceptMigration not implemented")
 }
-func (UnimplementedConsensusServer) LearnMigration(*LearnMigrationRequest, Consensus_LearnMigrationServer) error {
-	return status.Errorf(codes.Unimplemented, "method LearnMigration not implemented")
-}
 func (UnimplementedConsensusServer) JoinCluster(context.Context, *Node) (*JoinClusterResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method JoinCluster not implemented")
+}
+func (UnimplementedConsensusServer) Gossip(context.Context, *GossipMigration) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Gossip not implemented")
 }
 func (UnimplementedConsensusServer) mustEmbedUnimplementedConsensusServer() {}
 
@@ -199,27 +176,6 @@ func _Consensus_AcceptMigration_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Consensus_LearnMigration_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(LearnMigrationRequest)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(ConsensusServer).LearnMigration(m, &consensusLearnMigrationServer{stream})
-}
-
-type Consensus_LearnMigrationServer interface {
-	Send(*Migration) error
-	grpc.ServerStream
-}
-
-type consensusLearnMigrationServer struct {
-	grpc.ServerStream
-}
-
-func (x *consensusLearnMigrationServer) Send(m *Migration) error {
-	return x.ServerStream.SendMsg(m)
-}
-
 func _Consensus_JoinCluster_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Node)
 	if err := dec(in); err != nil {
@@ -234,6 +190,24 @@ func _Consensus_JoinCluster_Handler(srv interface{}, ctx context.Context, dec fu
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ConsensusServer).JoinCluster(ctx, req.(*Node))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Consensus_Gossip_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GossipMigration)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ConsensusServer).Gossip(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/atlas.consensus.Consensus/Gossip",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ConsensusServer).Gossip(ctx, req.(*GossipMigration))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -258,13 +232,11 @@ var _Consensus_serviceDesc = grpc.ServiceDesc{
 			MethodName: "JoinCluster",
 			Handler:    _Consensus_JoinCluster_Handler,
 		},
-	},
-	Streams: []grpc.StreamDesc{
 		{
-			StreamName:    "LearnMigration",
-			Handler:       _Consensus_LearnMigration_Handler,
-			ServerStreams: true,
+			MethodName: "Gossip",
+			Handler:    _Consensus_Gossip_Handler,
 		},
 	},
+	Streams:  []grpc.StreamDesc{},
 	Metadata: "consensus/consensus.proto",
 }

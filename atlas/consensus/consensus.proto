@@ -29,8 +29,13 @@ service Consensus {
   rpc StealTableOwnership(StealTableOwnershipRequest) returns (StealTableOwnershipResponse) {}
   rpc WriteMigration(WriteMigrationRequest) returns (WriteMigrationResponse) {}
   rpc AcceptMigration(WriteMigrationRequest) returns (google.protobuf.Empty) {}
-  rpc LearnMigration(LearnMigrationRequest) returns (stream Migration) {}
   rpc JoinCluster(Node) returns (JoinClusterResponse) {}
+  rpc Gossip(GossipMigration) returns (google.protobuf.Empty) {}
+}
+
+message GossipMigration {
+  Migration migrationRequest = 1;
+  Table table = 2;
 }
 
 message JoinClusterResponse {

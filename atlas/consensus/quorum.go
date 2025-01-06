@@ -114,17 +114,6 @@ func (q *QuorumNode) AcceptMigration(ctx context.Context, in *WriteMigrationRequ
 	return q.client.AcceptMigration(ctx, in, opts...)
 }
 
-func (q *QuorumNode) LearnMigration(ctx context.Context, in *LearnMigrationRequest, opts ...grpc.CallOption) (Consensus_LearnMigrationClient, error) {
-	var err error
-	if q.client == nil {
-		q.client, err, q.closer = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
-	}
-	return q.client.LearnMigration(ctx, in, opts...)
-}
-
 func (q *QuorumNode) JoinCluster(ctx context.Context, in *Node, opts ...grpc.CallOption) (*JoinClusterResponse, error) {
 	var err error
 	if q.client == nil {
@@ -134,6 +123,10 @@ func (q *QuorumNode) JoinCluster(ctx context.Context, in *Node, opts ...grpc.Cal
 		}
 	}
 	return q.client.JoinCluster(ctx, in, opts...)
+}
+
+func (q *QuorumNode) Gossip(ctx context.Context, in *GossipMigration, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	return q.client.Gossip(ctx, in, opts...)
 }
 
 func (q *QuorumNode) Close() {

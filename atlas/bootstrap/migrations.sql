@@ -16,38 +16,90 @@
  *
  */
 
+/* Nodes allow us to represent active/inactive nodes throughout the cluster */
 create table nodes
 (
+    /* A globally unique identifier for this node */
     id         integer not null primary key,
+
+    /* The address of the node */
     address    text    not null,
+
+    /* The port of the node */
     port       int     not null,
+
+    /* The region of the node */
     region     text    not null,
+
+    /* The state of the node */
     active     int     not null,
+
+    /* The time the node was created */
     created_at timestamp default CURRENT_TIMESTAMP,
+
+    /* The latency of the node */
     rtt        int     not null
 );
+
+/* Tables represent tracked and replicated tables in the cluster */
 create table tables
 (
+    /* The fully qualified name of the table */
     name               text not null primary key,
+
+    /* The replication level of the table (immutable) */
     replication_level  text check (replication_level in ('local', 'regional', 'global')),
+
+    /* The node that owns the table */
     owner_node_id      integer,
+
+    /* The time the table was created */
     created_at         timestamp     default CURRENT_TIMESTAMP,
+
+    /* The version of the table (ballot number) */
     version            int  not null default 0,
+
+    /* The allowed regions for the table -- mutually exclusive with restricted regions
+       This column defines the regions that are allowed to read/write to the table.
+       Only regions defined here will be replicated to/from.
+       The table won't even be tracked in other regions.
+    */
     allowed_regions    text not null default '',
+
+    /* The restricted regions for the table -- mutally exclusive with allowed regions.
+       This column defines the regions that are not allowed to read/write to the table.
+       The table will be tracked in all regions except the ones defined here.
+    */
     restricted_regions text not null default ''
 );
+/* Insert the nodes table as a tracked table */
 insert into tables
 values ('atlas.nodes', 'global', null, current_timestamp, 0, '', '');
+
+/* Migrations are defined as rows on this table.
+   They are ultimately numbered by the version and batch_part columns.
+   A batch is a set of migrations that belong to a single version, thus a version may have multiple batches.
+   A version may be given to a node via consensus (gossip == 0) or via gossip (gossip == 1).
+*/
 create table migrations
 (
+    /* The table that the migration is for */
     table_id   text    not null
         constraint migrations_tables_id_fk
             references tables,
+    /* The version of the migration */
     version    int not null,
+    /* The part number of the batch that the migration belongs to */
     batch_part int not null,
+    /* The node (leader) that applied the migration */
     by_node_id int not null,
-    command    text             default null, -- command to run on the user table
-    data       blob             default null, -- data to apply to the user table
+    /* The command to run on the user table */
+    command    text             default null,
+    /* The data to apply to the user table */
+    data       blob             default null,
+    /* Whether the migration was committed */
     committed  int     not null default 0,
+    /* Whether the migration was received via gossip */
+    gossip     int     not null default 0,
     primary key (table_id, version, batch_part, by_node_id)
 );

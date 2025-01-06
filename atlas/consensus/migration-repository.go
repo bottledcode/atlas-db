@@ -13,6 +13,7 @@
  *
  * You should have received a copy of the GNU Affero General Public License
  * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
+ *
  */
 
 package consensus
@@ -28,6 +29,7 @@ type MigrationRepository interface {
 	AddMigration(migration *Migration, sender *Node) error
 	GetMigrationVersion(table string, version int64) ([]*Migration, error)
 	CommitMigration(table string, version int64) error
+	CommitMigrationExact(table string, sender *Node, version int64) error
 	GetNextVersion(table string) (int64, error)
 }
 
@@ -111,6 +113,20 @@ func (m *migrationRepository) CommitMigration(table string, version int64) error
 	}, atlas.Param{
 		Name:  "version",
 		Value: version,
+	})
+	return err
+}
+
+func (m *migrationRepository) CommitMigrationExact(table string, sender *Node, version int64) error {
+	_, err := atlas.ExecuteSQL(m.ctx, "update migrations set committed = 1 where table_id = :table_id and version = :version and by_node_id = :by_node_id", m.conn, false, atlas.Param{
+		Name:  "table_id",
+		Value: table,
+	}, atlas.Param{
+		Name:  "version",
+		Value: version,
+	}, atlas.Param{
+		Name:  "by_node_id",
+		Value: sender.Id,
 	})
 	return err
 }

@@ -32,6 +32,11 @@ type majorityQuorum struct {
 	q2 []*QuorumNode
 }
 
+func (m *majorityQuorum) Gossip(ctx context.Context, in *GossipMigration, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
 func (m *majorityQuorum) StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipResponse, error) {
 	// phase 1a
 	results := make([]*StealTableOwnershipResponse, len(m.q1))
@@ -163,11 +168,6 @@ func (m *majorityQuorum) AcceptMigration(ctx context.Context, in *WriteMigration
 	atlas.Ownership.Commit(in.TableId, in.GetMigration().GetVersion())
 
 	return &emptypb.Empty{}, nil
-}
-
-func (m *majorityQuorum) LearnMigration(ctx context.Context, in *LearnMigrationRequest, opts ...grpc.CallOption) (Consensus_LearnMigrationClient, error) {
-	//TODO implement me
-	panic("implement me")
 }
 
 func (m *majorityQuorum) JoinCluster(ctx context.Context, in *Node, opts ...grpc.CallOption) (*JoinClusterResponse, error) {

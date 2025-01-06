@@ -1,6 +1,0 @@
-begin
-query create table users (id int primary key, name text)
-prepare cu insert into users (name) values (:name)
-bind cu :name text rob
-execute cu
-query select * from users

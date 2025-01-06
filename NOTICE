@@ -1,0 +1,6 @@
+This product includes third-party software:
+
+- gRPC (https://github.com/grpc/grpc-go)
+  Licensed under the Apache License 2.0. See LICENSES/grpc-LICENSE.txt and LICENSES/grpc-NOTICE.txt for details.
+- go-gen-proto (https://github.com/googleapis/go-genproto/)
+  Licensed under the Apache License 2.0. See LICENSES/go-gen-proto-LICENSE.txt for details.

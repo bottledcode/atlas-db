@@ -1,3 +1,21 @@
+/*
+ * This file is part of Atlas-DB.
+ *
+ * Atlas-DB is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of
+ * the License, or (at your option) any later version.
+ *
+ * Atlas-DB is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
+ *
+ */
+
 package atlas
 
 import (
@@ -73,8 +91,27 @@ func CreatePool(options *Options) {
 		},
 	})
 
+	// strip comments from migrations
+	migs := strings.Split(migrations, ";")
+	deleting := false
+	for i, mig := range migs {
+		// remove all substrings between /* and */
+		if strings.Contains(mig, "/*") {
+			deleting = true
+		}
+		if strings.Contains(mig, "*/") {
+			deleting = false
+			end := strings.Index(mig, "*/") + 2
+			migs[i] = mig[end:]
+			continue
+		}
+		if deleting {
+			migs[i] = ""
+		}
+	}
+
 	MigrationsPool = sqlitemigration.NewPool(options.MetaFilename, sqlitemigration.Schema{
-		Migrations: strings.Split(migrations, ";"),
+		Migrations: migs,
 	}, sqlitemigration.Options{
 		Flags:    sqlite.OpenReadWrite | sqlite.OpenCreate | sqlite.OpenWAL,
 		PoolSize: 10,

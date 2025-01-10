@@ -556,6 +556,10 @@ func (s *Server) applyGossipMigration(ctx context.Context, req *GossipMigration,
 		return err
 	}
 
+	return nil
+}
+
+func SendGossip(ctx context.Context, req *GossipMigration, conn *sqlite.Conn) error {
 	// now we see if there is still a ttl remaining
 	if req.GetTtl() <= 0 {
 		return nil
@@ -686,6 +690,12 @@ func (s *Server) Gossip(ctx context.Context, req *GossipMigration) (*emptypb.Emp
 	}
 
 	_, err = atlas.ExecuteSQL(ctx, "COMMIT", conn, false)
+	if err != nil {
+		return nil, err
+	}
+
+	// gossip to other nodes
+	err = SendGossip(ctx, req, conn)
 	if err != nil {
 		return nil, err
 	}

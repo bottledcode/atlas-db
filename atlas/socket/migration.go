@@ -16,9 +16,10 @@
  *
  */
 
-package atlas
+package socket
 
 import (
+	"github.com/bottledcode/atlas-db/atlas"
 	"golang.org/x/net/context"
 )
 
@@ -43,7 +44,7 @@ func maybeWatchTable(ctx context.Context, query *commandString) error {
 	}
 
 	// watch the table
-	session := GetCurrentSession(ctx)
+	session := atlas.GetCurrentSession(ctx)
 	err := session.Attach(tableName)
 	if err != nil {
 		return err

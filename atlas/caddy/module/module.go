@@ -13,6 +13,7 @@
  *
  * You should have received a copy of the GNU Affero General Public License
  * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
+ *
  */
 
 package module
@@ -24,6 +25,7 @@ import (
 	"github.com/bottledcode/atlas-db/atlas"
 	"github.com/bottledcode/atlas-db/atlas/bootstrap"
 	"github.com/bottledcode/atlas-db/atlas/consensus"
+	"github.com/bottledcode/atlas-db/atlas/socket"
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
@@ -93,7 +95,7 @@ func (m *Module) Provision(ctx caddy.Context) (err error) {
 	bootstrap.RegisterBootstrapServer(m.bootstrapServer, &bootstrap.Server{})
 	consensus.RegisterConsensusServer(m.bootstrapServer, &consensus.Server{})
 
-	m.destroySocket, err = atlas.ServeSocket(ctx)
+	m.destroySocket, err = socket.ServeSocket(ctx)
 	if err != nil {
 		return
 	}
@@ -237,7 +239,7 @@ func init() {
 						return 0, nil
 					}
 
-					_, err = writer.WriteString(line + atlas.EOL)
+					_, err = writer.WriteString(line + socket.EOL)
 					if err != nil {
 						return 1, err
 					}
@@ -254,12 +256,12 @@ func init() {
 						return 1, err
 					}
 					buf.WriteString(response)
-					if !strings.HasSuffix(response, atlas.EOL) {
+					if !strings.HasSuffix(response, socket.EOL) {
 						goto keepReading
 					}
 					fmt.Println(strings.TrimSpace(buf.String()))
 
-					if strings.HasPrefix(buf.String(), string(atlas.OK)) || strings.HasPrefix(buf.String(), string(atlas.Fatal)) {
+					if strings.HasPrefix(buf.String(), string(socket.OK)) || strings.HasPrefix(buf.String(), string(socket.Fatal)) {
 						continue
 					}
 

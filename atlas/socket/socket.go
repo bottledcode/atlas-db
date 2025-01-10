@@ -16,7 +16,7 @@
  *
  */
 
-package atlas
+package socket
 
 import (
 	"bufio"
@@ -25,6 +25,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/bottledcode/atlas-db/atlas"
+	"github.com/bottledcode/atlas-db/atlas/consensus"
 	"go.uber.org/zap"
 	"net"
 	"os"
@@ -35,11 +37,11 @@ import (
 
 func ServeSocket(ctx context.Context) (func() error, error) {
 	// create the unix socket
-	ln, err := net.Listen("unix", CurrentOptions.SocketPath)
+	ln, err := net.Listen("unix", atlas.CurrentOptions.SocketPath)
 	if err != nil {
 		// try to remove the socket file if it exists
-		_ = os.Remove(CurrentOptions.SocketPath)
-		ln, err = net.Listen("unix", CurrentOptions.SocketPath)
+		_ = os.Remove(atlas.CurrentOptions.SocketPath)
+		ln, err = net.Listen("unix", atlas.CurrentOptions.SocketPath)
 		if err != nil {
 			return nil, err
 		}
@@ -55,7 +57,7 @@ func ServeSocket(ctx context.Context) (func() error, error) {
 			default:
 				conn, err := ln.Accept()
 				if err != nil {
-					Logger.Error("Error accepting connection", zap.Error(err))
+					atlas.Logger.Error("Error accepting connection", zap.Error(err))
 					continue
 				}
 				go handleConnection(conn)
@@ -128,6 +130,45 @@ func (c *commandString) validateExact(expected int) error {
 	return nil
 }
 
+// replaceCommand replaces command in query with newPrefix.
+func replaceCommand(query, command, newPrefix string) string {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return query
+	}
+
+	for _, field := range fields {
+		// consume the field from the query
+		endpos := strings.Index(strings.ToUpper(query), strings.ToUpper(field)) + len(field)
+		query = query[endpos:]
+	}
+
+	return newPrefix + query
+}
+
+func removeCommand(query string, num int) string {
+	fields := strings.Fields(query)
+	// count whitespace at the end of string
+	whitespace := 0
+	for i := len(query) - 1; i >= 0; i-- {
+		if query[i] == ' ' {
+			whitespace++
+		} else {
+			break
+		}
+	}
+	if whitespace >= 2 {
+		fields = append(fields, strings.Repeat(" ", whitespace-1))
+	}
+
+	for i := 0; i < num; i++ {
+		endpos := strings.Index(query, fields[i]) + len(fields[i])
+		query = query[endpos:]
+	}
+
+	return query[1:]
+}
+
 func (c *commandString) removeCommand(start int) *commandString {
 	str := removeCommand(c.raw, start)
 	return commandFromString(str)
@@ -184,7 +225,7 @@ func handleConnection(conn net.Conn) {
 		n, err := writer.WriteString(msg + EOL)
 		if err != nil {
 			// todo: handle full buffer?
-			Logger.Error("Error writing to connection", zap.Error(err))
+			atlas.Logger.Error("Error writing to connection", zap.Error(err))
 		}
 		if n < len(msg) {
 			writeMessage(msg[n:])
@@ -203,11 +244,11 @@ func handleConnection(conn net.Conn) {
 
 	connect := func() {
 		if sql == nil {
-			CreatePool(CurrentOptions)
+			atlas.CreatePool(atlas.CurrentOptions)
 			var err error
-			sql, err = Pool.Take(ctx)
+			sql, err = atlas.Pool.Take(ctx)
 			if err != nil {
-				Logger.Error("Error taking connection from pool", zap.Error(err))
+				atlas.Logger.Error("Error taking connection from pool", zap.Error(err))
 				writeError(Fatal, err)
 				hasFatalled = true
 				return
@@ -223,17 +264,17 @@ func handleConnection(conn net.Conn) {
 				command = commandFromString("BEGIN")
 			}
 
-			_, err := ExecuteSQL(ctx, command.raw, sql, false)
+			_, err := atlas.ExecuteSQL(ctx, command.raw, sql, false)
 			if err != nil {
-				Logger.Error("Error starting transaction", zap.Error(err))
+				atlas.Logger.Error("Error starting transaction", zap.Error(err))
 				writeError(Fatal, err)
 				hasFatalled = true
 				return ctx
 			}
 
-			ctx, err = InitializeSession(ctx, sql)
+			ctx, err = atlas.InitializeSession(ctx, sql)
 			if err != nil {
-				Logger.Error("Error initializing session", zap.Error(err))
+				atlas.Logger.Error("Error initializing session", zap.Error(err))
 				writeError(Fatal, err)
 				hasFatalled = true
 				return ctx
@@ -248,7 +289,7 @@ func handleConnection(conn net.Conn) {
 		for {
 			n, err := reader.ReadString('\n')
 			if err != nil {
-				Logger.Error("Error reading from connection", zap.Error(err))
+				atlas.Logger.Error("Error reading from connection", zap.Error(err))
 				hasFatalled = true
 				return ""
 			}
@@ -325,7 +366,12 @@ func handleConnection(conn net.Conn) {
 		}
 	}
 
-	var migrations [][]byte
+	commandMigrations := &consensus.SchemaMigration{
+		Commands: []string{},
+	}
+	sessionMigrations := &consensus.DataMigration{
+		Session: [][]byte{},
+	}
 	requiresMigration := false
 
 	stmts := make(map[string]*sqlite.Stmt)
@@ -371,7 +417,7 @@ func handleConnection(conn net.Conn) {
 
 				// determine if this is a schema changing migration
 				if isQueryChangeSchema(sqlCommand) {
-					migrations = append(migrations, []byte(sqlCommand.raw))
+					commandMigrations.Commands = append(commandMigrations.Commands, sqlCommand.raw)
 					err := maybeWatchTable(ctx, sqlCommand)
 					if err != nil {
 						writeError(Warning, err)
@@ -431,7 +477,7 @@ func handleConnection(conn net.Conn) {
 
 				// determine if this is a schema changing migration
 				if isQueryChangeSchema(sqlCommand) {
-					migrations = append(migrations, []byte(sqlCommand.raw))
+					commandMigrations.Commands = append(commandMigrations.Commands, sqlCommand.raw)
 					err := maybeWatchTable(ctx, sqlCommand)
 					if err != nil {
 						writeError(Warning, err)
@@ -601,7 +647,7 @@ func handleConnection(conn net.Conn) {
 			}
 
 			if requiresMigration {
-				session := GetCurrentSession(ctx)
+				session := atlas.GetCurrentSession(ctx)
 				if session == nil {
 					writeError(Fatal, errors.New("no session"))
 					hasFatalled = true
@@ -615,10 +661,12 @@ func handleConnection(conn net.Conn) {
 					hasFatalled = true
 					break
 				}
-				migrations = append(migrations, sessionData)
+				sessionMigrations.Session = append(sessionMigrations.Session, sessionData)
+
+				// todo: perform a quorum commit
 			}
 
-			_, err := ExecuteSQL(ctx, "COMMIT", sql, false)
+			_, err := atlas.ExecuteSQL(ctx, "COMMIT", sql, false)
 			if err != nil {
 				writeError(Fatal, err)
 				hasFatalled = true
@@ -636,7 +684,7 @@ func handleConnection(conn net.Conn) {
 			if err := command.validate(3); err == nil {
 				// we are probably executing a savepoint
 				if command.selectNormalizedCommand(1) == "TO" {
-					_, err := ExecuteSQL(ctx, "ROLLBACK TO "+command.selectCommand(3), sql, false)
+					_, err := atlas.ExecuteSQL(ctx, "ROLLBACK TO "+command.selectCommand(3), sql, false)
 					if err != nil {
 						writeError(Fatal, err)
 						hasFatalled = true
@@ -650,7 +698,7 @@ func handleConnection(conn net.Conn) {
 				}
 			}
 
-			_, err := ExecuteSQL(ctx, "ROLLBACK", sql, false)
+			_, err := atlas.ExecuteSQL(ctx, "ROLLBACK", sql, false)
 			if err != nil {
 				writeError(Fatal, err)
 				hasFatalled = true
@@ -658,7 +706,15 @@ func handleConnection(conn net.Conn) {
 			}
 			inTransaction = false
 			// reset the session
-			GetCurrentSession(ctx).Delete()
+			atlas.GetCurrentSession(ctx).Delete()
+
+			// reset migrations
+			commandMigrations = &consensus.SchemaMigration{
+				Commands: []string{},
+			}
+			sessionMigrations = &consensus.DataMigration{
+				Session: [][]byte{},
+			}
 
 			writeOk(OK)
 		case "SAVEPOINT":
@@ -668,7 +724,7 @@ func handleConnection(conn net.Conn) {
 				continue
 			}
 			name := command.selectCommand(1)
-			_, err := ExecuteSQL(ctx, "SAVEPOINT "+name, sql, false)
+			_, err := atlas.ExecuteSQL(ctx, "SAVEPOINT "+name, sql, false)
 			if err != nil {
 				writeError(Fatal, err)
 				hasFatalled = true
@@ -682,7 +738,7 @@ func handleConnection(conn net.Conn) {
 				continue
 			}
 			name := command.selectCommand(1)
-			_, err := ExecuteSQL(ctx, "RELEASE "+name, sql, false)
+			_, err := atlas.ExecuteSQL(ctx, "RELEASE "+name, sql, false)
 			if err != nil {
 				writeError(Fatal, err)
 				hasFatalled = true

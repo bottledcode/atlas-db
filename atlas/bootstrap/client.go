@@ -13,6 +13,7 @@
  *
  * You should have received a copy of the GNU Affero General Public License
  * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
+ *
  */
 
 package bootstrap
@@ -260,7 +261,7 @@ func InitializeMaybe(ctx context.Context) error {
 	nextVersion := int64(1)
 
 	for _, missing := range steal.GetSuccess().GetMissingMigrations() {
-		nextVersion = missing.GetVersion() + 1
+		nextVersion = missing.GetVersion().GetMigrationVersion() + 1
 		switch missing.GetMigration().(type) {
 		case *consensus.Migration_Data:
 			for _, data := range missing.GetData().GetSession() {
@@ -325,12 +326,14 @@ SET address = :address, port = :port, region = :region, active = 1
 
 	// now we exclusively own the table in our single node cluster...
 	migration := &consensus.WriteMigrationRequest{
-		TableId:      consensus.NodeTable,
-		TableVersion: 1,
-		Sender:       node,
+		Sender: node,
 		Migration: &consensus.Migration{
-			TableId: consensus.NodeTable,
-			Version: nextVersion,
+			Version: &consensus.MigrationVersion{
+				TableVersion:     1,
+				MigrationVersion: nextVersion,
+				NodeId:           node.Id,
+				TableName:        consensus.NodeTable,
+			},
 			Migration: &consensus.Migration_Data{
 				Data: &consensus.DataMigration{
 					Session: [][]byte{sessData.Bytes()},

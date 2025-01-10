@@ -13,6 +13,7 @@
  *
  * You should have received a copy of the GNU Affero General Public License
  * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
+ *
  */
 
 package bootstrap_test
@@ -154,6 +155,7 @@ func TestInitializeMaybe(t *testing.T) {
 		DbFilename:   f,
 		MetaFilename: m,
 	})
+	atlas.Logger, _ = zap.NewDevelopment()
 
 	ctx := context.Background()
 

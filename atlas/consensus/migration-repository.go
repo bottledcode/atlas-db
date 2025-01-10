@@ -92,7 +92,7 @@ func (m *migrationRepository) fromResults(results *atlas.Rows) []*Migration {
 	migrations := make([]*Migration, 0, len(results.Rows))
 	currentBatch := -1
 	for _, row := range results.Rows {
-		if row.GetColumn("batch_part").GetInt() < int64(currentBatch) {
+		if row.GetColumn("batch_part").GetInt() < int64(currentBatch) || currentBatch == -1 {
 			migrations = append(migrations, &Migration{
 				Version: &MigrationVersion{
 					TableVersion:     row.GetColumn("table_version").GetInt(),

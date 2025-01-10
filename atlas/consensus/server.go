@@ -207,7 +207,7 @@ func (s *Server) WriteMigration(ctx context.Context, req *WriteMigrationRequest)
 			Success: false,
 			Table:   existingTable,
 		}, nil
-	} else if existingTable.GetVersion() == req.GetMigration().GetVersion().GetTableVersion() && existingTable.GetOwner().GetId() != req.GetSender().GetId() {
+	} else if existingTable.GetOwner() != nil && existingTable.GetVersion() == req.GetMigration().GetVersion().GetTableVersion() && existingTable.GetOwner().GetId() != req.GetSender().GetId() {
 		// the table version is the same, but the owner is different, so reject the migration
 		_, err = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
 		if err != nil {

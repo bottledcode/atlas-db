@@ -206,6 +206,21 @@ func (qm *queryMode) String() string {
 	return "unknown"
 }
 
+func writeRawMessage(writer *bufio.Writer, msg string) error {
+	n, err := writer.WriteString(msg)
+	if err != nil {
+		return err
+	}
+	if n < len(msg) {
+		return writeRawMessage(writer, msg[n:])
+	}
+	return nil
+}
+
+func writeMessage(writer *bufio.Writer, msg string) error {
+	return writeRawMessage(writer, msg+EOL)
+}
+
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
 
@@ -219,26 +234,13 @@ func handleConnection(conn net.Conn) {
 
 	qm := normalQueryMode
 
-	var writeMessage func(msg string)
-
-	writeMessage = func(msg string) {
-		n, err := writer.WriteString(msg + EOL)
-		if err != nil {
-			// todo: handle full buffer?
-			atlas.Logger.Error("Error writing to connection", zap.Error(err))
-		}
-		if n < len(msg) {
-			writeMessage(msg[n:])
-		}
-	}
-
 	writeError := func(code ErrorCode, err error) {
-		writeMessage("ERROR " + string(code) + " " + err.Error())
+		writeMessage(writer, "ERROR "+string(code)+" "+err.Error())
 		_ = writer.Flush()
 	}
 
 	writeOk := func(code ErrorCode) {
-		writeMessage(string(code))
+		writeMessage(writer, string(code))
 		_ = writer.Flush()
 	}
 
@@ -308,27 +310,27 @@ func handleConnection(conn net.Conn) {
 	syntheticQuery := func(kv map[string]string) {
 		rowNum := 0
 
-		writeMessage("META COLUMN_COUNT 2")
-		writeMessage("META COLUMN_NAME 0 key")
-		writeMessage("META COLUMN_NAME 1 value")
+		writeMessage(writer, "META COLUMN_COUNT 2")
+		writeMessage(writer, "META COLUMN_NAME 0 key")
+		writeMessage(writer, "META COLUMN_NAME 1 value")
 
 		for key, value := range kv {
 			rowNum += 1
-			writeMessage("ROW " + strconv.Itoa(rowNum) + " TEXT " + key)
-			writeMessage("ROW " + strconv.Itoa(rowNum) + " TEXT " + value)
+			writeMessage(writer, "ROW "+strconv.Itoa(rowNum)+" TEXT "+key)
+			writeMessage(writer, "ROW "+strconv.Itoa(rowNum)+" TEXT "+value)
 		}
 
-		writeMessage("META LAST_INSERT_ID 0")
-		writeMessage("META ROWS_AFFECTED " + strconv.Itoa(rowNum))
+		writeMessage(writer, "META LAST_INSERT_ID 0")
+		writeMessage(writer, "META ROWS_AFFECTED "+strconv.Itoa(rowNum))
 	}
 
 	executeQuery := func(stmt *sqlite.Stmt) {
 		rowNum := 0
 
 		// write out the column names
-		writeMessage("META COLUMN_COUNT " + strconv.Itoa(stmt.ColumnCount()))
+		writeMessage(writer, "META COLUMN_COUNT "+strconv.Itoa(stmt.ColumnCount()))
 		for i := 0; i < stmt.ColumnCount(); i++ {
-			writeMessage("META COLUMN_NAME " + strconv.Itoa(i) + " " + stmt.ColumnName(i))
+			writeMessage(writer, "META COLUMN_NAME "+strconv.Itoa(i)+" "+stmt.ColumnName(i))
 		}
 
 		for {
@@ -345,20 +347,20 @@ func handleConnection(conn net.Conn) {
 			for i := 0; i < cols; i++ {
 				switch stmt.ColumnType(i) {
 				case sqlite.TypeText:
-					writeMessage(r + " TEXT " + stmt.ColumnText(i))
+					writeMessage(writer, r+" TEXT "+stmt.ColumnText(i))
 				case sqlite.TypeInteger:
-					writeMessage(r + " INT " + strconv.FormatInt(stmt.ColumnInt64(i), 10))
+					writeMessage(writer, r+" INT "+strconv.FormatInt(stmt.ColumnInt64(i), 10))
 				case sqlite.TypeFloat:
-					writeMessage(r + " FLOAT " + strconv.FormatFloat(stmt.ColumnFloat(i), 'f', -1, 64))
+					writeMessage(writer, r+" FLOAT "+strconv.FormatFloat(stmt.ColumnFloat(i), 'f', -1, 64))
 				case sqlite.TypeNull:
-					writeMessage(r + " NULL")
+					writeMessage(writer, r+" NULL")
 				case sqlite.TypeBlob:
-					writeMessage(r + " BLOB")
+					writeMessage(writer, r+" BLOB")
 				}
 			}
 		}
-		writeMessage("META LAST_INSERT_ID " + strconv.FormatInt(sql.LastInsertRowID(), 10))
-		writeMessage("META ROWS_AFFECTED " + strconv.Itoa(sql.Changes()))
+		writeMessage(writer, "META LAST_INSERT_ID "+strconv.FormatInt(sql.LastInsertRowID(), 10))
+		writeMessage(writer, "META ROWS_AFFECTED "+strconv.Itoa(sql.Changes()))
 
 		err := stmt.ClearBindings()
 		if err != nil {

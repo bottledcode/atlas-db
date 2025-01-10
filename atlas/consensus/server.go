@@ -21,6 +21,7 @@ package consensus
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"github.com/bottledcode/atlas-db/atlas"
 	"go.uber.org/zap"
@@ -29,6 +30,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"strings"
+	"sync"
 	"zombiezen.com/go/sqlite"
 )
 
@@ -176,13 +178,13 @@ func (s *Server) WriteMigration(ctx context.Context, req *WriteMigrationRequest)
 	}
 
 	tableRepo := GetDefaultTableRepository(ctx, conn)
-	existingTable, err := tableRepo.GetTable(req.GetTableId())
+	existingTable, err := tableRepo.GetTable(req.GetMigration().GetVersion().GetTableName())
 	if err != nil {
 		return nil, err
 	}
 
 	if existingTable == nil {
-		atlas.Logger.Warn("table not found, but expected", zap.String("table", req.GetTableId()))
+		atlas.Logger.Warn("table not found, but expected", zap.String("table", req.GetMigration().GetVersion().GetTableName()))
 		_, err = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
 		if err != nil {
 			return nil, err
@@ -191,11 +193,22 @@ func (s *Server) WriteMigration(ctx context.Context, req *WriteMigrationRequest)
 		return &WriteMigrationResponse{
 			Success: false,
 			Table:   nil,
-		}, fmt.Errorf("table %s not found", req.GetTableId())
+		}, fmt.Errorf("table %s not found", req.GetMigration().GetVersion().GetTableName())
 	}
 
-	if existingTable.GetVersion() > req.GetTableVersion() {
+	if existingTable.GetVersion() > req.GetMigration().GetVersion().GetTableVersion() {
+		// the table version is higher than the requested version, so reject the migration since it isn't the owner
+		_, err = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
+		if err != nil {
+			return nil, err
+		}
 
+		return &WriteMigrationResponse{
+			Success: false,
+			Table:   existingTable,
+		}, nil
+	} else if existingTable.GetVersion() == req.GetMigration().GetVersion().GetTableVersion() && existingTable.GetOwner().GetId() != req.GetSender().GetId() {
+		// the table version is the same, but the owner is different, so reject the migration
 		_, err = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
 		if err != nil {
 			return nil, err
@@ -209,7 +222,7 @@ func (s *Server) WriteMigration(ctx context.Context, req *WriteMigrationRequest)
 
 	// insert the migration
 	migrationRepo := GetDefaultMigrationRepository(ctx, conn)
-	err = migrationRepo.AddMigration(req.GetMigration(), req.GetSender())
+	err = migrationRepo.AddMigration(req.GetMigration())
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +251,7 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 	}()
 
 	commitConn := conn
-	if !strings.HasPrefix(req.GetTableId(), "atlas.") {
+	if !strings.HasPrefix(req.GetMigration().GetVersion().GetTableName(), "atlas.") {
 		commitConn, err = atlas.Pool.Take(ctx)
 		if err != nil {
 			return nil, err
@@ -257,7 +270,7 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 	}
 
 	mr := GetDefaultMigrationRepository(ctx, conn)
-	migrations, err := mr.GetMigrationVersion(req.GetTableId(), req.GetMigration().GetVersion())
+	migrations, err := mr.GetMigrationVersion(req.GetMigration().GetVersion())
 	if err != nil {
 		return nil, err
 	}
@@ -267,7 +280,7 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 		return nil, err
 	}
 
-	err = mr.CommitMigration(req.GetTableId(), req.GetMigration().GetVersion())
+	err = mr.CommitMigrationExact(req.GetMigration().GetVersion())
 	if err != nil {
 		return nil, err
 	}
@@ -284,7 +297,7 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 		return nil, err
 	}
 
-	atlas.Ownership.Commit(req.GetTableId(), req.GetMigration().GetVersion())
+	atlas.Ownership.Commit(req.GetMigration().GetVersion().GetTableName(), req.GetMigration().GetVersion().GetTableVersion())
 
 	return &emptypb.Empty{}, nil
 }
@@ -434,8 +447,12 @@ VALUES (:id, :address, :port, :region, 1, current_timestamp, 0)`, conn, false, a
 
 	// create a new migration
 	migration := &Migration{
-		TableId: NodeTable,
-		Version: nextVersion,
+		Version: &MigrationVersion{
+			TableVersion:     nodeTable.GetVersion(),
+			MigrationVersion: nextVersion,
+			NodeId:           atlas.CurrentOptions.ServerId,
+			TableName:        NodeTable,
+		},
 		Migration: &Migration_Data{
 			Data: &DataMigration{
 				Session: [][]byte{
@@ -446,10 +463,8 @@ VALUES (:id, :address, :port, :region, 1, current_timestamp, 0)`, conn, false, a
 	}
 
 	mreq := &WriteMigrationRequest{
-		TableId:      NodeTable,
-		TableVersion: table.Version,
-		Sender:       constructCurrentNode(),
-		Migration:    migration,
+		Sender:    constructCurrentNode(),
+		Migration: migration,
 	}
 
 	resp, err := q.WriteMigration(ctx, mreq)
@@ -475,10 +490,129 @@ VALUES (:id, :address, :port, :region, 1, current_timestamp, 0)`, conn, false, a
 	}, nil
 }
 
+var gossipQueue sync.Map
+
+type gossipKey struct {
+	table        string
+	tableVersion int64
+	version      int64
+	by           int64
+}
+
+func createGossipKey(version *MigrationVersion) gossipKey {
+	return gossipKey{
+		table:        version.GetTableName(),
+		tableVersion: version.GetTableVersion(),
+		version:      version.GetMigrationVersion(),
+		by:           version.GetNodeId(),
+	}
+}
+
+// applyGossipMigration applies a gossip migration to the database.
+func (s *Server) applyGossipMigration(ctx context.Context, req *GossipMigration, conn *sqlite.Conn, commitConn *sqlite.Conn) error {
+	mr := GetDefaultMigrationRepository(ctx, conn)
+
+	// check to see if we have the previous migration already
+	prev, err := mr.GetMigrationVersion(req.GetPreviousMigration())
+	if err != nil {
+		return err
+	}
+	if len(prev) == 0 {
+		// no previous version found, so we need to store this migration in the gossip queue
+		gk := createGossipKey(req.GetPreviousMigration())
+		// see if we have it in the gossip queue
+		if prev, ok := gossipQueue.LoadAndDelete(gk); !ok {
+			// we already have it, so now apply it
+			err = s.applyGossipMigration(ctx, prev.(*GossipMigration), conn, commitConn)
+			if err != nil {
+				// put the failed migration back in the queue
+				gossipQueue.Store(gk, prev)
+				return err
+			}
+		} else {
+			// we don't have it, so store the current migration in the queue
+			gossipQueue.Store(gk, req)
+			return nil
+		}
+	}
+
+	// todo: do we need to check the previous migration was committed?
+
+	// write the migration to the log
+	err = mr.AddMigration(req.GetMigrationRequest())
+	if err != nil {
+		return err
+	}
+
+	// we have a previous migration, so apply this one
+	err = s.applyMigration([]*Migration{req.GetMigrationRequest()}, commitConn)
+	if err != nil {
+		return err
+	}
+
+	// and now mark it as committed
+	err = mr.CommitMigrationExact(req.GetMigrationRequest().GetVersion())
+	if err != nil {
+		return err
+	}
+
+	// now we see if there is still a ttl remaining
+	if req.GetTtl() <= 0 {
+		return nil
+	}
+
+	// pick 5 random nodes to gossip to, excluding the sender, owner, and myself
+	nr := GetDefaultNodeRepository(ctx, conn)
+	nodes, err := nr.GetRandomNodes(5,
+		req.GetMigrationRequest().GetVersion().GetNodeId(),
+		atlas.CurrentOptions.ServerId,
+		req.GetSender().GetId(),
+	)
+	if err != nil {
+		return err
+	}
+
+	errs := make([]error, len(nodes))
+
+	nextReq := &GossipMigration{
+		MigrationRequest:  req.GetMigrationRequest(),
+		Table:             req.GetTable(),
+		PreviousMigration: req.GetPreviousMigration(),
+		Ttl:               req.GetTtl() - 1,
+		Sender:            constructCurrentNode(),
+	}
+
+	wg := sync.WaitGroup{}
+	wg.Add(len(nodes))
+
+	// gossip to the nodes
+	for i, node := range nodes {
+		go func(i int) {
+			defer wg.Done()
+
+			client, err, closer := getNewClient(fmt.Sprintf("%s:%d", node.GetAddress(), node.GetPort()))
+			if err != nil {
+				errs[i] = err
+			}
+			defer closer()
+
+			_, err = client.Gossip(ctx, nextReq)
+			if err != nil {
+				errs[i] = err
+			}
+		}(i)
+	}
+
+	// wait for gossip to complete
+	wg.Wait()
+
+	atlas.Logger.Info("gossip complete", zap.String("table", req.GetTable().GetName()), zap.Int64("version", req.GetTable().GetVersion()))
+
+	return errors.Join(errs...)
+}
+
 // Gossip is a method that randomly disseminates information to other nodes in the cluster.
 // A leader disseminates this to every node in the cluster after a commit.
-// We are guaranteed to get the gossip command in the order it was received.
-// In other words, this is not a true gossip protocol.
 func (s *Server) Gossip(ctx context.Context, req *GossipMigration) (*emptypb.Empty, error) {
 	// determine if we have already applied this data or not
 	conn, err := atlas.MigrationsPool.Take(ctx)
@@ -519,28 +653,29 @@ func (s *Server) Gossip(ctx context.Context, req *GossipMigration) (*emptypb.Emp
 		return nil, err
 	}
 
-	mr := GetDefaultMigrationRepository(ctx, conn)
-	mig, err := mr.GetMigrationVersion(req.GetTable().GetName(), req.GetMigrationRequest().GetVersion())
+	tr := GetDefaultTableRepository(ctx, conn)
+
+	// update the local table cache if the version is newer than the current version
+	tb, err := tr.GetTable(req.GetTable().GetName())
 	if err != nil {
 		return nil, err
 	}
-
-	if mig == nil {
-		// First, we store the migration in the Migrations table.
-		err = mr.AddMigration(req.GetMigrationRequest(), req.GetTable().GetOwner())
-
-		// Then, we apply it to the database.
-		// Note: we do not commit any uncommitted migrations here as that is part of the consensus protocol.
-		// This only applies the Migration per the leader's state, which starts this process.
-		err = s.applyMigration([]*Migration{req.GetMigrationRequest()}, commitConn)
+	if tb == nil {
+		err = tr.InsertTable(req.GetTable())
 		if err != nil {
 			return nil, err
 		}
-
-		err = mr.CommitMigrationExact(req.GetTable().GetName(), req.GetTable().GetOwner(), req.GetMigrationRequest().GetVersion())
+	} else if tb.GetVersion() < req.GetTable().GetVersion() {
+		err = tr.UpdateTable(req.GetTable())
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	// apply the current migration if we can do so
+	err = s.applyGossipMigration(ctx, req, conn, commitConn)
+	if err != nil {
+		return nil, err
 	}
 
 	if commitConn != conn {

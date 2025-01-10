@@ -84,22 +84,33 @@ values ('atlas.nodes', 'global', null, current_timestamp, 0, '', '');
 create table migrations
 (
     /* The table that the migration is for */
-    table_id   text    not null
+    table_id      text not null
         constraint migrations_tables_id_fk
             references tables,
+
     /* The version of the migration */
-    version    int not null,
+    version       int  not null,
+
+    /* The version of the table that the migration is for */
+    table_version int  not null,
+
     /* The part number of the batch that the migration belongs to */
-    batch_part int not null,
+    batch_part    int  not null,
+
     /* The node (leader) that applied the migration */
-    by_node_id int not null,
+    by_node_id    int  not null,
+
     /* The command to run on the user table */
-    command    text             default null,
+    command       text          default null,
+
     /* The data to apply to the user table */
-    data       blob             default null,
+    data          blob          default null,
+
     /* Whether the migration was committed */
-    committed  int     not null default 0,
+    committed     int  not null default 0,
+
     /* Whether the migration was received via gossip */
-    gossip     int     not null default 0,
-    primary key (table_id, version, batch_part, by_node_id)
+    gossip        int  not null default 0,
+
+    primary key (table_id, table_version, version, batch_part, by_node_id)
 );

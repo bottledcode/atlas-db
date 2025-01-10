@@ -33,22 +33,25 @@ service Consensus {
   rpc Gossip(GossipMigration) returns (google.protobuf.Empty) {}
 }
 
+message MigrationVersion {
+  int64 tableVersion = 1; // The version of the table
+  int64 migrationVersion = 2; // The version of the migration
+  int64 nodeId = 3; // The ID of the node
+  string tableName = 4; // The name of the table
+}
+
 message GossipMigration {
-  Migration migrationRequest = 1;
-  Table table = 2;
+  Migration migrationRequest = 1; // The migration to be gossiped
+  Table table = 2; // The table the migration is for
+  MigrationVersion previousMigration = 3; // The previous migration
+  int64 ttl = 4; // The time to live of the gossip
+  Node sender = 5; // The node sending the gossip
 }
 
 message JoinClusterResponse {
   bool success = 1; // Whether the operation was successful
   Table table = 2; // The current node table if the requested node is not the owner
   int64 nodeId = 3; // The ID of the newly joined node
-}
-
-message LearnMigrationRequest {
-  int64 tableId = 1; // the id of the table
-  int64 ownVersion = 2; // the most known version of the table
-  int64 versionBounds = 3; // the version bounds for a batch of migrations
-  google.protobuf.Duration maxTime = 4; // the maximum time to wait for a batch of migrations
 }
 
 message SchemaMigration {
@@ -60,19 +63,16 @@ message DataMigration {
 }
 
 message Migration {
-  string tableId = 1; // The id of the table (aka, ballot)
-  int64 version = 2; // The version of the table (aka, slot)
+  MigrationVersion version = 1; // The version of the migration
   oneof migration {
-    SchemaMigration schema = 3; // The schema migration
-    DataMigration data = 4; // The data migration
+    SchemaMigration schema = 2; // The schema migration
+    DataMigration data = 3; // The data migration
   }
 }
 
 message WriteMigrationRequest {
-  string tableId = 1; // The ID of the table
-  int64 tableVersion = 2; // The version of the table
-  Node sender = 3; // The node sending the migration
-  Migration migration = 4; // The migration to be written
+  Node sender = 1; // The node sending the migration
+  Migration migration = 2; // The migration to be written
 }
 
 message WriteMigrationResponse {

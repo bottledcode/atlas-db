@@ -38,6 +38,11 @@ func InitializeSession(ctx context.Context, conn *sqlite.Conn) (*sqlite.Session,
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if err != nil {
+			session.Delete()
+		}
+	}()
 
 	m, err := MigrationsPool.Take(ctx)
 	if err != nil {
@@ -52,7 +57,6 @@ func InitializeSession(ctx context.Context, conn *sqlite.Conn) (*sqlite.Session,
 	for _, row := range results.Rows {
 		tableName := row.GetColumn("name").GetString()
 		if err = session.Attach(tableName); err != nil {
-			session.Delete()
 			return nil, err
 		}
 	}

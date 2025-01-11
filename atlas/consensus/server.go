@@ -521,7 +521,7 @@ func (s *Server) applyGossipMigration(ctx context.Context, req *GossipMigration,
 		// no previous version found, so we need to store this migration in the gossip queue
 		gk := createGossipKey(req.GetPreviousMigration())
 		// see if we have it in the gossip queue
-		if prev, ok := gossipQueue.LoadAndDelete(gk); !ok {
+		if prev, ok := gossipQueue.LoadAndDelete(gk); ok {
 			// we already have it, so now apply it
 			err = s.applyGossipMigration(ctx, prev.(*GossipMigration), conn, commitConn)
 			if err != nil {

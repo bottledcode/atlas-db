@@ -43,7 +43,6 @@ import (
 
 type Module struct {
 	bootstrapServer *grpc.Server
-	ctx             caddy.Context
 	destroySocket   func() error
 }
 

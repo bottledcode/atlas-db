@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"github.com/bottledcode/atlas-db/atlas"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"strconv"
 	"zombiezen.com/go/sqlite"
 )
 
@@ -56,7 +57,7 @@ func (n *nodeRepository) GetRandomNodes(num int64, excluding ...int64) ([]*Node,
 			if i > 0 {
 				query += ", "
 			}
-			query += fmt.Sprintf("%s", ":id"+fmt.Sprint(i))
+			query += ":id" + strconv.Itoa(i)
 		}
 		query += ")"
 	}

@@ -266,6 +266,9 @@ func (s *SH) connect(ctx context.Context) error {
 func (s *SH) maybeStartTransaction(ctx context.Context, command *commandString) error {
 	if !s.inTransaction {
 		err := s.connect(ctx)
+		if err != nil {
+			return err
+		}
 
 		if command == emptyCommandString {
 			command = commandFromString("BEGIN")
@@ -495,7 +498,11 @@ func (s *SH) handleConnection(conn net.Conn, ctx context.Context) {
 					commandMigrations.Commands = append(commandMigrations.Commands, sqlCommand.raw)
 					err = maybeWatchTable(ctx, sqlCommand, s.session)
 					if err != nil {
-						err = s.writeError(Warning, err)
+						e := s.writeError(Warning, err)
+						if e != nil {
+							atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+							break
+						}
 						continue
 					}
 				}
@@ -998,6 +1005,10 @@ func (s *SH) handleConnection(conn net.Conn, ctx context.Context) {
 			}
 		case "SAVEPOINT":
 			err := s.maybeStartTransaction(ctx, emptyCommandString)
+			if err != nil {
+				atlas.Logger.Error("Error starting transaction", zap.Error(err))
+				break
+			}
 			if err = command.validate(2); err != nil {
 				e := s.writeError(Warning, err)
 				if e != nil {

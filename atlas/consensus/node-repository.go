@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"github.com/bottledcode/atlas-db/atlas"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"strconv"
 	"zombiezen.com/go/sqlite"
 )
 
@@ -33,6 +34,7 @@ type NodeRepository interface {
 	GetRegions() ([]*Region, error)
 	Iterate(fn func(*Node) error) error
 	TotalCount() (int64, error)
+	GetRandomNodes(num int64, excluding ...int64) ([]*Node, error)
 }
 
 func GetDefaultNodeRepository(ctx context.Context, conn *sqlite.Conn) NodeRepository {
@@ -45,6 +47,45 @@ func GetDefaultNodeRepository(ctx context.Context, conn *sqlite.Conn) NodeReposi
 type nodeRepository struct {
 	ctx  context.Context
 	conn *sqlite.Conn
+}
+
+func (n *nodeRepository) GetRandomNodes(num int64, excluding ...int64) ([]*Node, error) {
+	query := "select id, address, region, port, active, rtt from nodes where active = 1"
+	if len(excluding) > 0 {
+		query += " and id not in ("
+		for i, _ := range excluding {
+			if i > 0 {
+				query += ", "
+			}
+			query += ":id" + strconv.Itoa(i)
+		}
+		query += ")"
+	}
+	query += " order by random() limit :num"
+
+	params := make([]atlas.Param, len(excluding)+1)
+	for i, id := range excluding {
+		params[i] = atlas.Param{
+			Name:  "id" + fmt.Sprint(i),
+			Value: id,
+		}
+	}
+	params[len(excluding)] = atlas.Param{
+		Name:  "num",
+		Value: num,
+	}
+
+	results, err := atlas.ExecuteSQL(n.ctx, query, n.conn, false, params...)
+	if err != nil {
+		return nil, err
+	}
+
+	nodes := make([]*Node, len(results.Rows))
+	for i, row := range results.Rows {
+		nodes[i] = n.convertRowToNode(&row)
+	}
+
+	return nodes, nil
 }
 
 func (n *nodeRepository) Iterate(fn func(*Node) error) error {

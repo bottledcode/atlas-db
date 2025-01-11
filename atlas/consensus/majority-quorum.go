@@ -32,6 +32,22 @@ type majorityQuorum struct {
 	q2 []*QuorumNode
 }
 
+func (m *majorityQuorum) Gossip(ctx context.Context, in *GossipMigration, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	// get 5 nodes not in the quorum
+	conn, err := atlas.MigrationsPool.Take(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer atlas.MigrationsPool.Put(conn)
+
+	err = SendGossip(ctx, in, conn)
+	if err != nil {
+		return nil, err
+	}
+
+	return &emptypb.Empty{}, nil
+}
+
 func (m *majorityQuorum) StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipResponse, error) {
 	// phase 1a
 	results := make([]*StealTableOwnershipResponse, len(m.q1))
@@ -132,7 +148,7 @@ func (m *majorityQuorum) WriteMigration(ctx context.Context, in *WriteMigrationR
 		}
 	}
 
-	atlas.Ownership.Add(in.TableId, in.TableVersion)
+	atlas.Ownership.Add(in.GetMigration().GetVersion().GetTableName(), in.GetMigration().GetVersion().GetTableVersion())
 
 	return &WriteMigrationResponse{
 		Success: true,
@@ -160,14 +176,9 @@ func (m *majorityQuorum) AcceptMigration(ctx context.Context, in *WriteMigration
 		return nil, err
 	}
 
-	atlas.Ownership.Commit(in.TableId, in.GetMigration().GetVersion())
+	atlas.Ownership.Commit(in.GetMigration().GetVersion().GetTableName(), in.GetMigration().GetVersion().GetTableVersion())
 
 	return &emptypb.Empty{}, nil
-}
-
-func (m *majorityQuorum) LearnMigration(ctx context.Context, in *LearnMigrationRequest, opts ...grpc.CallOption) (Consensus_LearnMigrationClient, error) {
-	//TODO implement me
-	panic("implement me")
 }
 
 func (m *majorityQuorum) JoinCluster(ctx context.Context, in *Node, opts ...grpc.CallOption) (*JoinClusterResponse, error) {

@@ -42,14 +42,12 @@ type TableOwnerships struct {
 	mu            sync.RWMutex
 	subscriptions map[string][]chan<- TableOwnershipChange
 	commitTimes   map[string]time.Time
-	Wants         chan Want
 }
 
 var Ownership = &TableOwnerships{
 	own:           map[string]struct{}{},
 	subscriptions: map[string][]chan<- TableOwnershipChange{},
 	commitTimes:   map[string]time.Time{},
-	Wants:         make(chan Want),
 }
 
 func (t *TableOwnerships) Add(table string, version int64) {

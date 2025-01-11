@@ -33,8 +33,19 @@ type majorityQuorum struct {
 }
 
 func (m *majorityQuorum) Gossip(ctx context.Context, in *GossipMigration, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	//TODO implement me
-	panic("implement me")
+	// get 5 nodes not in the quorum
+	conn, err := atlas.MigrationsPool.Take(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer atlas.MigrationsPool.Put(conn)
+
+	err = SendGossip(ctx, in, conn)
+	if err != nil {
+		return nil, err
+	}
+
+	return &emptypb.Empty{}, nil
 }
 
 func (m *majorityQuorum) StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipResponse, error) {

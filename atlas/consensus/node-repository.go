@@ -37,6 +37,7 @@ type NodeRepository interface {
 	GetRandomNodes(num int64, excluding ...int64) ([]*Node, error)
 }
 
+//   A NodeRepository instance configured with the given context and database connection
 func GetDefaultNodeRepository(ctx context.Context, conn *sqlite.Conn) NodeRepository {
 	return &nodeRepository{
 		ctx:  ctx,

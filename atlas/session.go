@@ -31,7 +31,15 @@ var Logger *zap.Logger
 
 // InitializeSession creates a new session for the provided SQLite connection and attaches all tables with a replication
 // level of "regional" or "global" to it. It returns the updated context with the session attached. If an error occurs
-// during session creation or table attachment, it returns the original context and the error.
+// InitializeSession creates a new SQLite session and attaches regional and global tables to it.
+// It takes a context and a SQLite connection as input and returns a session or an error.
+// The function performs the following steps:
+// 1. Creates a new session using the provided connection
+// 2. Retrieves migrations from a pool
+// 3. Executes a query to find tables with 'regional' or 'global' replication levels
+// 4. Attaches each discovered table to the session
+// If any step fails, the session is deleted and an error is returned.
+// Returns the created session or an error if session creation or table attachment fails.
 func InitializeSession(ctx context.Context, conn *sqlite.Conn) (*sqlite.Session, error) {
 	var err error
 	session, err := conn.CreateSession("")
@@ -203,7 +211,23 @@ func (r *Rows) NonSingle() bool {
 	return len(r.Rows) > 1
 }
 
-// Each row is converted to a Row struct with corresponding ValueColumn implementations.
+// CaptureChanges executes a SQL query with the given parameters and captures the resulting rows.
+// It prepares a SQLite statement, sets parameters dynamically based on their types, and converts
+// each row into a Row struct with corresponding ValueColumn implementations.
+//
+// Parameters:
+//   - query: The SQL query string to be executed
+//   - db: The SQLite database connection
+//   - output: If true, prints each column's name and value to stdout
+//   - params: Variable number of parameters to be bound to the query
+//
+// Returns:
+//   - A Rows struct containing the query results with column headers and row data
+//   - An error if statement preparation, parameter binding, or query execution fails
+//
+// The function supports various parameter types including string, int, float, bool, 
+// byte slice, time, and duration. Unsupported parameter types will return an error.
+// Null values can be passed for pointer types or by explicitly passing nil.
 func CaptureChanges(query string, db *sqlite.Conn, output bool, params ...Param) (*Rows, error) {
 	stmt, err := db.Prepare(query)
 	if err != nil {

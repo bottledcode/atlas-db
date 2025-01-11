@@ -146,6 +146,11 @@ func TestDoBootstrap(t *testing.T) {
 	require.Equal(t, []byte("test datatest datatest data"), data)
 }
 
+// TestInitializeMaybe tests the InitializeMaybe function's behavior with empty and non-empty databases.
+// It verifies that the function correctly initializes the database by creating a node entry
+// when the database is empty, and does not modify the database when it already contains nodes.
+// The test creates two temporary database files, sets up an Atlas connection pool, and checks
+// the node count after calling InitializeMaybe to ensure consistent behavior.
 func TestInitializeMaybe(t *testing.T) {
 	f, cleanup := test.GetTempDb(t)
 	defer cleanup()

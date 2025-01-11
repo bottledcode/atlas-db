@@ -133,7 +133,30 @@ func JoinCluster(ctx context.Context) error {
 	return nil
 }
 
-// InitializeMaybe checks if the database is empty and initializes it if it is
+// InitializeMaybe checks if the database is empty and initializes it if necessary. If nodes already exist in the database, it retrieves the current node and updates the server ID. If the database is empty, it creates a new node, steals table ownership, applies missing migrations, and writes the new node to the database.
+//
+// The function performs the following key steps:
+// 1. Retrieve a database connection from the migrations pool
+// 2. Check the total number of nodes in the database
+// 3. If nodes exist, retrieve the current node and update the server ID
+// 4. If no nodes exist, set default region, port, and address
+// 5. Create a new node and steal table ownership
+// 6. Apply missing migrations (data and schema)
+// 7. Write the new node to the database
+// 8. Commit migrations and update the server ID
+//
+// Parameters:
+//   - ctx: Context for controlling the database initialization process
+//
+// Returns:
+//   - An error if any step in the initialization process fails, otherwise nil
+//
+// Possible errors include:
+//   - Database connection issues
+//   - Node retrieval failures
+//   - Table ownership stealing failures
+//   - Migration application errors
+//   - Node insertion errors
 func InitializeMaybe(ctx context.Context) error {
 	conn, err := atlas.MigrationsPool.Take(ctx)
 	if err != nil {

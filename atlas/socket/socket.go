@@ -35,6 +35,23 @@ import (
 	"zombiezen.com/go/sqlite"
 )
 
+// ServeSocket initializes a Unix socket listener for handling database connections.
+// It creates a socket at the path specified in CurrentOptions and starts a server
+// that accepts incoming connections in a separate goroutine.
+//
+// The function attempts to remove an existing socket file if the initial socket
+// creation fails. Each incoming connection is handled by a new goroutine using
+// the SH (Session Handler) struct.
+//
+// Parameters:
+//   - ctx: A context for controlling the lifecycle of the socket server
+//
+// Returns:
+//   - A function to close the socket listener
+//   - An error if socket initialization fails
+//
+// The server continues to accept connections until the provided context is canceled.
+// Errors during connection acceptance are logged but do not stop the server.
 func ServeSocket(ctx context.Context) (func() error, error) {
 	// create the unix socket
 	ln, err := net.Listen("unix", atlas.CurrentOptions.SocketPath)
@@ -89,6 +106,24 @@ type commandString struct {
 	rawParts   []string
 }
 
+// commandFromString parses a command string into a structured representation with normalized and raw components.
+// 
+// It converts the command to uppercase, splits it into parts, and preserves both normalized 
+// and original representations. Special handling is included for trailing whitespace, 
+// ensuring that multiple trailing spaces are captured in the command parts.
+// 
+// The function returns a pointer to a commandString containing:
+// - A normalized uppercase version of the command
+// - Normalized command parts
+// - The original raw command string
+// - Original raw command parts
+// 
+// Example:
+//   cmd := commandFromString("SELECT * FROM users  ")
+//   // cmd.normalized = "SELECT * FROM USERS"
+//   // cmd.parts = ["SELECT", "*", "FROM", "USERS"]
+//   // cmd.raw = "SELECT * FROM users  "
+//   // cmd.rawParts = ["SELECT", "*", "FROM", "users", "  "]
 func commandFromString(command string) *commandString {
 	normalized := strings.ToUpper(command)
 	parts := strings.Fields(normalized)
@@ -131,7 +166,7 @@ func (c *commandString) validateExact(expected int) error {
 	return nil
 }
 
-// replaceCommand replaces command in query with newPrefix.
+// prepends the new prefix to the remaining query string.
 func replaceCommand(query, command, newPrefix string) string {
 	fields := strings.Fields(command)
 	if len(fields) == 0 {
@@ -147,6 +182,7 @@ func replaceCommand(query, command, newPrefix string) string {
 	return newPrefix + query
 }
 
+// If the number of trailing whitespaces is 2 or more, it adds back one less whitespace.
 func removeCommand(query string, num int) string {
 	fields := strings.Fields(query)
 	// count whitespace at the end of string

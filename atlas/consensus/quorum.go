@@ -39,6 +39,7 @@ type QuorumManager interface {
 var manager *defaultQuorumManager
 var managerOnce sync.Once
 
+// GetDefaultQuorumManager returns a singleton instance of the QuorumManager for managing distributed database nodes across regions. It uses sync.Once to ensure thread-safe, lazy initialization of the manager with an empty node map. The returned manager can be used to retrieve and manage quorum configurations for database operations.
 func GetDefaultQuorumManager(ctx context.Context) QuorumManager {
 	managerOnce.Do(func() {
 		manager = &defaultQuorumManager{

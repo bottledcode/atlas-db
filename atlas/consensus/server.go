@@ -336,6 +336,7 @@ func (s *Server) applyMigration(migrations []*Migration, commitConn *sqlite.Conn
 	return nil
 }
 
+// Returns a fully configured Node pointer ready for cluster operations.
 func constructCurrentNode() *Node {
 	return &Node{
 		Id:      atlas.CurrentOptions.ServerId,
@@ -499,6 +500,7 @@ type gossipKey struct {
 	by           int64
 }
 
+// The returned gossipKey is used for tracking and identifying specific migration events in the cluster's gossip protocol.
 func createGossipKey(version *MigrationVersion) gossipKey {
 	return gossipKey{
 		table:        version.GetTableName(),
@@ -559,6 +561,7 @@ func (s *Server) applyGossipMigration(ctx context.Context, req *GossipMigration,
 	return nil
 }
 
+// SendGossip propagates migration information to random nodes in the cluster with a decrementing time-to-live (TTL) mechanism. It selects up to 5 random nodes to forward the migration request, excluding the original sender, current server, and table owner. The method uses concurrent goroutines to send gossip requests and logs the completion of the gossip process.
 func SendGossip(ctx context.Context, req *GossipMigration, conn *sqlite.Conn) error {
 	// now we see if there is still a ttl remaining
 	if req.GetTtl() <= 0 {

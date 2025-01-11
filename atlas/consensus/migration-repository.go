@@ -36,6 +36,7 @@ type MigrationRepository interface {
 	GetNextVersion(table string) (int64, error)
 }
 
+//   A MigrationRepository instance configured with the given context and database connection
 func GetDefaultMigrationRepository(ctx context.Context, conn *sqlite.Conn) MigrationRepository {
 	return &migrationRepository{
 		ctx:  ctx,

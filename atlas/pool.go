@@ -130,6 +130,7 @@ func CreatePool(options *Options) {
 	})
 }
 
+// It is safe to call multiple times and handles nil pools gracefully.
 func DrainPool() {
 	if Pool != nil {
 		Pool.Close()

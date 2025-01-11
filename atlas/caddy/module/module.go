@@ -188,6 +188,10 @@ func (m *Module) UnmarshalCaddyfile(d *caddyfile.Dispenser) (err error) {
 	return
 }
 
+// init registers the Atlas module with Caddy and sets up command-line and configuration handling for Atlas cluster interactions.
+// It configures the Atlas module directive in Caddyfile, establishes a command for connecting to Atlas clusters,
+// and provides an interactive command-line interface for executing commands via Unix socket.
+// The function handles module registration, directive ordering, and implements a client for socket-based communication.
 func init() {
 	caddy.RegisterModule(&Module{})
 

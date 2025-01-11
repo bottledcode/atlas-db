@@ -23,6 +23,7 @@ import (
 	"zombiezen.com/go/sqlite"
 )
 
+// Returns an error if table attachment fails, otherwise returns nil.
 func maybeWatchTable(ctx context.Context, query *commandString, session *sqlite.Session) error {
 	if query.selectNormalizedCommand(0) != "CREATE" {
 		return nil

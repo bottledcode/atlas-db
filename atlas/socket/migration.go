@@ -19,11 +19,11 @@
 package socket
 
 import (
-	"github.com/bottledcode/atlas-db/atlas"
 	"golang.org/x/net/context"
+	"zombiezen.com/go/sqlite"
 )
 
-func maybeWatchTable(ctx context.Context, query *commandString) error {
+func maybeWatchTable(ctx context.Context, query *commandString, session *sqlite.Session) error {
 	if query.selectNormalizedCommand(0) != "CREATE" {
 		return nil
 	}
@@ -44,7 +44,6 @@ func maybeWatchTable(ctx context.Context, query *commandString) error {
 	}
 
 	// watch the table
-	session := atlas.GetCurrentSession(ctx)
 	err := session.Attach(tableName)
 	if err != nil {
 		return err

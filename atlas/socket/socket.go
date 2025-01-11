@@ -60,7 +60,8 @@ func ServeSocket(ctx context.Context) (func() error, error) {
 					atlas.Logger.Error("Error accepting connection", zap.Error(err))
 					continue
 				}
-				go handleConnection(conn)
+				c := &SH{}
+				go c.handleConnection(conn, ctx)
 			}
 		}
 	}()
@@ -206,167 +207,223 @@ func (qm *queryMode) String() string {
 	return "unknown"
 }
 
-func writeRawMessage(writer *bufio.Writer, msg string) error {
-	n, err := writer.WriteString(msg)
+type SH struct {
+	writer         *bufio.Writer
+	reader         *bufio.Reader
+	sql            *sqlite.Conn
+	hasFatalError  bool
+	inTransaction  bool
+	session        *sqlite.Session
+	commandBuilder strings.Builder
+}
+
+func (s *SH) writeRawMessage(msg string) error {
+	n, err := s.writer.WriteString(msg)
 	if err != nil {
 		return err
 	}
 	if n < len(msg) {
-		return writeRawMessage(writer, msg[n:])
+		return s.writeRawMessage(msg[n:])
 	}
 	return nil
 }
 
-func writeMessage(writer *bufio.Writer, msg string) error {
-	return writeRawMessage(writer, msg+EOL)
+func (s *SH) writeMessage(msg string) error {
+	return s.writeRawMessage(msg + EOL)
 }
 
-func handleConnection(conn net.Conn) {
+func (s *SH) writeError(code ErrorCode, err error) error {
+	e := s.writeMessage("ERROR " + string(code) + " " + err.Error())
+	if e != nil {
+		return e
+	}
+	return s.writer.Flush()
+}
+
+func (s *SH) writeOk(code ErrorCode) error {
+	err := s.writeMessage(string(code))
+	if err != nil {
+		return err
+	}
+	return s.writer.Flush()
+}
+
+func (s *SH) connect(ctx context.Context) error {
+	if s.sql == nil {
+		atlas.CreatePool(atlas.CurrentOptions)
+		var err error
+		s.sql, err = atlas.Pool.Take(ctx)
+		if err != nil {
+			s.hasFatalError = true
+			atlas.Logger.Error("Error taking connection from pool", zap.Error(err))
+			e := s.writeError(Fatal, err)
+			return errors.Join(err, e)
+		}
+	}
+	return nil
+}
+
+func (s *SH) maybeStartTransaction(ctx context.Context, command *commandString) error {
+	if !s.inTransaction {
+		err := s.connect(ctx)
+
+		if command == emptyCommandString {
+			command = commandFromString("BEGIN")
+		}
+
+		_, err = atlas.ExecuteSQL(ctx, command.raw, s.sql, false)
+		if err != nil {
+			atlas.Logger.Error("Error starting transaction", zap.Error(err))
+			e := s.writeError(Fatal, err)
+			s.hasFatalError = true
+			return errors.Join(err, e)
+		}
+
+		s.session, err = atlas.InitializeSession(ctx, s.sql)
+		if err != nil {
+			atlas.Logger.Error("Error initializing session", zap.Error(err))
+			e := s.writeError(Fatal, err)
+			s.hasFatalError = true
+			return errors.Join(err, e)
+		}
+
+		s.inTransaction = true
+	}
+	return nil
+}
+
+func (s *SH) consumeLine() string {
+	for {
+		n, err := s.reader.ReadString('\n')
+		if err != nil {
+			atlas.Logger.Error("Error reading from connection", zap.Error(err))
+			s.hasFatalError = true
+			return ""
+		}
+		s.commandBuilder.WriteString(n)
+
+		// consume a command
+		if command, next, found := strings.Cut(s.commandBuilder.String(), "\r\n"); found {
+			s.commandBuilder.Reset()
+			s.commandBuilder.Write([]byte(next))
+			command = strings.TrimSpace(command)
+			return command
+		}
+	}
+}
+
+func (s *SH) syntheticQuery(kv map[string]string) error {
+	rowNum := 0
+
+	err := s.writeMessage("META COLUMN_COUNT 2")
+	if err != nil {
+		return err
+	}
+	err = s.writeMessage("META COLUMN_NAME 0 key")
+	if err != nil {
+		return err
+	}
+	err = s.writeMessage("META COLUMN_NAME 1 value")
+	if err != nil {
+		return err
+	}
+
+	for key, value := range kv {
+		rowNum += 1
+		err = s.writeMessage("ROW " + strconv.Itoa(rowNum) + " TEXT " + key)
+		if err != nil {
+			return err
+		}
+		err = s.writeMessage("ROW " + strconv.Itoa(rowNum) + " TEXT " + value)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = s.writeMessage("META LAST_INSERT_ID 0")
+	if err != nil {
+		return err
+	}
+	err = s.writeMessage("META ROWS_AFFECTED " + strconv.Itoa(rowNum))
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *SH) executeQuery(stmt *sqlite.Stmt) error {
+	rowNum := 0
+	err := s.writeMessage("META COLUMN_COUNT " + strconv.Itoa(stmt.ColumnCount()))
+	if err != nil {
+		return err
+	}
+	for i := 0; i < stmt.ColumnCount(); i++ {
+		err = s.writeMessage("META COLUMN_NAME " + strconv.Itoa(i) + " " + stmt.ColumnName(i))
+		if err != nil {
+			return err
+		}
+	}
+
+	for {
+		hasRow, err := stmt.Step()
+		if err != nil {
+			err = s.writeError(Warning, err)
+			if err != nil {
+				return err
+			}
+		}
+		if !hasRow {
+			break
+		}
+		rowNum += 1
+		cols := stmt.ColumnCount()
+		r := "ROW " + strconv.Itoa(rowNum)
+		for i := 0; i < cols; i++ {
+			switch stmt.ColumnType(i) {
+			case sqlite.TypeText:
+				err = s.writeMessage(r + " TEXT " + stmt.ColumnText(i))
+			case sqlite.TypeInteger:
+				err = s.writeMessage(r + " INT " + strconv.FormatInt(stmt.ColumnInt64(i), 10))
+			case sqlite.TypeFloat:
+				err = s.writeMessage(r + " FLOAT " + strconv.FormatFloat(stmt.ColumnFloat(i), 'f', -1, 64))
+			case sqlite.TypeNull:
+				err = s.writeMessage(r + " NULL")
+			case sqlite.TypeBlob:
+				var b []byte
+				ir := stmt.ColumnBytes(i, b)
+				err = s.writeMessage(r + " BLOB " + strconv.Itoa(ir) + " " + base64.StdEncoding.EncodeToString(b))
+			}
+			if err != nil {
+				return err
+			}
+		}
+	}
+	err = s.writeMessage("META LAST_INSERT_ID " + strconv.FormatInt(s.sql.LastInsertRowID(), 10))
+	if err != nil {
+		return err
+	}
+	err = s.writeMessage("META ROWS_AFFECTED " + strconv.Itoa(s.sql.Changes()))
+	if err != nil {
+		return err
+	}
+
+	err = stmt.ClearBindings()
+	if err != nil {
+		e := s.writeError(Warning, err)
+		return errors.Join(err, e)
+	}
+
+	return nil
+}
+
+func (s *SH) handleConnection(conn net.Conn, ctx context.Context) {
 	defer conn.Close()
 
-	reader := bufio.NewReader(conn)
-	writer := bufio.NewWriter(conn)
-	var commandBuilder strings.Builder
-	inTransaction := false
-	var sql *sqlite.Conn
-	ctx := context.Background()
-	hasFatalled := false
+	s.reader = bufio.NewReader(conn)
+	s.writer = bufio.NewWriter(conn)
 
 	qm := normalQueryMode
-
-	writeError := func(code ErrorCode, err error) {
-		writeMessage(writer, "ERROR "+string(code)+" "+err.Error())
-		_ = writer.Flush()
-	}
-
-	writeOk := func(code ErrorCode) {
-		writeMessage(writer, string(code))
-		_ = writer.Flush()
-	}
-
-	connect := func() {
-		if sql == nil {
-			atlas.CreatePool(atlas.CurrentOptions)
-			var err error
-			sql, err = atlas.Pool.Take(ctx)
-			if err != nil {
-				atlas.Logger.Error("Error taking connection from pool", zap.Error(err))
-				writeError(Fatal, err)
-				hasFatalled = true
-				return
-			}
-		}
-	}
-
-	maybeStartTransaction := func(ctx context.Context, command *commandString) context.Context {
-		if !inTransaction {
-			connect()
-
-			if command == emptyCommandString {
-				command = commandFromString("BEGIN")
-			}
-
-			_, err := atlas.ExecuteSQL(ctx, command.raw, sql, false)
-			if err != nil {
-				atlas.Logger.Error("Error starting transaction", zap.Error(err))
-				writeError(Fatal, err)
-				hasFatalled = true
-				return ctx
-			}
-
-			ctx, err = atlas.InitializeSession(ctx, sql)
-			if err != nil {
-				atlas.Logger.Error("Error initializing session", zap.Error(err))
-				writeError(Fatal, err)
-				hasFatalled = true
-				return ctx
-			}
-
-			inTransaction = true
-		}
-		return ctx
-	}
-
-	consumeLine := func() string {
-		for {
-			n, err := reader.ReadString('\n')
-			if err != nil {
-				atlas.Logger.Error("Error reading from connection", zap.Error(err))
-				hasFatalled = true
-				return ""
-			}
-			commandBuilder.WriteString(n)
-
-			// consume a command
-			if command, next, found := strings.Cut(commandBuilder.String(), "\r\n"); found {
-				commandBuilder.Reset()
-				commandBuilder.Write([]byte(next))
-				command = strings.TrimSpace(command)
-				return command
-			}
-		}
-	}
-
-	syntheticQuery := func(kv map[string]string) {
-		rowNum := 0
-
-		writeMessage(writer, "META COLUMN_COUNT 2")
-		writeMessage(writer, "META COLUMN_NAME 0 key")
-		writeMessage(writer, "META COLUMN_NAME 1 value")
-
-		for key, value := range kv {
-			rowNum += 1
-			writeMessage(writer, "ROW "+strconv.Itoa(rowNum)+" TEXT "+key)
-			writeMessage(writer, "ROW "+strconv.Itoa(rowNum)+" TEXT "+value)
-		}
-
-		writeMessage(writer, "META LAST_INSERT_ID 0")
-		writeMessage(writer, "META ROWS_AFFECTED "+strconv.Itoa(rowNum))
-	}
-
-	executeQuery := func(stmt *sqlite.Stmt) {
-		rowNum := 0
-
-		// write out the column names
-		writeMessage(writer, "META COLUMN_COUNT "+strconv.Itoa(stmt.ColumnCount()))
-		for i := 0; i < stmt.ColumnCount(); i++ {
-			writeMessage(writer, "META COLUMN_NAME "+strconv.Itoa(i)+" "+stmt.ColumnName(i))
-		}
-
-		for {
-			hasRow, err := stmt.Step()
-			if err != nil {
-				writeError(Warning, err)
-			}
-			if !hasRow {
-				break
-			}
-			rowNum += 1
-			cols := stmt.ColumnCount()
-			r := "ROW " + strconv.Itoa(rowNum)
-			for i := 0; i < cols; i++ {
-				switch stmt.ColumnType(i) {
-				case sqlite.TypeText:
-					writeMessage(writer, r+" TEXT "+stmt.ColumnText(i))
-				case sqlite.TypeInteger:
-					writeMessage(writer, r+" INT "+strconv.FormatInt(stmt.ColumnInt64(i), 10))
-				case sqlite.TypeFloat:
-					writeMessage(writer, r+" FLOAT "+strconv.FormatFloat(stmt.ColumnFloat(i), 'f', -1, 64))
-				case sqlite.TypeNull:
-					writeMessage(writer, r+" NULL")
-				case sqlite.TypeBlob:
-					writeMessage(writer, r+" BLOB")
-				}
-			}
-		}
-		writeMessage(writer, "META LAST_INSERT_ID "+strconv.FormatInt(sql.LastInsertRowID(), 10))
-		writeMessage(writer, "META ROWS_AFFECTED "+strconv.Itoa(sql.Changes()))
-
-		err := stmt.ClearBindings()
-		if err != nil {
-			writeError(Warning, err)
-		}
-	}
 
 	commandMigrations := &consensus.SchemaMigration{
 		Commands: []string{},
@@ -384,9 +441,9 @@ func handleConnection(conn net.Conn) {
 	}()
 
 	for {
-		command := commandFromString(consumeLine())
+		command := commandFromString(s.consumeLine())
 		if len(command.parts) == 0 {
-			if hasFatalled {
+			if s.hasFatalError {
 				break
 			}
 			continue
@@ -394,140 +451,252 @@ func handleConnection(conn net.Conn) {
 
 		switch command.parts[0] {
 		case "PREPARE":
-			ctx = maybeStartTransaction(ctx, emptyCommandString)
-			if hasFatalled {
+			err := s.maybeStartTransaction(ctx, emptyCommandString)
+			if err != nil {
+				atlas.Logger.Error("Error starting transaction", zap.Error(err))
 				break
 			}
-			if err := command.validate(3); err != nil {
-				writeError(Warning, err)
+			if s.hasFatalError {
+				break
+			}
+			if err = command.validate(3); err != nil {
+				e := s.writeError(Warning, err)
+				if e != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+					break
+				}
 				continue
 			}
 			id := command.selectNormalizedCommand(1)
 			sqlCommand := command.removeCommand(2)
 
 			if nonAllowedQuery(sqlCommand) {
-				writeError(Warning, errors.New("query not allowed"))
+				err = s.writeError(Warning, errors.New("query not allowed"))
+				if err != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(err))
+					break
+				}
 				continue
 			}
 
 			if !isQueryReadOnly(sqlCommand) {
 				// ensure we are running in normal mode
 				if qm == localQueryMode {
-					writeError(Warning, errors.New("write query is not allowed in local query mode"))
+					err = s.writeError(Warning, errors.New("write query is not allowed in local query mode"))
+					if err != nil {
+						atlas.Logger.Error("Error writing error", zap.Error(err))
+						break
+					}
 					continue
 				}
 
 				// determine if this is a schema changing migration
 				if isQueryChangeSchema(sqlCommand) {
 					commandMigrations.Commands = append(commandMigrations.Commands, sqlCommand.raw)
-					err := maybeWatchTable(ctx, sqlCommand)
+					err = maybeWatchTable(ctx, sqlCommand, s.session)
 					if err != nil {
-						writeError(Warning, err)
+						err = s.writeError(Warning, err)
 						continue
 					}
 				}
 				requiresMigration = true
 			}
 
-			stmt, err := sql.Prepare(sqlCommand.raw)
+			stmt, err := s.sql.Prepare(sqlCommand.raw)
 			if err != nil {
-				writeError(Warning, err)
+				e := s.writeError(Warning, err)
+				if e != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+					break
+				}
 				continue
 			}
 			stmts[id] = stmt
-			writeOk(OK)
-
-		case "EXECUTE":
-			ctx = maybeStartTransaction(ctx, emptyCommandString)
-			if hasFatalled {
+			err = s.writeOk(OK)
+			if err != nil {
+				atlas.Logger.Error("Error writing ok", zap.Error(err))
 				break
 			}
-			if err := command.validate(2); err != nil {
-				writeError(Warning, err)
+
+		case "EXECUTE":
+			err := s.maybeStartTransaction(ctx, emptyCommandString)
+			if err != nil {
+				atlas.Logger.Error("Error starting transaction", zap.Error(err))
+				break
+			}
+			if s.hasFatalError {
+				break
+			}
+			if err = command.validate(2); err != nil {
+				e := s.writeError(Warning, err)
+				if e != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+					break
+				}
 				continue
 			}
 			id := command.selectNormalizedCommand(1)
 			stmt, ok := stmts[id]
 			if !ok {
-				writeError(Warning, errors.New("No statement with id "+id))
+				err = s.writeError(Warning, errors.New("No statement with id "+id))
+				if err != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(err))
+					break
+				}
 				continue
 			}
-			executeQuery(stmt)
-			writeOk(OK)
-		case "QUERY":
-			ctx = maybeStartTransaction(ctx, emptyCommandString)
-			if hasFatalled {
+			err = s.executeQuery(stmt)
+			if err != nil {
+				e := s.writeError(Warning, err)
+				if e != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+					break
+				}
+				continue
+			}
+			err = s.writeOk(OK)
+			if err != nil {
+				atlas.Logger.Error("Error writing ok", zap.Error(err))
 				break
 			}
-			if err := command.validate(2); err != nil {
-				writeError(Warning, err)
+		case "QUERY":
+			err := s.maybeStartTransaction(ctx, emptyCommandString)
+			if err != nil {
+				atlas.Logger.Error("Error starting transaction", zap.Error(err))
+				break
+			}
+			if s.hasFatalError {
+				break
+			}
+			if err = command.validate(2); err != nil {
+				e := s.writeError(Warning, err)
+				if e != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+					break
+				}
 				continue
 			}
 			sqlCommand := command.removeCommand(1)
 
 			if nonAllowedQuery(sqlCommand) {
-				writeError(Warning, errors.New("query not allowed"))
+				err = s.writeError(Warning, errors.New("query not allowed"))
+				if err != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(err))
+					break
+				}
 				continue
 			}
 
 			if !isQueryReadOnly(sqlCommand) {
 				// ensure we are running in normal mode
 				if qm == localQueryMode {
-					writeError(Warning, errors.New("write query is not allowed in local query mode"))
+					err = s.writeError(Warning, errors.New("write query is not allowed in local query mode"))
+					if err != nil {
+						atlas.Logger.Error("Error writing error", zap.Error(err))
+						break
+					}
 					continue
 				}
 
 				// determine if this is a schema changing migration
 				if isQueryChangeSchema(sqlCommand) {
 					commandMigrations.Commands = append(commandMigrations.Commands, sqlCommand.raw)
-					err := maybeWatchTable(ctx, sqlCommand)
+					err = maybeWatchTable(ctx, sqlCommand, s.session)
 					if err != nil {
-						writeError(Warning, err)
+						e := s.writeError(Warning, err)
+						if e != nil {
+							atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+							break
+						}
 						continue
 					}
 				}
 				requiresMigration = true
 			}
 
-			stmt, err := sql.Prepare(sqlCommand.raw)
+			stmt, err := s.sql.Prepare(sqlCommand.raw)
 			if err != nil {
-				writeError(Warning, err)
+				e := s.writeError(Warning, err)
+				if e != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+					break
+				}
 				continue
 			}
-			executeQuery(stmt)
+			err = s.executeQuery(stmt)
+			if err != nil {
+				e := s.writeError(Warning, err)
+				if e != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+					break
+				}
+				continue
+			}
 			err = stmt.Finalize()
 			if err != nil {
-				writeError(Warning, err)
+				e := s.writeError(Warning, err)
+				if e != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+					break
+				}
 				continue
 			}
-			writeOk(OK)
+			err = s.writeOk(OK)
+			if err != nil {
+				atlas.Logger.Error("Error writing ok", zap.Error(err))
+				break
+			}
 		case "FINALIZE":
 			if err := command.validate(2); err != nil {
-				writeError(Warning, err)
+				e := s.writeError(Warning, err)
+				if e != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+					break
+				}
 				continue
 			}
 			id := command.selectNormalizedCommand(1)
 			stmt, ok := stmts[id]
 			if !ok {
-				writeError(Warning, errors.New("No statement with id "+id))
+				err := s.writeError(Warning, errors.New("No statement with id "+id))
+				if err != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(err))
+					break
+				}
 				continue
 			}
 			err := stmt.Finalize()
 			if err != nil {
-				writeError(Warning, err)
+				e := s.writeError(Warning, err)
+				if e != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+					break
+				}
 				continue
 			}
 			delete(stmts, id)
-			writeOk(OK)
+			err = s.writeOk(OK)
+			if err != nil {
+				atlas.Logger.Error("Error writing ok", zap.Error(err))
+				break
+			}
 		case "BIND":
 			if err := command.validate(4); err != nil {
-				writeError(Warning, err)
+				e := s.writeError(Warning, err)
+				if e != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+					break
+				}
 				continue
 			}
 			id := command.selectNormalizedCommand(1)
 			stmt, ok := stmts[id]
 			if !ok {
-				writeError(Warning, errors.New("No statement with id "+id))
+				err := s.writeError(Warning, errors.New("No statement with id "+id))
+				if err != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(err))
+					break
+				}
 				continue
 			}
 			param := command.selectCommand(2)
@@ -542,14 +711,22 @@ func handleConnection(conn net.Conn) {
 				case "INTEGER":
 					v, err := strconv.ParseInt(command.removeCommand(4).raw, 10, 64)
 					if err != nil {
-						writeError(Warning, err)
+						e := s.writeError(Warning, err)
+						if e != nil {
+							atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+							break
+						}
 						continue
 					}
 					stmt.BindInt64(i, v)
 				case "FLOAT":
 					v, err := strconv.ParseFloat(command.removeCommand(4).raw, 64)
 					if err != nil {
-						writeError(Warning, err)
+						e := s.writeError(Warning, err)
+						if e != nil {
+							atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+							break
+						}
 						continue
 					}
 					stmt.BindFloat(i, v)
@@ -559,20 +736,32 @@ func handleConnection(conn net.Conn) {
 					size := command.selectCommand(4)
 					v, err := strconv.Atoi(size)
 					if err != nil {
-						writeError(Warning, fmt.Errorf("invalid size %s", size))
+						e := s.writeError(Warning, fmt.Errorf("invalid size %s", size))
+						if e != nil {
+							atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+							break
+						}
 						continue
 					}
 					if v == 0 {
 						stmt.BindZeroBlob(i, 0)
 						continue
 					}
-					blobBytes, err := base64.StdEncoding.DecodeString(consumeLine())
+					blobBytes, err := base64.StdEncoding.DecodeString(s.consumeLine())
 					if err != nil {
-						writeError(Warning, err)
+						e := s.writeError(Warning, err)
+						if e != nil {
+							atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+							break
+						}
 						continue
 					}
 					if len(blobBytes) != v {
-						writeError(Warning, fmt.Errorf("expected %d bytes, got %d", v, len(blobBytes)))
+						e := s.writeError(Warning, fmt.Errorf("expected %d bytes, got %d", v, len(blobBytes)))
+						if e != nil {
+							atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+							break
+						}
 						continue
 					}
 					stmt.BindBytes(i, blobBytes)
@@ -586,14 +775,22 @@ func handleConnection(conn net.Conn) {
 				case "INTEGER":
 					v, err := strconv.ParseInt(command.removeCommand(4).raw, 10, 64)
 					if err != nil {
-						writeError(Warning, err)
+						e := s.writeError(Warning, err)
+						if e != nil {
+							atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+							break
+						}
 						continue
 					}
 					stmt.SetInt64(param, v)
 				case "FLOAT":
 					v, err := strconv.ParseFloat(command.removeCommand(4).raw, 64)
 					if err != nil {
-						writeError(Warning, err)
+						e := s.writeError(Warning, err)
+						if e != nil {
+							atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+							break
+						}
 						continue
 					}
 					stmt.SetFloat(param, v)
@@ -603,64 +800,111 @@ func handleConnection(conn net.Conn) {
 					size := command.selectNormalizedCommand(4)
 					v, err := strconv.Atoi(size)
 					if err != nil {
-						writeError(Warning, fmt.Errorf("invalid size %s", size))
+						e := s.writeError(Warning, fmt.Errorf("invalid size %s", size))
+						if e != nil {
+							atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+							break
+						}
 						continue
 					}
 					if v == 0 {
 						stmt.SetZeroBlob(param, 0)
 						continue
 					}
-					blobBytes, err := base64.StdEncoding.DecodeString(consumeLine())
+					blobBytes, err := base64.StdEncoding.DecodeString(s.consumeLine())
 					if err != nil {
-						writeError(Warning, err)
+						e := s.writeError(Warning, err)
+						if e != nil {
+							atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+							break
+						}
 						continue
 					}
 					if len(blobBytes) != v {
-						writeError(Warning, fmt.Errorf("expected %d bytes, got %d", v, len(blobBytes)))
+						err := s.writeError(Warning, fmt.Errorf("expected %d bytes, got %d", v, len(blobBytes)))
+						if err != nil {
+							atlas.Logger.Error("Error writing error", zap.Error(err))
+							break
+						}
 						continue
 					}
 					stmt.SetBytes(param, blobBytes)
 				}
-				writeOk(OK)
+				err = s.writeOk(OK)
+				if err != nil {
+					atlas.Logger.Error("Error writing ok", zap.Error(err))
+					break
+				}
 			}
 		case "BEGIN":
-			if inTransaction {
-				writeOk(OK)
+			if s.inTransaction {
+				err := s.writeOk(OK)
+				if err != nil {
+					atlas.Logger.Error("Error writing ok", zap.Error(err))
+					break
+				}
 				continue
 			}
 			if err := command.validate(1); err != nil {
-				writeError(Warning, err)
+				e := s.writeError(Warning, err)
+				if e != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+					break
+				}
 				continue
 			}
-			ctx = maybeStartTransaction(ctx, command)
-			if hasFatalled {
+			err := s.maybeStartTransaction(ctx, command)
+			if err != nil {
+				atlas.Logger.Error("Error starting transaction", zap.Error(err))
 				break
 			}
-			writeOk(OK)
+			if s.hasFatalError {
+				break
+			}
+			err = s.writeOk(OK)
+			if err != nil {
+				atlas.Logger.Error("Error writing ok", zap.Error(err))
+				break
+			}
 		case "COMMIT":
-			if !inTransaction {
-				writeError(Fatal, errors.New("no transaction to commit"))
-				hasFatalled = true
+			if !s.inTransaction {
+				err := s.writeError(Fatal, errors.New("no transaction to commit"))
+				if err != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(err))
+					break
+				}
+				s.hasFatalError = true
 				break
 			}
 			if err := command.validateExact(1); err != nil {
-				writeError(Warning, err)
+				e := s.writeError(Warning, err)
+				if e != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+					break
+				}
 				continue
 			}
 
 			if requiresMigration {
-				session := atlas.GetCurrentSession(ctx)
-				if session == nil {
-					writeError(Fatal, errors.New("no session"))
-					hasFatalled = true
+				if s.session == nil {
+					err := s.writeError(Fatal, errors.New("no session"))
+					if err != nil {
+						atlas.Logger.Error("Error writing error", zap.Error(err))
+						break
+					}
+					s.hasFatalError = true
 					break
 				}
 				var sessionData []byte
 				sessionWriter := bytes.NewBuffer(sessionData)
-				err := session.WritePatchset(sessionWriter)
+				err := s.session.WritePatchset(sessionWriter)
 				if err != nil {
-					writeError(Fatal, err)
-					hasFatalled = true
+					e := s.writeError(Fatal, err)
+					if e != nil {
+						atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+						break
+					}
+					s.hasFatalError = true
 					break
 				}
 				sessionMigrations.Session = append(sessionMigrations.Session, sessionData)
@@ -668,47 +912,76 @@ func handleConnection(conn net.Conn) {
 				// todo: perform a quorum commit
 			}
 
-			_, err := atlas.ExecuteSQL(ctx, "COMMIT", sql, false)
+			_, err := atlas.ExecuteSQL(ctx, "COMMIT", s.sql, false)
 			if err != nil {
-				writeError(Fatal, err)
-				hasFatalled = true
+				e := s.writeError(Fatal, err)
+				if e != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+					break
+				}
+				s.hasFatalError = true
 				break
 			}
-			inTransaction = false
+			s.inTransaction = false
 
-			writeOk(OK)
+			err = s.writeOk(OK)
+			if err != nil {
+				atlas.Logger.Error("Error writing ok", zap.Error(err))
+				break
+			}
 		case "ROLLBACK":
-			if !inTransaction {
-				writeError(Fatal, errors.New("no transaction to rollback"))
-				hasFatalled = true
+			if !s.inTransaction {
+				err := s.writeError(Fatal, errors.New("no transaction to rollback"))
+				if err != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(err))
+					break
+				}
+				s.hasFatalError = true
 				break
 			}
 			if err := command.validate(3); err == nil {
 				// we are probably executing a savepoint
 				if command.selectNormalizedCommand(1) == "TO" {
-					_, err := atlas.ExecuteSQL(ctx, "ROLLBACK TO "+command.selectCommand(3), sql, false)
+					_, err = atlas.ExecuteSQL(ctx, "ROLLBACK TO "+command.selectCommand(3), s.sql, false)
 					if err != nil {
-						writeError(Fatal, err)
-						hasFatalled = true
+						e := s.writeError(Fatal, err)
+						if e != nil {
+							atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+							break
+						}
+						s.hasFatalError = true
 						break
 					}
-					writeOk(OK)
+					err = s.writeOk(OK)
+					if err != nil {
+						atlas.Logger.Error("Error writing ok", zap.Error(err))
+						break
+					}
 					break
 				} else {
-					writeError(Warning, err)
+					err = s.writeError(Warning, err)
+					if err != nil {
+						atlas.Logger.Error("Error writing error", zap.Error(err))
+						break
+					}
 					continue
 				}
 			}
 
-			_, err := atlas.ExecuteSQL(ctx, "ROLLBACK", sql, false)
+			_, err := atlas.ExecuteSQL(ctx, "ROLLBACK", s.sql, false)
 			if err != nil {
-				writeError(Fatal, err)
-				hasFatalled = true
+				e := s.writeError(Fatal, err)
+				if e != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+					break
+				}
+				s.hasFatalError = true
 				break
 			}
-			inTransaction = false
+			s.inTransaction = false
 			// reset the session
-			atlas.GetCurrentSession(ctx).Delete()
+			s.session.Delete()
+			s.session = nil
 
 			// reset migrations
 			commandMigrations = &consensus.SchemaMigration{
@@ -718,41 +991,73 @@ func handleConnection(conn net.Conn) {
 				Session: [][]byte{},
 			}
 
-			writeOk(OK)
+			err = s.writeOk(OK)
+			if err != nil {
+				atlas.Logger.Error("Error writing ok", zap.Error(err))
+				break
+			}
 		case "SAVEPOINT":
-			ctx = maybeStartTransaction(ctx, emptyCommandString)
-			if err := command.validate(2); err != nil {
-				writeError(Warning, err)
+			err := s.maybeStartTransaction(ctx, emptyCommandString)
+			if err = command.validate(2); err != nil {
+				e := s.writeError(Warning, err)
+				if e != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+					break
+				}
 				continue
 			}
 			name := command.selectCommand(1)
-			_, err := atlas.ExecuteSQL(ctx, "SAVEPOINT "+name, sql, false)
+			_, err = atlas.ExecuteSQL(ctx, "SAVEPOINT "+name, s.sql, false)
 			if err != nil {
-				writeError(Fatal, err)
-				hasFatalled = true
+				e := s.writeError(Fatal, err)
+				if e != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+					break
+				}
+				s.hasFatalError = true
 				break
 			}
-			writeOk(OK)
+			err = s.writeOk(OK)
+			if err != nil {
+				atlas.Logger.Error("Error writing ok", zap.Error(err))
+				break
+			}
 
 		case "RELEASE":
 			if err := command.validate(2); err != nil {
-				writeError(Warning, err)
+				e := s.writeError(Warning, err)
+				if e != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+					break
+				}
 				continue
 			}
 			name := command.selectCommand(1)
-			_, err := atlas.ExecuteSQL(ctx, "RELEASE "+name, sql, false)
+			_, err := atlas.ExecuteSQL(ctx, "RELEASE "+name, s.sql, false)
 			if err != nil {
-				writeError(Fatal, err)
-				hasFatalled = true
+				e := s.writeError(Fatal, err)
+				if e != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+					break
+				}
+				s.hasFatalError = true
 				break
 			}
-			writeOk(OK)
+			err = s.writeOk(OK)
+			if err != nil {
+				atlas.Logger.Error("Error writing ok", zap.Error(err))
+				break
+			}
 		case "PRAGMA":
 			if command.selectNormalizedCommand(1) == "ATLAS_QUERY_MODE" {
 				if err := command.validate(3); err != nil {
-					syntheticQuery(map[string]string{
+					e := s.syntheticQuery(map[string]string{
 						"atlas_query_mode": qm.String(),
 					})
+					if e != nil {
+						atlas.Logger.Error("Error writing error", zap.Error(e))
+						break
+					}
 				}
 				switch command.selectNormalizedCommand(2) {
 				case "NORMAL":
@@ -760,32 +1065,64 @@ func handleConnection(conn net.Conn) {
 				case "LOCAL":
 					qm = localQueryMode
 				}
-				writeOk(OK)
+				err := s.writeOk(OK)
+				if err != nil {
+					atlas.Logger.Error("Error writing ok", zap.Error(err))
+					break
+				}
 				continue
 			}
 			// todo: prevent certain pragma commands from executing; once we know what they are
 
-			ctx = maybeStartTransaction(ctx, emptyCommandString)
-			if hasFatalled {
+			err := s.maybeStartTransaction(ctx, emptyCommandString)
+			if err != nil {
+				atlas.Logger.Error("Error starting transaction", zap.Error(err))
 				break
 			}
-			stmt, err := sql.Prepare(command.raw)
+			if s.hasFatalError {
+				break
+			}
+			stmt, err := s.sql.Prepare(command.raw)
 			if err != nil {
-				writeError(Warning, err)
+				e := s.writeError(Warning, err)
+				if e != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+					break
+				}
 				continue
 			}
-			executeQuery(stmt)
+			err = s.executeQuery(stmt)
+			if err != nil {
+				e := s.writeError(Warning, err)
+				if e != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+					break
+				}
+				continue
+			}
 			err = stmt.Finalize()
 			if err != nil {
-				writeError(Warning, err)
+				e := s.writeError(Warning, err)
+				if e != nil {
+					atlas.Logger.Error("Error writing error", zap.Error(errors.Join(err, e)))
+					break
+				}
 				continue
 			}
-			writeOk(OK)
+			err = s.writeOk(OK)
+			if err != nil {
+				atlas.Logger.Error("Error writing ok", zap.Error(err))
+				break
+			}
 		default:
-			writeError(Warning, errors.New("Unknown command "+command.selectNormalizedCommand(0)))
+			err := s.writeError(Warning, errors.New("Unknown command "+command.selectNormalizedCommand(0)))
+			if err != nil {
+				atlas.Logger.Error("Error writing error", zap.Error(err))
+				break
+			}
 		}
 
-		if hasFatalled {
+		if s.hasFatalError {
 			break
 		}
 	}

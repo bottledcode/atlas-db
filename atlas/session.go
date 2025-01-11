@@ -22,7 +22,6 @@ import (
 	"context"
 	"fmt"
 	"go.uber.org/zap"
-	"os"
 	"strings"
 	"time"
 	"zombiezen.com/go/sqlite"
@@ -30,42 +29,35 @@ import (
 
 var Logger *zap.Logger
 
-type sessionKeyType struct{}
-
-var sessionKey = sessionKeyType{}
-
-func GetCurrentSession(ctx context.Context) *sqlite.Session {
-	return ctx.Value(sessionKey).(*sqlite.Session)
-}
-
 // InitializeSession creates a new session for the provided SQLite connection and attaches all tables with a replication
 // level of "regional" or "global" to it. It returns the updated context with the session attached. If an error occurs
 // during session creation or table attachment, it returns the original context and the error.
-func InitializeSession(ctx context.Context, conn *sqlite.Conn) (context.Context, error) {
+func InitializeSession(ctx context.Context, conn *sqlite.Conn) (*sqlite.Session, error) {
 	var err error
 	session, err := conn.CreateSession("")
 	if err != nil {
-		return ctx, err
+		return nil, err
 	}
 
 	m, err := MigrationsPool.Take(ctx)
 	if err != nil {
-		return ctx, err
+		return nil, err
 	}
 	defer MigrationsPool.Put(m)
 
 	results, err := ExecuteSQL(ctx, "select name from tables where replication_level in ('regional', 'global')", m, false)
 	if err != nil {
-		return ctx, err
+		return nil, err
 	}
 	for _, row := range results.Rows {
 		tableName := row.GetColumn("name").GetString()
 		if err = session.Attach(tableName); err != nil {
-			return ctx, err
+			session.Delete()
+			return nil, err
 		}
 	}
 
-	return context.WithValue(ctx, sessionKey, session), nil
+	return session, nil
 }
 
 type ValueColumn interface {
@@ -327,37 +319,4 @@ func CaptureChanges(query string, db *sqlite.Conn, output bool, params ...Param)
 	}
 
 	return rows, nil
-}
-
-// WritePatchset creates a file named "patchset.txt" and writes the current SQLite session's changeset to it. It retrieves the session from the provided context and handles potential errors during file creation or changeset writing. If an error occurs during file creation or writing the changeset, it prints an error message and returns.
-func WritePatchset(ctx context.Context) {
-	file, err := os.Create("patchset.txt")
-	if err != nil {
-		panic(err)
-	}
-	defer file.Close()
-
-	session := GetCurrentSession(ctx)
-
-	if err := session.WriteChangeset(file); err != nil {
-		fmt.Println("Error writing patchset:", err)
-		return
-	}
-	fmt.Println("Patchset written to patchset.txt")
-}
-
-func ApplyPatchset(db *sqlite.Conn) {
-	file, err := os.Open("patchset.txt")
-	if err != nil {
-		fmt.Println("Error opening patchset:", err)
-		return
-	}
-
-	err = db.ApplyChangeset(file, nil, func(conflictType sqlite.ConflictType, iterator *sqlite.ChangesetIterator) sqlite.ConflictAction {
-		fmt.Println("Conflict detected:", conflictType)
-		return sqlite.ChangesetReplace
-	})
-	if err != nil {
-		fmt.Println("Error applying patchset:", err)
-	}
 }

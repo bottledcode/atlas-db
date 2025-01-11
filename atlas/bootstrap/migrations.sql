@@ -41,7 +41,9 @@ create table nodes
     rtt        int     not null
 );
 
-/* Tables represent tracked and replicated tables in the cluster */
+/* Tables represent tracked and replicated tables in the cluster; the lack of foreign keys is important!
+   During cluster bootstrap, we do not yet have any data anywhere, so we need to be able to bootstrap the cluster.
+   Additionally, a node may receive a table with an owner that it has not yet received information about! */
 create table tables
 (
     /* The fully qualified name of the table */

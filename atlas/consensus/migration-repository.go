@@ -20,6 +20,7 @@ package consensus
 
 import (
 	"context"
+	"errors"
 	"github.com/bottledcode/atlas-db/atlas"
 	"zombiezen.com/go/sqlite"
 )
@@ -61,6 +62,10 @@ func (m *migrationRepository) GetNextVersion(table string) (int64, error) {
 }
 
 func (m *migrationRepository) GetMigrationVersion(version *MigrationVersion) ([]*Migration, error) {
+	if version == nil {
+		return nil, errors.New("version is nil")
+	}
+
 	results, err := atlas.ExecuteSQL(m.ctx, `
 select table_id, table_version, version, committed, batch_part, by_node_id, command, data
 from migrations

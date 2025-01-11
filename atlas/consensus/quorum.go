@@ -126,6 +126,13 @@ func (q *QuorumNode) JoinCluster(ctx context.Context, in *Node, opts ...grpc.Cal
 }
 
 func (q *QuorumNode) Gossip(ctx context.Context, in *GossipMigration, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	var err error
+	if q.client == nil {
+		q.client, err, q.closer = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		if err != nil {
+			return nil, err
+		}
+	}
 	return q.client.Gossip(ctx, in, opts...)
 }
 

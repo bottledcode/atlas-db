@@ -75,17 +75,10 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 				return nil, err
 			}
 
-			for _, g := range group.GetTables() {
-				var group *TableGroup
-				group, err = tr.GetGroup(g)
-				if err != nil {
-					return nil, err
-				}
-				// a new group must be empty
-				if len(group.GetTables()) > 0 {
-					err = errors.New("new group must be empty")
-					return nil, err
-				}
+			// a new group must be empty
+			if len(group.GetTables()) > 0 {
+				err = errors.New("new group must be empty")
+				return nil, err
 			}
 		}
 

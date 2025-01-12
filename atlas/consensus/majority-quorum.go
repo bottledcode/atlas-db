@@ -49,6 +49,10 @@ func (m *majorityQuorum) Gossip(ctx context.Context, in *GossipMigration, opts .
 }
 
 func (m *majorityQuorum) StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipResponse, error) {
+	if in.GetTable().GetGroup() != "" {
+		return nil, errors.New("cannot steal ownership of a table in a group")
+	}
+
 	// phase 1a
 	results := make([]*StealTableOwnershipResponse, len(m.q1))
 	errs := make([]error, len(m.q1))

@@ -147,6 +147,7 @@ func TestDoBootstrap(t *testing.T) {
 }
 
 func TestInitializeMaybe(t *testing.T) {
+	atlas.Logger, _ = zap.NewDevelopment()
 	f, cleanup := test.GetTempDb(t)
 	defer cleanup()
 	m, cleanup2 := test.GetTempDb(t)
@@ -155,7 +156,6 @@ func TestInitializeMaybe(t *testing.T) {
 		DbFilename:   f,
 		MetaFilename: m,
 	})
-	atlas.Logger, _ = zap.NewDevelopment()
 
 	ctx := context.Background()
 

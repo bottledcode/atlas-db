@@ -67,7 +67,7 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 			return nil, err
 		}
 
-		if req.GetTable().GetIsGroupMeta() {
+		if req.GetTable().GetType() == TableType_group {
 			// ensure the group is empty
 			var group *TableGroup
 			group, err = tr.GetGroup(req.GetTable().GetName())
@@ -149,7 +149,7 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 
 	// if this table is a group, all tables in the group must be stolen
 	var missing []*Migration
-	if existingTable.GetIsGroupMeta() {
+	if existingTable.GetType() == TableType_group {
 		mr := GetDefaultMigrationRepository(ctx, conn)
 
 		// first we update the table to the new owner

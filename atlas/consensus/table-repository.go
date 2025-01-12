@@ -41,6 +41,13 @@ type TableRepository interface {
 	UpdateGroup(group *TableGroup) error
 	// InsertGroup inserts a group.
 	InsertGroup(group *TableGroup) error
+	// GetShard returns a shard of a table, given the principles.
+	GetShard(table *Table, principles []*Principle) (*Shard, error)
+	// UpdateShard updates a shard metadata.
+	UpdateShard(table *Shard) error
+	// InsertShard inserts a shard metadata.
+	// Ensure principles are set and the shard meta-name will be updated before inserting.
+	InsertShard(table *Shard) error
 }
 
 func GetDefaultTableRepository(ctx context.Context, conn *sqlite.Conn) TableRepository {
@@ -53,6 +60,76 @@ func GetDefaultTableRepository(ctx context.Context, conn *sqlite.Conn) TableRepo
 type tableRepository struct {
 	ctx  context.Context
 	conn *sqlite.Conn
+}
+
+func (r *tableRepository) hashPrinciples(principles []*Principle, order []string) (string, error) {
+	p := make(map[string]string, len(principles))
+	for _, principle := range principles {
+		p[principle.GetName()] = principle.GetValue()
+	}
+
+	var hashStr strings.Builder
+
+	for _, o := range order {
+		if v, ok := p[o]; ok {
+			hashStr.WriteString(v)
+		} else {
+			return "", errors.New("missing principle")
+		}
+	}
+
+	// hash the string using a simple Larson's hash (very fast for small strings and low collision rate)
+	var hash uint32
+	str := hashStr.String()
+	for _, b := range str {
+		hash = hash*101 + uint32(b)
+	}
+
+	// return the hash number as a string
+	chars := []rune{'Z', 'A', 'C', '2', 'B', '3', 'E', 'F', '4', 'G', 'H', '5', 'T', 'K', '6', '7', 'P', '8', 'R', 'S', '9', 'W', 'X', 'Y'}
+	hashStr.Reset()
+	for {
+		hashStr.WriteRune(chars[hash%24])
+		hash /= 24
+		if hash == 0 {
+			break
+		}
+	}
+	return hashStr.String(), nil
+}
+
+func (r *tableRepository) GetShard(table *Table, principles []*Principle) (*Shard, error) {
+	hash, err := r.hashPrinciples(principles, table.GetShardPrinciples())
+	if err != nil {
+		return nil, err
+	}
+	// retrieve the shard
+	shard, err := r.GetTable(table.GetName() + "_" + hash)
+	if err != nil {
+		return nil, err
+	}
+	if shard == nil {
+		return nil, nil
+	}
+	return &Shard{
+		Table:      table,
+		Shard:      shard,
+		Principles: principles,
+	}, nil
+}
+
+func (r *tableRepository) UpdateShard(table *Shard) error {
+	return r.UpdateTable(table.GetShard())
+}
+
+func (r *tableRepository) InsertShard(table *Shard) error {
+	hash, err := r.hashPrinciples(table.GetPrinciples(), table.GetTable().GetShardPrinciples())
+	if err != nil {
+		return err
+	}
+	table.GetShard().Name = table.GetTable().GetName() + "_" + hash
+
+	return r.InsertTable(table.GetShard())
 }
 
 func (r *tableRepository) GetGroup(name string) (*TableGroup, error) {
@@ -116,6 +193,7 @@ const (
 	TableCreatedAt         tableField = "created_at"
 	TableGroupName         tableField = "group_id"
 	TableTypeName          tableField = "table_type"
+	TableShardPrinciples   tableField = "shard_principles"
 )
 
 func (r *tableRepository) getTableParameters(table *Table, names ...tableField) []atlas.Param {
@@ -175,6 +253,11 @@ func (r *tableRepository) getTableParameters(table *Table, names ...tableField) 
 				Name:  "group_id",
 				Value: table.GetGroup(),
 			}
+		case TableShardPrinciples:
+			params[i] = atlas.Param{
+				Name:  "shard_principles",
+				Value: strings.Join(table.ShardPrinciples, ","),
+			}
 		default:
 			panic("unknown table field")
 		}
@@ -194,7 +277,8 @@ set version            = :version,
     restricted_regions = :restricted_regions,
     owner_node_id      = :owner_node_id,
     group_id           = :group_id,
-    table_type         = :table_type
+    table_type         = :table_type,
+    shard_principles   = :shard_principles
 where name = :name`,
 		r.conn,
 		false,
@@ -208,6 +292,7 @@ where name = :name`,
 			TableVersion,
 			TableGroupName,
 			TableTypeName,
+			TableShardPrinciples,
 		)...,
 	)
 	return err
@@ -217,8 +302,8 @@ func (r *tableRepository) InsertTable(table *Table) error {
 	_, err := atlas.ExecuteSQL(
 		r.ctx,
 		`
-insert into tables (name, owner_node_id, version, restricted_regions, allowed_regions, replication_level, created_at, table_type, group_id)
-values (:name, :owner_node_id, :version, :restricted_regions, :allowed_regions, :replication_level, :created_at, :table_type, :group_id)`,
+insert into tables (name, owner_node_id, version, restricted_regions, allowed_regions, replication_level, created_at, table_type, group_id, shard_principles)
+values (:name, :owner_node_id, :version, :restricted_regions, :allowed_regions, :replication_level, :created_at, :table_type, :group_id, :shard_principles)`,
 		r.conn,
 		false,
 		r.getTableParameters(
@@ -232,6 +317,7 @@ values (:name, :owner_node_id, :version, :restricted_regions, :allowed_regions, 
 			TableCreatedAt,
 			TableGroupName,
 			TableTypeName,
+			TableShardPrinciples,
 		)...,
 	)
 	return err
@@ -262,7 +348,8 @@ select name,
        n.active                                 as node_active,
        n.rtt                                    as node_rtt,
        group_id,
-       table_type
+       table_type,
+       shard_principles
 from tables t
          left join nodes n on t.owner_node_id = n.id
 where name = :name 
@@ -300,6 +387,7 @@ func (r *tableRepository) extractTableFromRow(result *atlas.Row) *Table {
 		RestrictedRegions: getCommaFields(result.GetColumn("restricted_regions").GetString()),
 		Type:              TableType(TableType_value[result.GetColumn("table_type").GetString()]),
 		Group:             groupName,
+		ShardPrinciples:   strings.Split(result.GetColumn("shard_principles").GetString(), ","),
 	}
 
 	if result.GetColumn("node_exists").GetBool() {

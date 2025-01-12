@@ -91,6 +91,18 @@ enum TableType {
   group = 1; // The table is a group meta table
   trigger = 2; // The table is a trigger
   view = 3; // The table is a view
+  sharded = 4; // The table is sharded
+}
+
+message Principle {
+  string name = 1; // The name of the principle
+  string value = 2; // The value of the principle
+}
+
+message Shard {
+  Table table = 1; // The table the shard belongs to
+  Table shard = 2; // The shard table
+  repeated Principle principles = 3; // The principles the shard is sharded by
 }
 
 message Table {
@@ -103,6 +115,7 @@ message Table {
   repeated string restrictedRegions = 7; // The regions the table data cannot be replicated to
   string group = 9; // The group the table belongs to
   TableType type = 10; // The type of the table
+  repeated string shardPrinciples = 11; // The principles the table is sharded by
 }
 
 message TableGroup {

@@ -80,6 +80,10 @@ select * from tables where group_id = :group_id
 
 	for _, result := range results.Rows {
 		table := r.extractTableFromRow(&result)
+		if table.GetName() == name {
+			// this might be an error, but we can just skip it now.
+			continue
+		}
 		group.Tables = append(group.Tables, table)
 	}
 

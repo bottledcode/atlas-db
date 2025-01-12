@@ -170,4 +170,4 @@ alter table tables
 alter table tables
     rename column table_type_new to table_type;
 alter table tables
-    add column shard_principles text default null;
+    add column shard_principles text default '' not null;

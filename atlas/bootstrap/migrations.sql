@@ -116,3 +116,9 @@ create table migrations
 
     primary key (table_id, table_version, version, batch_part, by_node_id)
 );
+/* Now we add the ability to have table groups in the cluster
+   Groups self-reference the tables table such that a group is tracked just like a table
+*/
+alter table tables add column group_id text default null;
+alter table tables add column is_group int default 0;
+create index idx_tables_group_id on tables (group_id);

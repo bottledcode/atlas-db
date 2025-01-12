@@ -94,6 +94,13 @@ message Table {
   int64 version = 5; // The version of the table
   repeated string allowedRegions = 6; // The regions the table data can be replicated to
   repeated string restrictedRegions = 7; // The regions the table data cannot be replicated to
+  bool isGroupMeta = 8; // Whether the table is a group meta table
+  string group = 9; // The group the table belongs to
+}
+
+message TableGroup {
+  Table details = 1; // The details of the group
+  repeated Table tables = 2; // The tables in the group
 }
 
 message StealTableOwnershipFailure {

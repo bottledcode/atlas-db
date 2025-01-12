@@ -120,3 +120,4 @@ create table migrations
    Groups self-reference the tables table such that a group is tracked just like a table
 */
 alter table tables add column group_id text default null references tables(name);
+alter table tables add column is_group int default 0;

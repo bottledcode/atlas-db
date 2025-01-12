@@ -1,7 +1,7 @@
 <component name="CopyrightManager">
   <settings default="Atlas">
     <module2copyright>
-      <element module="All" copyright="Atlas" />
+      <element module="Project Files" copyright="Atlas" />
     </module2copyright>
   </settings>
 </component>

@@ -121,3 +121,4 @@ create table migrations
 */
 alter table tables add column group_id text default null;
 alter table tables add column is_group int default 0;
+create index idx_tables_group_id on tables (group_id);

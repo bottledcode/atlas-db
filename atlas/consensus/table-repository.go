@@ -67,7 +67,10 @@ func (r *tableRepository) GetGroup(name string) (*TableGroup, error) {
 
 	results, err := atlas.ExecuteSQL(r.ctx, `
 select * from tables where group_id = :group_id
-`, r.conn, false, atlas.Param{})
+`, r.conn, false, atlas.Param{
+		Name:  "group_id",
+		Value: name,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +158,7 @@ func (r *tableRepository) getTableParameters(table *Table, names ...tableField) 
 		case TableIsGroupMeta:
 			params[i] = atlas.Param{
 				Name:  "is_group",
-				Value: table.IsGroupMeta,
+				Value: table.GetIsGroupMeta(),
 			}
 		case TableGroupName:
 			params[i] = atlas.Param{
@@ -272,6 +275,10 @@ where name = :name
 
 func (r *tableRepository) extractTableFromRow(result *atlas.Row) *Table {
 	replicationLevel := ReplicationLevel_value[result.GetColumn("replication_level").GetString()]
+	groupName := ""
+	if !result.GetColumn("group_id").IsNull() {
+		groupName = result.GetColumn("group_id").GetString()
+	}
 
 	table := &Table{
 		Name:              result.GetColumn("name").GetString(),
@@ -282,7 +289,7 @@ func (r *tableRepository) extractTableFromRow(result *atlas.Row) *Table {
 		AllowedRegions:    getCommaFields(result.GetColumn("allowed_regions").GetString()),
 		RestrictedRegions: getCommaFields(result.GetColumn("restricted_regions").GetString()),
 		IsGroupMeta:       result.GetColumn("is_group").GetBool(),
-		Group:             result.GetColumn("group_id").GetString(),
+		Group:             groupName,
 	}
 
 	if result.GetColumn("node_exists").GetBool() {

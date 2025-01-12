@@ -54,17 +54,32 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 
 	_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", conn, false)
 
-	tableRepo := GetDefaultTableRepository(ctx, conn)
-	existingTable, err := tableRepo.GetTable(req.GetTable().GetName())
+	tr := GetDefaultTableRepository(ctx, conn)
+	existingTable, err := tr.GetTable(req.GetTable().GetName())
 	if err != nil {
 		return nil, err
 	}
 
 	if existingTable == nil {
 		// this is a new table...
-		err = tableRepo.InsertTable(req.GetTable())
+		err = tr.InsertTable(req.GetTable())
 		if err != nil {
 			return nil, err
+		}
+
+		if req.GetTable().GetIsGroupMeta() {
+			// ensure the group is empty
+			var group *TableGroup
+			group, err = tr.GetGroup(req.GetTable().GetName())
+			if err != nil {
+				return nil, err
+			}
+
+			// a new group must be empty
+			if len(group.GetTables()) > 0 {
+				err = errors.New("new group must be empty")
+				return nil, err
+			}
 		}
 
 		_, err = atlas.ExecuteSQL(ctx, "COMMIT", conn, false)
@@ -132,17 +147,38 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 
 	// the ballot number is higher
 
-	atlas.Ownership.Remove(req.GetTable().GetName())
-	err = tableRepo.UpdateTable(req.GetTable())
-	if err != nil {
-		return nil, err
-	}
+	// if this table is a group, all tables in the group must be stolen
+	var missing []*Migration
+	if existingTable.GetIsGroupMeta() {
+		mr := GetDefaultMigrationRepository(ctx, conn)
 
-	migrationRepo := GetDefaultMigrationRepository(ctx, conn)
+		// first we update the table to the new owner
+		err = tr.UpdateTable(req.GetTable())
+		if err != nil {
+			return nil, err
+		}
 
-	missing, err := migrationRepo.GetUncommittedMigrations(req.GetTable())
-	if err != nil {
-		return nil, err
+		// then retrieve the group membership
+		var group *TableGroup
+		group, err = tr.GetGroup(existingTable.GetName())
+		if err != nil {
+			return nil, err
+		}
+
+		// and steal each table in the group
+		var m []*Migration
+		for _, t := range group.GetTables() {
+			m, err = s.stealTableOperation(tr, mr, t)
+			if err != nil {
+				return nil, err
+			}
+			missing = append(missing, m...)
+		}
+	} else {
+		missing, err = s.stealTableOperation(tr, GetDefaultMigrationRepository(ctx, conn), req.GetTable())
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	_, err = atlas.ExecuteSQL(ctx, "COMMIT", conn, false)
@@ -160,6 +196,22 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 		},
 	}, nil
 }
+
+func (s *Server) stealTableOperation(tr TableRepository, mr MigrationRepository, table *Table) ([]*Migration, error) {
+	atlas.Ownership.Remove(table.GetName())
+	err := tr.UpdateTable(table)
+	if err != nil {
+		return nil, err
+	}
+
+	missing, err := mr.GetUncommittedMigrations(table)
+	if err != nil {
+		return nil, err
+	}
+
+	return missing, nil
+}
+
 func (s *Server) WriteMigration(ctx context.Context, req *WriteMigrationRequest) (*WriteMigrationResponse, error) {
 	conn, err := atlas.MigrationsPool.Take(ctx)
 	if err != nil {

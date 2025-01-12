@@ -4,23 +4,25 @@
 
 This document specifies the text-based wire protocol for communication between clients and the distributed database system "Chronalys." The protocol supports a simplified and efficient communication model, ensuring compatibility across WAN and LAN environments. It provides guidelines for command structures, response formats, and SQL extensions for enhanced consistency, scalability, and optimized data operations.
 
-This specification addresses both the technical and practical aspects of client-server communication, offering a robust framework for achieving efficient distributed database operations. By adopting this protocol, systems can ensure secure, reliable, and performant interactions, catering to diverse application needs and deployment scenarios.
+This specification addresses both the technical and practical aspects of client-server communication, offering a robust framework for achieving efficient distributed database operations. By adopting this protocol, systems can ensure secure, reliable, and performant interactions, catering to diverse application needs and deployment scenarios. This includes flexible query execution, dynamic configuration, and robust error handling mechanisms that empower both developers and administrators to maintain highly available and resilient systems.
 
 ---
 
 ## 1. Terminology
 
-**Client**: A process that sends requests to the database server and receives corresponding responses.
+**Client**: A process that sends requests to the database server and receives corresponding responses. Clients interface with the server using a structured command-response mechanism defined by this protocol.
 
-**Server**: A process that receives client requests, processes them, and returns appropriate responses.
+**Server**: A process that receives client requests, processes them, and returns appropriate responses. The server coordinates data consistency, replication, and concurrency.
 
-**Command**: A structured textual instruction sent by the client to request an operation from the server.
+**Command**: A structured textual instruction sent by the client to request an operation from the server. Commands can range from simple data queries to administrative actions.
 
-**Response**: The server's reply to a client command, providing results or status information.
+**Response**: The server's reply to a client command, providing results or status information. Responses adhere to a well-defined format for clarity and consistency.
 
-**Frame**: A single communication unit, either a command or response, adhering to the protocol’s format.
+**Frame**: A single communication unit, either a command or response, adhering to the protocol’s format. Frames are the foundational building blocks of communication in this protocol.
 
-**Stream**: A mechanism for returning large datasets incrementally, allowing clients to fetch results in manageable chunks.
+**Stream**: A mechanism for returning large datasets incrementally, allowing clients to fetch results in manageable chunks. Streams are designed to optimize performance in distributed environments.
+
+**Principle**: A context identifier used in row-level security to associate operations with a specific client or user context. Principles ensure fine-grained access control for sharded tables.
 
 ---
 
@@ -29,6 +31,8 @@ This specification addresses both the technical and practical aspects of client-
 The protocol is a line-based text protocol utilizing UTF-8 encoding. Commands and responses are exchanged as discrete frames, each terminated by a carriage return and newline sequence (\r\n). This format ensures compatibility and ease of parsing across various platforms and programming environments.
 
 Each frame is designed to be lightweight and human-readable, simplifying debugging and interaction. Commands are synchronous by default, with support for asynchronous extensions where applicable. Fields within a frame are separated by whitespace, ensuring clear delineation of arguments.
+
+Advanced features, such as row-level security and data streaming, integrate seamlessly into this protocol, offering extended functionality without compromising simplicity.
 
 ---
 
@@ -71,6 +75,8 @@ Each frame is designed to be lightweight and human-readable, simplifying debuggi
 
 Commands issued by clients are processed by the server in real-time. The server returns responses immediately unless the command specifies a deferred operation. Communication remains stateless unless explicitly required by the application context.
 
+The protocol ensures that commands and their responses are tightly coupled, reducing ambiguity and simplifying troubleshooting. By leveraging structured error handling, clients can quickly identify and address issues.
+
 ---
 
 ## 4. Frame Structure
@@ -81,7 +87,7 @@ Commands issued by clients are processed by the server in real-time. The server 
 <COMMAND> <ARGUMENTS>\r\n
 ```
 
-Commands consist of a keyword (`COMMAND`) followed by space-separated arguments. Responses adhere to the same structure, ensuring consistency and simplicity.
+Commands consist of a keyword (`COMMAND`) followed by space-separated arguments. Responses adhere to the same structure, ensuring consistency and simplicity. Each frame is independently parseable, minimizing the need for context-specific rules.
 
 ### 4.2 Command Frames
 
@@ -89,26 +95,31 @@ Commands consist of a keyword (`COMMAND`) followed by space-separated arguments.
    ```
    PREPARE [ID] [RAW QUERY]\r\n
    ```
+   Prepares a query for execution, associating it with an identifier.
 
 2. **Execute a Prepared Query:**
    ```
    EXECUTE [ID]\r\n
    ```
+   Executes a previously prepared query.
 
 3. **Perform a One-Off Query:**
    ```
    QUERY [RAW QUERY]\r\n
    ```
+   Executes a single query without preparation.
 
 4. **Remove a Prepared Query:**
    ```
    FINALIZE [ID]\r\n
    ```
+   Removes a previously prepared query from memory.
 
 5. **Bind a Value to a Prepared Query:**
    ```
    BIND [ID] [PARAM] [TYPE] [VALUE]\r\n
    ```
+   Binds a value to a parameter in a prepared query.
 
 6. **Transaction Commands:**
    ```
@@ -118,19 +129,26 @@ Commands consist of a keyword (`COMMAND`) followed by space-separated arguments.
    SAVEPOINT [name]\r\n
    RELEASE [name]\r\n
    ```
+   Manages database transactions, including savepoints for partial rollbacks.
 
 7. **Pragmas:**
    ```
    PRAGMA [name]=[VALUE]\r\n
    PRAGMA [name]\r\n
    ```
-   Pragmas are used to query or configure node-specific settings.
+   Configures or queries node-specific settings.
 
 8. **Principle Command:**
    ```
    PRINCIPLE [principle_name] [id]\r\n
    ```
    Sets the principle context for row-level security. A valid principle must be established before interacting with tables that use row-level security.
+
+9. **Scroll Command:**
+   ```
+   SCROLL [StreamID] [Count]\r\n
+   ```
+   Fetches a specific number of rows from a stream identified by `StreamID`.
 
 ---
 
@@ -141,6 +159,8 @@ Commands consist of a keyword (`COMMAND`) followed by space-separated arguments.
 ```
 <STATUS> <MESSAGE>\r\n
 ```
+
+Responses include a status code and an optional message. Additional metadata or data may follow in subsequent frames.
 
 ### 5.2 Common Status Codes
 
@@ -187,7 +207,7 @@ To ensure the connection remains active, the protocol supports a heartbeat mecha
    PONG\r\n
    ```
 
-Heartbeat intervals are configurable, allowing flexibility based on application requirements.
+Heartbeat intervals are configurable, allowing flexibility based on application requirements. Failure to respond to a heartbeat can result in connection termination.
 
 ---
 

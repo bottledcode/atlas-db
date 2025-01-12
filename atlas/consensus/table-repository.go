@@ -29,11 +29,17 @@ import (
 )
 
 type TableRepository interface {
+	// GetTable returns a table by name.
 	GetTable(name string) (*Table, error)
+	// UpdateTable updates a table.
 	UpdateTable(table *Table) error
+	// InsertTable inserts a table.
 	InsertTable(table *Table) error
+	// GetGroup returns a group by name.
 	GetGroup(name string) (*TableGroup, error)
+	// UpdateGroup updates a group.
 	UpdateGroup(group *TableGroup) error
+	// InsertGroup inserts a group.
 	InsertGroup(group *TableGroup) error
 }
 
@@ -57,7 +63,7 @@ func (r *tableRepository) GetGroup(name string) (*TableGroup, error) {
 	if details == nil {
 		return nil, nil
 	}
-	if !details.GetIsGroupMeta() {
+	if details.GetType() != TableType_group {
 		return nil, errors.New("not a group")
 	}
 
@@ -108,8 +114,8 @@ const (
 	TableRestrictedRegions tableField = "restricted_regions"
 	TableOwnerNodeId       tableField = "owner_node_id"
 	TableCreatedAt         tableField = "created_at"
-	TableIsGroupMeta       tableField = "is_group"
 	TableGroupName         tableField = "group_id"
+	TableTypeName          tableField = "table_type"
 )
 
 func (r *tableRepository) getTableParameters(table *Table, names ...tableField) []atlas.Param {
@@ -159,10 +165,10 @@ func (r *tableRepository) getTableParameters(table *Table, names ...tableField) 
 				Name:  "created_at",
 				Value: table.CreatedAt.AsTime(),
 			}
-		case TableIsGroupMeta:
+		case TableTypeName:
 			params[i] = atlas.Param{
-				Name:  "is_group",
-				Value: table.GetIsGroupMeta(),
+				Name:  "table_type",
+				Value: table.GetType().String(),
 			}
 		case TableGroupName:
 			params[i] = atlas.Param{
@@ -188,7 +194,7 @@ set version            = :version,
     restricted_regions = :restricted_regions,
     owner_node_id      = :owner_node_id,
     group_id           = :group_id,
-    is_group           = :is_group
+    table_type         = :table_type
 where name = :name`,
 		r.conn,
 		false,
@@ -201,7 +207,7 @@ where name = :name`,
 			TableName,
 			TableVersion,
 			TableGroupName,
-			TableIsGroupMeta,
+			TableTypeName,
 		)...,
 	)
 	return err
@@ -211,8 +217,8 @@ func (r *tableRepository) InsertTable(table *Table) error {
 	_, err := atlas.ExecuteSQL(
 		r.ctx,
 		`
-insert into tables (name, owner_node_id, version, restricted_regions, allowed_regions, replication_level, created_at, is_group, group_id)
-values (:name, :owner_node_id, :version, :restricted_regions, :allowed_regions, :replication_level, :created_at, :is_group, :group_id)`,
+insert into tables (name, owner_node_id, version, restricted_regions, allowed_regions, replication_level, created_at, table_type, group_id)
+values (:name, :owner_node_id, :version, :restricted_regions, :allowed_regions, :replication_level, :created_at, :table_type, :group_id)`,
 		r.conn,
 		false,
 		r.getTableParameters(
@@ -225,7 +231,7 @@ values (:name, :owner_node_id, :version, :restricted_regions, :allowed_regions, 
 			TableReplicationLevel,
 			TableCreatedAt,
 			TableGroupName,
-			TableIsGroupMeta,
+			TableTypeName,
 		)...,
 	)
 	return err
@@ -256,7 +262,7 @@ select name,
        n.active                                 as node_active,
        n.rtt                                    as node_rtt,
        group_id,
-       is_group
+       table_type
 from tables t
          left join nodes n on t.owner_node_id = n.id
 where name = :name 
@@ -292,7 +298,7 @@ func (r *tableRepository) extractTableFromRow(result *atlas.Row) *Table {
 		Version:           result.GetColumn("version").GetInt(),
 		AllowedRegions:    getCommaFields(result.GetColumn("allowed_regions").GetString()),
 		RestrictedRegions: getCommaFields(result.GetColumn("restricted_regions").GetString()),
-		IsGroupMeta:       result.GetColumn("is_group").GetBool(),
+		Type:              TableType(TableType_value[result.GetColumn("table_type").GetString()]),
 		Group:             groupName,
 	}
 

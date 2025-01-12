@@ -122,3 +122,8 @@ create table migrations
 alter table tables add column group_id text default null;
 alter table tables add column is_group int default 0;
 create index idx_tables_group_id on tables (group_id);
+
+/* In the following migration, we add support for triggers and views */
+alter table tables add column table_type text default 'table' check ( table_type in ('table', 'trigger', 'view', 'group') );
+update tables set table_type = 'group' where is_group = 1;
+alter table tables drop column is_group;

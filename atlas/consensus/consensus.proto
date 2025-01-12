@@ -86,6 +86,13 @@ enum ReplicationLevel {
   local = 2; // Replicate the table within the node
 }
 
+enum TableType {
+  table = 0; // The table is a regular table
+  group = 1; // The table is a group meta table
+  trigger = 2; // The table is a trigger
+  view = 3; // The table is a view
+}
+
 message Table {
   string name = 1; // The name of the table
   ReplicationLevel replicationLevel = 2; // The replication level of the table
@@ -94,8 +101,8 @@ message Table {
   int64 version = 5; // The version of the table
   repeated string allowedRegions = 6; // The regions the table data can be replicated to
   repeated string restrictedRegions = 7; // The regions the table data cannot be replicated to
-  bool isGroupMeta = 8; // Whether the table is a group meta table
   string group = 9; // The group the table belongs to
+  TableType type = 10; // The type of the table
 }
 
 message TableGroup {

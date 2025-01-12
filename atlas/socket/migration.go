@@ -19,7 +19,7 @@
 package socket
 
 import (
-	"golang.org/x/net/context"
+	"context"
 	"zombiezen.com/go/sqlite"
 )
 

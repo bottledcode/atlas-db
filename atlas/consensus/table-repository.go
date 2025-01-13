@@ -32,22 +32,22 @@ type TableRepository interface {
 	// GetTable returns a table by name.
 	GetTable(name string) (*Table, error)
 	// UpdateTable updates a table.
-	UpdateTable(table *Table) error
+	UpdateTable(*Table) error
 	// InsertTable inserts a table.
-	InsertTable(table *Table) error
+	InsertTable(*Table) error
 	// GetGroup returns a group by name.
-	GetGroup(name string) (*TableGroup, error)
+	GetGroup(string) (*TableGroup, error)
 	// UpdateGroup updates a group.
-	UpdateGroup(group *TableGroup) error
+	UpdateGroup(*TableGroup) error
 	// InsertGroup inserts a group.
-	InsertGroup(group *TableGroup) error
+	InsertGroup(*TableGroup) error
 	// GetShard returns a shard of a table, given the principal.
-	GetShard(table *Table, principals []*Principal) (*Shard, error)
+	GetShard(*Table, []*Principal) (*Shard, error)
 	// UpdateShard updates a shard metadata.
-	UpdateShard(table *Shard) error
+	UpdateShard(*Shard) error
 	// InsertShard inserts a shard metadata.
 	// Ensure principals are set and the shard meta-name will be updated before inserting.
-	InsertShard(table *Shard) error
+	InsertShard(*Shard) error
 }
 
 func GetDefaultTableRepository(ctx context.Context, conn *sqlite.Conn) TableRepository {
@@ -98,13 +98,13 @@ func (r *tableRepository) hashPrincipals(principals []*Principal, order []string
 	return hashStr.String(), nil
 }
 
-func (r *tableRepository) GetShard(table *Table, principals []*Principal) (*Shard, error) {
-	hash, err := r.hashPrincipals(principals, table.GetShardPrincipals())
+func (r *tableRepository) GetShard(shard *Table, principals []*Principal) (*Shard, error) {
+	hash, err := r.hashPrincipals(principals, shard.GetShardPrincipals())
 	if err != nil {
 		return nil, err
 	}
 	// retrieve the shard
-	shard, err := r.GetTable(table.GetName() + "_" + hash)
+	shard, err := r.GetTable(shard.GetName() + "_" + hash)
 	if err != nil {
 		return nil, err
 	}
@@ -112,24 +112,24 @@ func (r *tableRepository) GetShard(table *Table, principals []*Principal) (*Shar
 		return nil, nil
 	}
 	return &Shard{
-		Table:      table,
+		Table:      shard,
 		Shard:      shard,
 		Principals: principals,
 	}, nil
 }
 
-func (r *tableRepository) UpdateShard(table *Shard) error {
-	return r.UpdateTable(table.GetShard())
+func (r *tableRepository) UpdateShard(shard *Shard) error {
+	return r.UpdateTable(shard.GetShard())
 }
 
-func (r *tableRepository) InsertShard(table *Shard) error {
-	hash, err := r.hashPrincipals(table.GetPrincipals(), table.GetTable().GetShardPrincipals())
+func (r *tableRepository) InsertShard(shard *Shard) error {
+	hash, err := r.hashPrincipals(shard.GetPrincipals(), shard.GetTable().GetShardPrincipals())
 	if err != nil {
 		return err
 	}
-	table.GetShard().Name = table.GetTable().GetName() + "_" + hash
+	shard.GetShard().Name = shard.GetTable().GetName() + "_" + hash
 
-	return r.InsertTable(table.GetShard())
+	return r.InsertTable(shard.GetShard())
 }
 
 func (r *tableRepository) GetGroup(name string) (*TableGroup, error) {

@@ -164,7 +164,8 @@ alter table tables
     add column table_type_new text default 'table' check ( table_type_new in ('table', 'trigger', 'view', 'group', 'sharded') );
 -- noinspection SqlWithoutWhere
 update tables
-set table_type_new = table_type;
+set table_type_new = table_type
+where table_type is not null;
 alter table tables
     drop column table_type;
 alter table tables

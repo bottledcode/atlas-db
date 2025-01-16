@@ -104,15 +104,15 @@ func (r *tableRepository) GetShard(shard *Table, principals []*Principal) (*Shar
 		return nil, err
 	}
 	// retrieve the shard
-	shard, err := r.GetTable(shard.GetName() + "_" + hash)
+	st, err := r.GetTable(shard.GetName() + "_" + hash)
 	if err != nil {
 		return nil, err
 	}
-	if shard == nil {
+	if st == nil {
 		return nil, nil
 	}
 	return &Shard{
-		Table:      shard,
+		Table:      st,
 		Shard:      shard,
 		Principals: principals,
 	}, nil

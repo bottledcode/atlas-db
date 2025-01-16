@@ -88,6 +88,7 @@ func CreateTable(c commands.Command) ([]*consensus.Table, error) {
 	}
 
 	level := consensus.ReplicationLevel_global
+	tableType := consensus.TableType_table
 
 	switch l {
 	case "GLOBAL": // global table; the default
@@ -99,8 +100,25 @@ func CreateTable(c commands.Command) ([]*consensus.Table, error) {
 		level = consensus.ReplicationLevel_local
 		c = c.ReplaceCommand("CREATE LOCAL", "CREATE")
 	case "TABLE": // global table; the default
+		tableType = consensus.TableType_table
+	case "TRIGGER":
+		tableType = consensus.TableType_trigger
+	case "VIEW":
+		tableType = consensus.TableType_view
 	default:
 		return nil, errors.New("CREATE TABLE: unknown replication level")
+	}
+
+	// and now, determine the type of table
+	switch l, _ = c.SelectNormalizedCommand(CreateTableTableOrReplication); l {
+	case "TABLE":
+		tableType = consensus.TableType_table
+	case "TRIGGER":
+		tableType = consensus.TableType_trigger
+	case "VIEW":
+		tableType = consensus.TableType_view
+	default:
+		return nil, errors.New("CREATE TABLE: unknown table type")
 	}
 
 	name, _ := c.SelectNormalizedCommand(CreateTableNameOrIfNotExists)
@@ -152,10 +170,11 @@ func CreateTable(c commands.Command) ([]*consensus.Table, error) {
 		groups = append(groups, "")
 	}
 
-	t := consensus.TableType_table
-	if len(shards) > 0 {
-		t = consensus.TableType_sharded
+	if len(shards) > 0 && tableType == consensus.TableType_table {
+		tableType = consensus.TableType_sharded
 		// todo: potentially modify the query to include the shard key?
+	} else if len(shards) > 0 && tableType != consensus.TableType_table {
+		return nil, errors.New("CREATE TABLE: sharded tables can only be of type TABLE")
 	}
 
 	tables = append(tables, &consensus.Table{
@@ -167,7 +186,7 @@ func CreateTable(c commands.Command) ([]*consensus.Table, error) {
 		AllowedRegions:    nil,
 		RestrictedRegions: nil,
 		Group:             groups[0],
-		Type:              t,
+		Type:              tableType,
 		ShardPrincipals:   shards,
 	})
 

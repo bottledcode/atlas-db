@@ -95,14 +95,14 @@ enum TableType {
 }
 
 message Principal {
-  string name = 1; // The name of the principle
-  string value = 2; // The value of the principle
+  string name = 1; // The name of the principal
+  string value = 2; // The value of the principal
 }
 
 message Shard {
   Table table = 1; // The table the shard belongs to
   Table shard = 2; // The shard table
-  repeated Principal principals = 3; // The principles the shard is sharded by
+  repeated Principal principals = 3; // The principals the shard is sharded by
 }
 
 message Table {
@@ -115,7 +115,7 @@ message Table {
   repeated string restrictedRegions = 7; // The regions the table data cannot be replicated to
   string group = 9; // The group the table belongs to
   TableType type = 10; // The type of the table
-  repeated string shardPrincipals = 11; // The principles the table is sharded by
+  repeated string shardPrincipals = 11; // The principals the table is sharded by
 }
 
 message TableGroup {

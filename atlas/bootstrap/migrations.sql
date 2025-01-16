@@ -116,14 +116,59 @@ create table migrations
 
     primary key (table_id, table_version, version, batch_part, by_node_id)
 );
+
 /* Now we add the ability to have table groups in the cluster
    Groups self-reference the tables table such that a group is tracked just like a table
 */
-alter table tables add column group_id text default null;
-alter table tables add column is_group int default 0;
+alter table tables
+    add column group_id text default null;
+alter table tables
+    add column is_group int default 0;
 create index idx_tables_group_id on tables (group_id);
 
 /* In the following migration, we add support for triggers and views */
-alter table tables add column table_type text default 'table' check ( table_type in ('table', 'trigger', 'view', 'group') );
-update tables set table_type = 'group' where is_group = 1;
-alter table tables drop column is_group;
+alter table tables
+    add column table_type text default 'table' check ( table_type in ('table', 'trigger', 'view', 'group') );
+update tables
+set table_type = 'group'
+where is_group = 1 and table_type = 'table';
+alter table tables
+    drop column is_group;
+
+/*
+ * This file is part of Atlas-DB.
+ *
+ * Atlas-DB is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of
+ * the License, or (at your option) any later version.
+ *
+ * Atlas-DB is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
+ *
+ */
+
+/* In the following migration, we add support for sharded tables.
+   These tables are treated like table groups but are owned individually instead of collectively.
+   They should use `group_id` to reference the table they actually belong to -- shards may not be part of a group.
+   A sharded table (the parent table)
+   can be part of a group so long as all the group participants are sharded by the same principles
+   and is reflected in the group's `shard_principles` column.
+*/
+alter table tables
+    add column table_type_new text default 'table' check ( table_type_new in ('table', 'trigger', 'view', 'group', 'sharded') );
+-- noinspection SqlWithoutWhere
+update tables
+set table_type_new = table_type
+where table_type is not null;
+alter table tables
+    drop column table_type;
+alter table tables
+    rename column table_type_new to table_type;
+alter table tables
+    add column shard_principals text default '' not null;

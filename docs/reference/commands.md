@@ -2,37 +2,56 @@
 
 ## Abstract
 
-This document specifies the text-based wire protocol for communication between clients and the distributed database system "Chronalys." The protocol supports a simplified and efficient communication model, ensuring compatibility across WAN and LAN environments. It provides guidelines for command structures, response formats, and SQL extensions for enhanced consistency, scalability, and optimized data operations.
+This document specifies the text-based wire protocol for communication between clients and the distributed database
+system "Chronalys." The protocol supports a simplified and efficient communication model, ensuring compatibility across
+WAN and LAN environments. It provides guidelines for command structures, response formats, and SQL extensions for
+enhanced consistency, scalability, and optimized data operations.
 
-This specification addresses both the technical and practical aspects of client-server communication, offering a robust framework for achieving efficient distributed database operations. By adopting this protocol, systems can ensure secure, reliable, and performant interactions, catering to diverse application needs and deployment scenarios. This includes flexible query execution, dynamic configuration, and robust error handling mechanisms that empower both developers and administrators to maintain highly available and resilient systems.
+This specification addresses both the technical and practical aspects of client-server communication, offering a robust
+framework for achieving efficient distributed database operations. By adopting this protocol, systems can ensure secure,
+reliable, and performant interactions, catering to diverse application needs and deployment scenarios. This includes
+flexible query execution, dynamic configuration, and robust error handling mechanisms that empower both developers and
+administrators to maintain highly available and resilient systems.
 
 ---
 
 ## 1. Terminology
 
-**Client**: A process that sends requests to the database server and receives corresponding responses. Clients interface with the server using a structured command-response mechanism defined by this protocol.
+**Client**: A process that sends requests to the database server and receives corresponding responses. Clients interface
+with the server using a structured command-response mechanism defined by this protocol.
 
-**Server**: A process that receives client requests, processes them, and returns appropriate responses. The server coordinates data consistency, replication, and concurrency.
+**Server**: A process that receives client requests, processes them, and returns appropriate responses. The server
+coordinates data consistency, replication, and concurrency.
 
-**Command**: A structured textual instruction sent by the client to request an operation from the server. Commands can range from simple data queries to administrative actions.
+**Command**: A structured textual instruction sent by the client to request an operation from the server. Commands can
+range from simple data queries to administrative actions.
 
-**Response**: The server's reply to a client command, providing results or status information. Responses adhere to a well-defined format for clarity and consistency.
+**Response**: The server's reply to a client command, providing results or status information. Responses adhere to a
+well-defined format for clarity and consistency.
 
-**Frame**: A single communication unit, either a command or response, adhering to the protocol’s format. Frames are the foundational building blocks of communication in this protocol.
+**Frame**: A single communication unit, either a command or response, adhering to the protocol’s format. Frames are the
+foundational building blocks of communication in this protocol.
 
-**Stream**: A mechanism for returning large datasets incrementally, allowing clients to fetch results in manageable chunks. Streams are designed to optimize performance in distributed environments.
+**Stream**: A mechanism for returning large datasets incrementally, allowing clients to fetch results in manageable
+chunks. Streams are designed to optimize performance in distributed environments.
 
-**Principle**: A context identifier used in row-level security to associate operations with a specific client or user context. Principles ensure fine-grained access control for sharded tables.
+**Principle**: A context identifier used in row-level security to associate operations with a specific client or user
+context. Principles ensure fine-grained access control for sharded tables.
 
 ---
 
 ## 2. Protocol Overview
 
-The protocol is a line-based text protocol utilizing UTF-8 encoding. Commands and responses are exchanged as discrete frames, each terminated by a carriage return and newline sequence (\r\n). This format ensures compatibility and ease of parsing across various platforms and programming environments.
+The protocol is a line-based text protocol utilizing UTF-8 encoding. Commands and responses are exchanged as discrete
+frames, each terminated by a carriage return and newline sequence (\r\n). This format ensures compatibility and ease of
+parsing across various platforms and programming environments.
 
-Each frame is designed to be lightweight and human-readable, simplifying debugging and interaction. Commands are synchronous by default, with support for asynchronous extensions where applicable. Fields within a frame are separated by whitespace, ensuring clear delineation of arguments.
+Each frame is designed to be lightweight and human-readable, simplifying debugging and interaction. Commands are
+synchronous by default, with support for asynchronous extensions where applicable. Fields within a frame are separated
+by whitespace, ensuring clear delineation of arguments.
 
-Advanced features, such as row-level security and data streaming, integrate seamlessly into this protocol, offering extended functionality without compromising simplicity.
+Advanced features, such as row-level security and data streaming, integrate seamlessly into this protocol, offering
+extended functionality without compromising simplicity.
 
 ---
 
@@ -64,7 +83,8 @@ Advanced features, such as row-level security and data streaming, integrate seam
 
 3. **Session Ready**:
 
-    - Upon successful authentication, the server sends a `READY` frame, signaling that the session is active and commands can be issued.
+    - Upon successful authentication, the server sends a `READY` frame, signaling that the session is active and
+      commands can be issued.
 
    **Example:**
    ```
@@ -73,9 +93,12 @@ Advanced features, such as row-level security and data streaming, integrate seam
 
 ### 3.2 Command Execution
 
-Commands issued by clients are processed by the server in real-time. The server returns responses immediately unless the command specifies a deferred operation. Communication remains stateless unless explicitly required by the application context.
+Commands issued by clients are processed by the server in real-time. The server returns responses immediately unless the
+command specifies a deferred operation. Communication remains stateless unless explicitly required by the application
+context.
 
-The protocol ensures that commands and their responses are tightly coupled, reducing ambiguity and simplifying troubleshooting. By leveraging structured error handling, clients can quickly identify and address issues.
+The protocol ensures that commands and their responses are tightly coupled, reducing ambiguity and simplifying
+troubleshooting. By leveraging structured error handling, clients can quickly identify and address issues.
 
 ---
 
@@ -87,7 +110,9 @@ The protocol ensures that commands and their responses are tightly coupled, redu
 <COMMAND> <ARGUMENTS>\r\n
 ```
 
-Commands consist of a keyword (`COMMAND`) followed by space-separated arguments. Responses adhere to the same structure, ensuring consistency and simplicity. Each frame is independently parseable, minimizing the need for context-specific rules.
+Commands consist of a keyword (`COMMAND`) followed by space-separated arguments. Responses adhere to the same structure,
+ensuring consistency and simplicity. Each frame is independently parseable, minimizing the need for context-specific
+rules.
 
 ### 4.2 Command Frames
 
@@ -142,7 +167,8 @@ Commands consist of a keyword (`COMMAND`) followed by space-separated arguments.
    ```
    PRINCIPLE [principle_name] [id]\r\n
    ```
-   Sets the principle context for row-level security. A valid principle must be established before interacting with tables that use row-level security.
+   Sets the principle context for row-level security. A valid principle must be established before interacting with
+   tables that use row-level security.
 
 9. **Scroll Command:**
    ```
@@ -207,7 +233,8 @@ To ensure the connection remains active, the protocol supports a heartbeat mecha
    PONG\r\n
    ```
 
-Heartbeat intervals are configurable, allowing flexibility based on application requirements. Failure to respond to a heartbeat can result in connection termination.
+Heartbeat intervals are configurable, allowing flexibility based on application requirements. Failure to respond to a
+heartbeat can result in connection termination.
 
 ---
 
@@ -216,8 +243,10 @@ Heartbeat intervals are configurable, allowing flexibility based on application 
 ### 7.1 CREATE TABLE with Replication Levels
 
 ```sql
-CREATE [LOCAL|REGIONAL|GLOBAL] TABLE <table_name> (<schema_definition>)
+CREATE
+[LOCAL|REGIONAL|GLOBAL] TABLE <table_name> (<schema_definition>)
 ```
+
 - Example:
   ```
   CREATE LOCAL TABLE Users (id INT PRIMARY KEY, name TEXT);
@@ -237,7 +266,8 @@ To ensure co-location and consistency, tables, views, and triggers can belong to
 
 ### 7.3 Row-Level Security with Principles
 
-Tables can enforce row-level security by associating rows with a `principle`. To enable this, the table must specify a shard by principle during creation.
+Tables can enforce row-level security by associating rows with a `principle`. To enable this, the table must specify a
+shard by principle during creation.
 
 - **Syntax:**
   ```sql
@@ -310,6 +340,7 @@ Tables can enforce row-level security by associating rows with a `principle`. To
 
 ## 10. Security Considerations
 
-1. **Encryption**: While TLS is unnecessary for local Unix pipes, it is strongly recommended for any network communication to prevent eavesdropping.
+1. **Encryption**: While TLS is unnecessary for local Unix pipes, it is strongly recommended for any network
+   communication to prevent eavesdropping.
 2. **Validation**: All inputs should be validated rigorously to prevent injection attacks or malformed queries.
 3. **Access Control**: Ensure robust authentication and role-based authorization mechanisms.

@@ -24,13 +24,39 @@ import (
 	"strings"
 )
 
+type Command interface {
+	CheckMinLen(expected int) error
+	CheckExactLen(expected int) error
+	SelectCommand(k int) string
+	SelectNormalizedCommand(k int) (string, bool)
+	ReplaceCommand(original, new string) Command
+	RemoveAfter(k int) Command
+	Normalized() string
+	Raw() string
+	String() string
+}
+
 type CommandString struct {
-	Normalized string
+	normalized string
 	parts      []string
-	Raw        string
+	raw        string
 	rawParts   []string
 }
 
+func (c *CommandString) String() string {
+	return c.raw
+}
+
+func (c *CommandString) Normalized() string {
+	return c.normalized
+}
+
+func (c *CommandString) Raw() string {
+	return c.raw
+}
+
+// CommandFromString creates a CommandString from a string,
+// normalizing it while still allowing access to the raw command
 func CommandFromString(command string) *CommandString {
 	normalized := strings.ToUpper(command)
 	parts := strings.Fields(normalized)
@@ -52,28 +78,30 @@ func CommandFromString(command string) *CommandString {
 	}
 
 	return &CommandString{
-		Normalized: normalized,
+		normalized: normalized,
 		parts:      parts,
-		Raw:        command,
+		raw:        command,
 		rawParts:   rawParts,
 	}
 }
 
+// CheckMinLen checks if the command has at least expected arguments
 func (c *CommandString) CheckMinLen(expected int) error {
 	if len(c.parts) < expected {
-		return errors.New(c.Raw + " expects " + strconv.Itoa(expected) + " arguments")
+		return errors.New(c.Raw() + " expects " + strconv.Itoa(expected) + " arguments")
 	}
 	return nil
 }
 
+// CheckExactLen checks if the command has exactly expected arguments
 func (c *CommandString) CheckExactLen(expected int) error {
 	if len(c.parts) != expected {
-		return errors.New(c.Raw + " expects exactly " + strconv.Itoa(expected) + " arguments")
+		return errors.New(c.Raw() + " expects exactly " + strconv.Itoa(expected) + " arguments")
 	}
 	return nil
 }
 
-// replaceCommand replaces command in query with newPrefix.
+// replaceCommand returns the raw command with a new prefix.
 func replaceCommand(query, command, newPrefix string) string {
 	fields := strings.Fields(command)
 	if len(fields) == 0 {
@@ -89,6 +117,29 @@ func replaceCommand(query, command, newPrefix string) string {
 	return newPrefix + query
 }
 
+// RemoveAfter returns a new CommandString with the last k commands removed.
+func (c *CommandString) RemoveAfter(k int) Command {
+	if k < 0 {
+		k = k * -1
+	}
+
+	fields := c.rawParts[:len(c.rawParts)-k]
+	if len(fields) == 0 {
+		return EmptyCommandString
+	}
+
+	query := c.Raw()
+	endpos := 0
+
+	for _, field := range fields {
+		// consume the field from the query
+		endpos = strings.Index(strings.ToUpper(query), strings.ToUpper(field)) + len(field)
+	}
+
+	return CommandFromString(query[:endpos])
+}
+
+// removeCommand returns the raw command with the first n commands removed, while retaining pertinent white space.
 func removeCommand(query string, num int) string {
 	fields := strings.Fields(query)
 	// count whitespace at the end of string
@@ -112,31 +163,45 @@ func removeCommand(query string, num int) string {
 	return query[1:]
 }
 
+// From returns a new SqlCommand with the first n commands removed.
 func (c *CommandString) From(start int) *SqlCommand {
-	str := removeCommand(c.Raw, start)
+	str := removeCommand(c.Raw(), start)
 	return &SqlCommand{
 		CommandString: *CommandFromString(str),
 	}
 }
 
+// SelectCommand returns the kth command from the raw command.
 func (c *CommandString) SelectCommand(k int) string {
 	return c.rawParts[k]
 }
 
+// SelectNormalizedCommand returns the kth command from the normalized command.
 func (c *CommandString) SelectNormalizedCommand(k int) (part string, ok bool) {
 	if k < len(c.parts) {
+		if k < 0 {
+			k = k * -1
+			if k > len(c.parts) {
+				return "", false
+			}
+
+			return c.parts[len(c.parts)-k], true
+		}
 		return c.parts[k], true
 	}
 	return "", false
 }
 
-func (c *CommandString) ReplaceCommand(original, new string) *CommandString {
-	str := replaceCommand(c.Raw, original, new)
+// ReplaceCommand returns the raw command with the first occurrence of the original command replaced by the new command.
+func (c *CommandString) ReplaceCommand(original, new string) Command {
+	str := replaceCommand(c.Raw(), original, new)
 	return CommandFromString(str)
 }
 
+// EmptyCommandString is an empty CommandString
 var EmptyCommandString *CommandString = &CommandString{}
 
+// NormalizedLen returns the number of parts in the normalized command.
 func (c *CommandString) NormalizedLen() int {
 	return len(c.parts)
 }

@@ -88,7 +88,7 @@ func TestSelectSpace(t *testing.T) {
 
 func TestSelectNormalizedCommand(t *testing.T) {
 	cs := CommandFromString("SELECT * FROM table")
-	part := cs.SelectNormalizedCommand(2)
+	part, _ := cs.SelectNormalizedCommand(2)
 
 	expected := "FROM"
 	assert.Equal(t, expected, part)
@@ -100,4 +100,12 @@ func TestReplaceCommand(t *testing.T) {
 
 	expected := "SELECT * FROM table"
 	assert.Equal(t, expected, newCs.Raw)
+}
+
+func TestRemoveAfter(t *testing.T) {
+	cs := CommandFromString("create table test (id int) group test")
+	newCs := cs.RemoveAfter(-2)
+
+	expected := "create table test (id int)"
+	assert.Equal(t, expected, newCs.Raw())
 }

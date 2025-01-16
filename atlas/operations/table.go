@@ -16,39 +16,10 @@
  *
  */
 
-package socket
+package operations
 
 import (
-	"context"
-	"github.com/bottledcode/atlas-db/atlas/commands"
-	"zombiezen.com/go/sqlite"
+	"github.com/bottledcode/atlas-db/atlas/socket"
 )
 
-func maybeWatchTable(ctx context.Context, query *commands.SqlCommand, session *sqlite.Session) error {
-	if s, _ := query.SelectNormalizedCommand(0); s != "CREATE" {
-		return nil
-	}
-
-	var tableName string
-
-	switch s, _ := query.SelectNormalizedCommand(1); s {
-	case "TABLE":
-		tableName, _ = query.SelectNormalizedCommand(2)
-	case "REGIONAL":
-		tableName, _ = query.SelectNormalizedCommand(3)
-	}
-
-	if tableName == "" {
-		// this is a local table
-
-		return nil
-	}
-
-	// watch the table
-	err := session.Attach(tableName)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
+func CreateTable(commandString *socket.CommandString) {}

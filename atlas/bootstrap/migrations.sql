@@ -131,7 +131,7 @@ alter table tables
     add column table_type text default 'table' check ( table_type in ('table', 'trigger', 'view', 'group') );
 update tables
 set table_type = 'group'
-where is_group = 1;
+where is_group = 1 and table_type = 'table';
 alter table tables
     drop column is_group;
 

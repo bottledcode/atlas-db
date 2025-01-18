@@ -133,3 +133,95 @@ func TestCreateTable(t *testing.T) {
 		})
 	}
 }
+
+func TestAlterTable(t *testing.T) {
+	tests := []struct {
+		name          string
+		command       string
+		existingTable *consensus.Table
+		expected      []*consensus.Table
+		err           string
+	}{
+		{
+			name:    "Missing table keyword",
+			command: "ALTER",
+			err:     "ALTER TABLE: missing table keyword",
+			existingTable: &consensus.Table{
+				Name: "test",
+			},
+		},
+		{
+			name:    "Missing table name",
+			command: "ALTER TABLE",
+			err:     "ALTER TABLE: missing table name",
+			existingTable: &consensus.Table{
+				Name: "test",
+			},
+		},
+		{
+			name:    "Table does not exist",
+			command: "ALTER TABLE test ADD GROUP group1",
+			err:     "ALTER TABLE: table does not exist",
+		},
+		{
+			name:    "Table type does not match",
+			command: "ALTER TABLE test ADD GROUP group1",
+			existingTable: &consensus.Table{
+				Name: "MAIN.TEST",
+				Type: consensus.TableType_view,
+			},
+			err: "ALTER TABLE: table type does not match an existing table",
+		},
+		{
+			name:    "Add group to table",
+			command: "ALTER TABLE test ADD GROUP group1",
+			existingTable: &consensus.Table{
+				Name: "MAIN.TEST",
+				Type: consensus.TableType_table,
+			},
+			expected: []*consensus.Table{
+				{
+					Name:             "GROUP1",
+					ReplicationLevel: consensus.ReplicationLevel_global,
+					Type:             consensus.TableType_group,
+					Version:          1,
+				},
+				{
+					Name:  "MAIN.TEST",
+					Type:  consensus.TableType_table,
+					Group: "GROUP1",
+				},
+			},
+		},
+		{
+			name:    "Drop group from table",
+			command: "ALTER TABLE test DROP GROUP group1",
+			existingTable: &consensus.Table{
+				Name:  "MAIN.TEST",
+				Type:  consensus.TableType_table,
+				Group: "GROUP1",
+			},
+			expected: []*consensus.Table{
+				{
+					Name:  "MAIN.TEST",
+					Type:  consensus.TableType_table,
+					Group: "",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := commands.CommandFromString(tt.command)
+			tables, err := operations.AlterTable(cmd, tt.existingTable)
+
+			if tt.err != "" {
+				assert.EqualError(t, err, tt.err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expected, tables)
+			}
+		})
+	}
+}

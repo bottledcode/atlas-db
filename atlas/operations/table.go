@@ -34,6 +34,14 @@ const (
 	CreateTableShardName          = -1
 )
 
+const (
+	AlterTableType      = 1
+	AlterTableName      = 2
+	AlterTableAddDrop   = 3
+	AlterTableGroup     = 4
+	AlterTableGroupName = 5
+)
+
 func extractGroup(c commands.Command) (string, commands.Command) {
 	g, ok := c.SelectNormalizedCommand(CreateTableGroup)
 	if !ok {
@@ -191,4 +199,101 @@ func CreateTable(c commands.Command) ([]*consensus.Table, error) {
 	})
 
 	return tables, nil
+}
+
+// AlterTable parses a SQL query and creates an appropriate Table(s) object for proposing to the cluster.
+// It accepts a command structure like:
+// ALTER TABLE table_name [ADD|DROP] GROUP
+func AlterTable(c commands.Command, existingTable *consensus.Table) ([]*consensus.Table, error) {
+	if existingTable == nil {
+		return nil, errors.New("ALTER TABLE: table does not exist")
+	}
+
+	// get the table type
+	t, ok := c.SelectNormalizedCommand(AlterTableType)
+	if !ok {
+		return nil, errors.New("ALTER TABLE: missing table keyword")
+	}
+	switch t {
+	case "TABLE":
+		if existingTable.Type != consensus.TableType_table {
+			return nil, errors.New("ALTER TABLE: table type does not match an existing table")
+		}
+	case "TRIGGER":
+		if existingTable.Type != consensus.TableType_trigger {
+			return nil, errors.New("ALTER TABLE: table type does not match an existing table")
+		}
+	case "VIEW":
+		if existingTable.Type != consensus.TableType_view {
+			return nil, errors.New("ALTER TABLE: table type does not match an existing table")
+		}
+	default:
+		return []*consensus.Table{existingTable}, nil
+	}
+
+	// now extract the table name
+	name, ok := c.SelectNormalizedCommand(AlterTableName)
+	name = c.NormalizeName(name)
+	if !ok {
+		return nil, errors.New("ALTER TABLE: missing table name")
+	}
+	if existingTable.Name != name {
+		return nil, errors.New("ALTER TABLE: table name does not match an existing table")
+	}
+
+	// get the operation
+	op, ok := c.SelectNormalizedCommand(AlterTableAddDrop)
+	if !ok {
+		return nil, errors.New("ALTER TABLE: missing ADD or DROP keyword")
+	}
+
+	var tables []*consensus.Table
+
+	if op == "ADD" {
+		// get the group name
+		group, ok := c.SelectNormalizedCommand(AlterTableGroup)
+		if ok && group == "GROUP" {
+			// get the group name
+			groupName, ok := c.SelectNormalizedCommand(AlterTableGroupName)
+			if !ok {
+				return nil, errors.New("ALTER TABLE: missing group name")
+			}
+			existingTable.Group = groupName
+
+			tables = append(tables, &consensus.Table{
+				Name:              groupName,
+				ReplicationLevel:  consensus.ReplicationLevel_global,
+				Owner:             nil,
+				CreatedAt:         nil,
+				Version:           1,
+				AllowedRegions:    nil,
+				RestrictedRegions: nil,
+				Group:             "",
+				Type:              consensus.TableType_group,
+				ShardPrincipals:   nil,
+			}, existingTable)
+
+			return tables, nil
+		}
+	}
+
+	if op == "DROP" {
+		// get the group name
+		group, ok := c.SelectNormalizedCommand(AlterTableGroup)
+		if ok && group == "GROUP" {
+			groupName, ok := c.SelectNormalizedCommand(AlterTableGroupName)
+			if !ok {
+				return nil, errors.New("ALTER TABLE: missing group name")
+			}
+
+			if groupName != existingTable.Group {
+				return nil, errors.New("ALTER TABLE: group name does not match an existing group")
+			}
+
+			existingTable.Group = ""
+			return []*consensus.Table{existingTable}, nil
+		}
+	}
+
+	return []*consensus.Table{existingTable}, nil
 }

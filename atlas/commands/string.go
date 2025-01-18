@@ -30,6 +30,7 @@ type Command interface {
 	SelectCommand(k int) string
 	SelectNormalizedCommand(k int) (string, bool)
 	ReplaceCommand(original, new string) Command
+	NormalizeName(string) string
 	RemoveAfter(k int) Command
 	Normalized() string
 	Raw() string
@@ -91,6 +92,19 @@ func (c *CommandString) CheckMinLen(expected int) error {
 		return errors.New(c.Raw() + " expects " + strconv.Itoa(expected) + " arguments")
 	}
 	return nil
+}
+
+func (c *CommandString) NormalizeName(name string) string {
+	if strings.Contains(name, ".") {
+		return name
+	}
+	if strings.HasPrefix(name, "ATLAS.") {
+		return name
+	}
+	if strings.HasPrefix(name, "MAIN.") {
+		return name
+	}
+	return "MAIN." + name
 }
 
 // CheckExactLen checks if the command has exactly expected arguments

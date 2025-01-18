@@ -27,6 +27,7 @@ import (
 	"github.com/bottledcode/atlas-db/atlas/commands"
 	"go.uber.org/zap"
 	"net"
+	"strconv"
 	"zombiezen.com/go/sqlite"
 )
 
@@ -37,6 +38,7 @@ type Socket struct {
 	inTransaction bool
 	session       *sqlite.Session
 	activeStmts   map[string]*sqlite.Stmt
+	streams       []*sqlite.Stmt
 }
 
 func (s *Socket) Cleanup() {
@@ -77,6 +79,26 @@ func (s *Socket) writeOk(code ErrorCode) error {
 		return err
 	}
 	return s.writer.Flush()
+}
+
+func (s *Socket) outputMetaHeaders(stmt *sqlite.Stmt) (err error) {
+	// output metadata
+	columns := stmt.ColumnCount()
+	if columns == 0 {
+		return nil
+	}
+	err = s.writeMessage("META COLUMN_COUNT " + strconv.Itoa(columns))
+	if err != nil {
+		return
+	}
+	for i := 0; i < columns; i++ {
+		name := stmt.ColumnName(i)
+		err = s.writeMessage("META COLUMN_NAME " + strconv.Itoa(i) + " " + name)
+		if err != nil {
+			return
+		}
+	}
+	return nil
 }
 
 const ProtoVersion = "1.0"
@@ -176,6 +198,24 @@ ready:
 				goto handleError
 			}
 			if err = prepare.Handle(s); err != nil {
+				goto handleError
+			}
+			if err = s.writeOk(OK); err != nil {
+				goto handleError
+			}
+		case "EXECUTE":
+			var execute *Execute
+			if execute, err = ParseExecute(cmd); err != nil {
+				goto handleError
+			}
+			if err = execute.Handle(s); err != nil {
+				goto handleError
+			}
+			streamId := len(s.streams) - 1
+			if err = s.writeMessage(fmt.Sprintf("STREAM %d", streamId)); err != nil {
+				goto handleError
+			}
+			if err = s.outputMetaHeaders(s.streams[streamId]); err != nil {
 				goto handleError
 			}
 			if err = s.writeOk(OK); err != nil {

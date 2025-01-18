@@ -132,10 +132,11 @@ func CreateTable(c commands.Command) ([]*consensus.Table, error) {
 	name, _ := c.SelectNormalizedCommand(CreateTableNameOrIfNotExists)
 	if name == "IF" {
 		// we have an "IF NOT EXISTS" clause
-		name = c.SelectCommand(CreateTableName)
+		name, _ = c.SelectNormalizedCommand(CreateTableName)
 	} else {
-		name = c.SelectCommand(CreateTableNameOrIfNotExists)
+		name, _ = c.SelectNormalizedCommand(CreateTableNameOrIfNotExists)
 	}
+	name = c.NormalizeName(name)
 
 	var groups []string
 	var shards []string

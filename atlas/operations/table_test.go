@@ -54,7 +54,7 @@ func TestCreateTable(t *testing.T) {
 			command: "CREATE GLOBAL TABLE test",
 			expected: []*consensus.Table{
 				{
-					Name:             "test",
+					Name:             "MAIN.TEST",
 					ReplicationLevel: consensus.ReplicationLevel_global,
 					Type:             consensus.TableType_table,
 					Version:          1,
@@ -66,7 +66,7 @@ func TestCreateTable(t *testing.T) {
 			command: "CREATE REGIONAL TABLE test",
 			expected: []*consensus.Table{
 				{
-					Name:             "test",
+					Name:             "MAIN.TEST",
 					ReplicationLevel: consensus.ReplicationLevel_regional,
 					Type:             consensus.TableType_table,
 					Version:          1,
@@ -78,7 +78,7 @@ func TestCreateTable(t *testing.T) {
 			command: "CREATE LOCAL TABLE test",
 			expected: []*consensus.Table{
 				{
-					Name:             "test",
+					Name:             "MAIN.TEST",
 					ReplicationLevel: consensus.ReplicationLevel_local,
 					Type:             consensus.TableType_table,
 					Version:          1,
@@ -96,7 +96,7 @@ func TestCreateTable(t *testing.T) {
 					Version:          1,
 				},
 				{
-					Name:             "test",
+					Name:             "MAIN.TEST",
 					ReplicationLevel: consensus.ReplicationLevel_global,
 					Group:            "GROUP1",
 					Type:             consensus.TableType_table,
@@ -109,7 +109,7 @@ func TestCreateTable(t *testing.T) {
 			command: "CREATE TABLE test SHARD BY PRINCIPAL key",
 			expected: []*consensus.Table{
 				{
-					Name:             "test",
+					Name:             "MAIN.TEST",
 					ReplicationLevel: consensus.ReplicationLevel_global,
 					Type:             consensus.TableType_sharded,
 					ShardPrincipals:  []string{"KEY"},

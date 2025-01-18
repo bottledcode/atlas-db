@@ -167,7 +167,7 @@ func (s *SH) maybeStartTransaction(ctx context.Context, command *commands.Comman
 			command = commands.CommandFromString("BEGIN")
 		}
 
-		_, err = atlas.ExecuteSQL(ctx, command.Raw, s.sql, false)
+		_, err = atlas.ExecuteSQL(ctx, command.Raw(), s.sql, false)
 		if err != nil {
 			atlas.Logger.Error("Error starting transaction", zap.Error(err))
 			e := s.writeError(Fatal, err)
@@ -388,7 +388,7 @@ func (s *SH) handleConnection(conn net.Conn, ctx context.Context) {
 
 				// determine if this is a schema changing migration
 				if sqlCommand.IsQueryChangeSchema() {
-					commandMigrations.Commands = append(commandMigrations.Commands, sqlCommand.Raw)
+					commandMigrations.Commands = append(commandMigrations.Commands, sqlCommand.Raw())
 					err = maybeWatchTable(ctx, sqlCommand, s.session)
 					if err != nil {
 						e := s.writeError(Warning, err)
@@ -402,7 +402,7 @@ func (s *SH) handleConnection(conn net.Conn, ctx context.Context) {
 				requiresMigration = true
 			}
 
-			stmt, err := s.sql.Prepare(sqlCommand.Raw)
+			stmt, err := s.sql.Prepare(sqlCommand.Raw())
 			if err != nil {
 				e := s.writeError(Warning, err)
 				if e != nil {
@@ -500,7 +500,7 @@ func (s *SH) handleConnection(conn net.Conn, ctx context.Context) {
 
 				// determine if this is a schema changing migration
 				if sqlCommand.IsQueryChangeSchema() {
-					commandMigrations.Commands = append(commandMigrations.Commands, sqlCommand.Raw)
+					commandMigrations.Commands = append(commandMigrations.Commands, sqlCommand.Raw())
 					err = maybeWatchTable(ctx, sqlCommand, s.session)
 					if err != nil {
 						e := s.writeError(Warning, err)
@@ -514,7 +514,7 @@ func (s *SH) handleConnection(conn net.Conn, ctx context.Context) {
 				requiresMigration = true
 			}
 
-			stmt, err := s.sql.Prepare(sqlCommand.Raw)
+			stmt, err := s.sql.Prepare(sqlCommand.Raw())
 			if err != nil {
 				e := s.writeError(Warning, err)
 				if e != nil {
@@ -605,11 +605,11 @@ func (s *SH) handleConnection(conn net.Conn, ctx context.Context) {
 				i, _ := strconv.Atoi(param)
 				switch sq, _ := command.SelectNormalizedCommand(3); sq {
 				case "TEXT":
-					stmt.BindText(i, command.From(4).Raw)
+					stmt.BindText(i, command.From(4).Raw())
 				case "INT":
 					fallthrough
 				case "INTEGER":
-					v, err := strconv.ParseInt(command.From(4).Raw, 10, 64)
+					v, err := strconv.ParseInt(command.From(4).Raw(), 10, 64)
 					if err != nil {
 						e := s.writeError(Warning, err)
 						if e != nil {
@@ -620,7 +620,7 @@ func (s *SH) handleConnection(conn net.Conn, ctx context.Context) {
 					}
 					stmt.BindInt64(i, v)
 				case "FLOAT":
-					v, err := strconv.ParseFloat(command.From(4).Raw, 64)
+					v, err := strconv.ParseFloat(command.From(4).Raw(), 64)
 					if err != nil {
 						e := s.writeError(Warning, err)
 						if e != nil {
@@ -669,11 +669,11 @@ func (s *SH) handleConnection(conn net.Conn, ctx context.Context) {
 			} else {
 				switch sq, _ := command.SelectNormalizedCommand(3); sq {
 				case "TEXT":
-					stmt.SetText(param, command.From(4).Raw)
+					stmt.SetText(param, command.From(4).Raw())
 				case "INT":
 					fallthrough
 				case "INTEGER":
-					v, err := strconv.ParseInt(command.From(4).Raw, 10, 64)
+					v, err := strconv.ParseInt(command.From(4).Raw(), 10, 64)
 					if err != nil {
 						e := s.writeError(Warning, err)
 						if e != nil {
@@ -684,7 +684,7 @@ func (s *SH) handleConnection(conn net.Conn, ctx context.Context) {
 					}
 					stmt.SetInt64(param, v)
 				case "FLOAT":
-					v, err := strconv.ParseFloat(command.From(4).Raw, 64)
+					v, err := strconv.ParseFloat(command.From(4).Raw(), 64)
 					if err != nil {
 						e := s.writeError(Warning, err)
 						if e != nil {
@@ -986,7 +986,7 @@ func (s *SH) handleConnection(conn net.Conn, ctx context.Context) {
 			if s.hasFatalError {
 				break
 			}
-			stmt, err := s.sql.Prepare(command.Raw)
+			stmt, err := s.sql.Prepare(command.Raw())
 			if err != nil {
 				e := s.writeError(Warning, err)
 				if e != nil {

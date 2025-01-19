@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/bottledcode/atlas-db/atlas/commands"
+	"slices"
 	"strconv"
 	"zombiezen.com/go/sqlite"
 )
@@ -88,13 +89,21 @@ func (c *Scroll) outputRow(stmt *sqlite.Stmt, s *Socket) (complete bool, err err
 	return
 }
 
+var ErrComplete = errors.New("scroll complete")
+
 func (c *Scroll) Handle(s *Socket) error {
-	if stmt, ok := s.activeStmts[c.id]; ok {
+	if stmt, ok := s.activeStmts[c.id]; ok && slices.Contains(s.streams, stmt.stmt) {
 		for i := 0; i < c.rows; i++ {
 			if complete, err := c.outputRow(stmt.stmt, s); err != nil {
 				return err
+			} else if complete && !stmt.query.IsQueryReadOnly() {
+				err = s.outputTrailerHeaders()
+				if err != nil {
+					return err
+				}
+				return ErrComplete
 			} else if complete {
-				break
+				return ErrComplete
 			}
 		}
 	} else {

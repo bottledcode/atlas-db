@@ -51,8 +51,16 @@ func ServeSocket(ctx context.Context) (func() error, error) {
 					atlas.Logger.Error("Error accepting connection", zap.Error(err))
 					continue
 				}
-				c := &Socket{}
-				go c.HandleConnection(conn, ctx)
+				c := &Socket{
+					activeStmts: make(map[string]*Query),
+				}
+				go func() {
+					c.HandleConnection(conn, ctx)
+					if c.session != nil {
+						c.session.Delete()
+						c.session = nil
+					}
+				}()
 			}
 		}
 	}()

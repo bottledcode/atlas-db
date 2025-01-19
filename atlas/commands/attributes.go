@@ -24,7 +24,7 @@ type SqlCommand struct {
 
 // IsQueryReadOnly returns whether a query is read-only or not
 func (c *SqlCommand) IsQueryReadOnly() bool {
-	switch c.SelectCommand(0) {
+	switch d, _ := c.SelectNormalizedCommand(0); d {
 	case "ALTER":
 		return false
 	case "CREATE":

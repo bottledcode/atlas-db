@@ -21,18 +21,20 @@ package socket
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"github.com/bottledcode/atlas-db/atlas"
 	"github.com/bottledcode/atlas-db/atlas/commands"
 	"github.com/bottledcode/atlas-db/atlas/consensus"
 	"go.uber.org/zap"
-	"modernc.org/strutil"
 	"net"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
+	"time"
 	"zombiezen.com/go/sqlite"
 )
 
@@ -70,7 +72,11 @@ func (s *Socket) writeRawMessage(msg string) error {
 const EOL = "\r\n"
 
 func (s *Socket) writeMessage(msg string) error {
-	return s.writeRawMessage(msg + EOL)
+	err := s.writeRawMessage(msg + EOL)
+	if err != nil {
+		return err
+	}
+	return s.writer.Flush()
 }
 
 func (s *Socket) writeError(code ErrorCode, err error) error {
@@ -89,24 +95,7 @@ func (s *Socket) writeOk(code ErrorCode) error {
 	return s.writer.Flush()
 }
 
-func (s *Socket) outputMetaHeaders(stmt *sqlite.Stmt) (err error) {
-	// output metadata
-	columns := stmt.ColumnCount()
-	if columns == 0 {
-		return nil
-	}
-	err = s.writeMessage("META COLUMN_COUNT " + strconv.Itoa(columns))
-	if err != nil {
-		return
-	}
-	for i := 0; i < columns; i++ {
-		name := stmt.ColumnName(i)
-		err = s.writeMessage("META COLUMN_NAME " + strconv.Itoa(i) + " " + name)
-		if err != nil {
-			return
-		}
-	}
-
+func (s *Socket) outputTrailerHeaders() (err error) {
 	lastRow := s.sql.LastInsertRowID()
 	if lastRow != 0 {
 		err = s.writeMessage("META LAST_INSERT_ID " + strconv.FormatInt(lastRow, 10))
@@ -122,14 +111,30 @@ func (s *Socket) outputMetaHeaders(stmt *sqlite.Stmt) (err error) {
 			return
 		}
 	}
+	return
+}
+
+func (s *Socket) outputMetaHeaders(stmt *sqlite.Stmt) (err error) {
+	// output metadata
+	columns := stmt.ColumnCount()
+	err = s.writeMessage("META COLUMN_COUNT " + strconv.Itoa(columns))
+	if err != nil {
+		return
+	}
+	for i := 0; i < columns; i++ {
+		name := stmt.ColumnName(i)
+		err = s.writeMessage("META COLUMN_NAME " + strconv.Itoa(i) + " " + name)
+		if err != nil {
+			return
+		}
+	}
 
 	return nil
 }
 
 const ProtoVersion = "1.0"
 
-// todo: set during build
-const ServerVersion = "Chronalys/1.0"
+var ServerVersion = "Chronalys/1.0"
 
 var FatalErr = errors.New("fatal error")
 
@@ -143,7 +148,7 @@ func (s *Socket) rollback(ctx context.Context, err error) error {
 }
 
 func (s *Socket) rollbackAutoTransaction(ctx context.Context, err error) error {
-	if s.inTransaction {
+	if !s.inTransaction {
 		return s.rollback(ctx, err)
 	}
 	return err
@@ -166,6 +171,12 @@ func (s *Socket) HandleConnection(conn net.Conn, ctx context.Context) {
 		return
 	}
 	handshakePart := 0
+
+	err = conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
+	if err != nil {
+		atlas.Logger.Error("Error setting read deadline", zap.Error(err))
+		return
+	}
 
 	// perform the handshake
 	scanner := bufio.NewScanner(s.reader)
@@ -326,7 +337,11 @@ ready:
 				goto handleError
 			}
 			if err = scroll.Handle(s); err != nil {
-				goto handleError
+				if errors.Is(err, ErrComplete) {
+					err = s.writeError(Info, err)
+				} else {
+					goto handleError
+				}
 			}
 			err = s.writeOk(OK)
 			goto handleError
@@ -349,7 +364,7 @@ ready:
 			}
 			err = s.writeOk(OK)
 			goto handleError
-		case "ClearBindings":
+		case "CLEARBINDINGS":
 			if err = cmd.CheckExactLen(2); err != nil {
 				goto handleError
 			}
@@ -367,22 +382,46 @@ ready:
 			goto handleError
 		case "COMMIT":
 			goto commit
+		default:
+			err = errors.New("unknown command")
+			goto handleError
 		}
 
 	commit:
 
 	handleError:
+		err = conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
+		if err != nil {
+			atlas.Logger.Error("Error setting read deadline", zap.Error(err))
+			return
+		}
+
 		if err != nil && errors.Is(err, FatalErr) {
-			err := s.writeError(Fatal, err)
+			if s.inTransaction {
+				_, err := atlas.ExecuteSQL(ctx, "ROLLBACK", s.sql, false)
+				if err != nil {
+					atlas.Logger.Error("Error rolling back transaction", zap.Error(err))
+				}
+				s.inTransaction = false
+			}
+
+			err = s.writeError(Fatal, err)
 			if err != nil {
 				atlas.Logger.Error("Error writing error message", zap.Error(err))
 				return
 			}
 			return
 		} else if err != nil {
-			err := s.writeError(Warning, err)
+			err = s.writeError(Warning, err)
 			if err != nil {
 				atlas.Logger.Error("Error writing error message", zap.Error(err))
+				if s.inTransaction {
+					_, err := atlas.ExecuteSQL(ctx, "ROLLBACK", s.sql, false)
+					if err != nil {
+						atlas.Logger.Error("Error rolling back transaction", zap.Error(err))
+					}
+					s.inTransaction = false
+				}
 				return
 			}
 		}
@@ -451,7 +490,7 @@ func (s *Socket) PerformQuery(ctx context.Context, cmd *commands.CommandString) 
 	}
 	f.Close()
 	os.Remove(f.Name())
-	streamId := filepath.Base(f.Name())
+	streamId := strings.ToUpper(filepath.Base(f.Name()))
 	s.activeStmts[streamId] = query
 	if err = s.writeMessage(fmt.Sprintf("STREAM %s", streamId)); err != nil {
 		err = s.rollbackAutoTransaction(ctx, err)
@@ -515,59 +554,102 @@ func (s *Socket) PerformBind(cmd *commands.CommandString) (err error) {
 		return
 	}
 	id, _ := cmd.SelectNormalizedCommand(1)
-	param, _ := cmd.SelectNormalizedCommand(2)
+	param := cmd.SelectCommand(2)
 	typ, _ := cmd.SelectNormalizedCommand(3)
 	value := cmd.From(4).Raw()
 	if stmt, ok := s.activeStmts[id]; ok {
 		var i int
-		if i, err = strconv.Atoi(param); err != nil {
-			param = stmt.stmt.BindParamName(i)
-			if param == "" {
-				err = errors.New("unknown parameter")
-				return
+		if i, err = strconv.Atoi(param); err == nil {
+			switch typ {
+			case "TEXT":
+				stmt.stmt.BindText(i, value)
+			case "BYTE":
+				var bytes []byte
+				if bytes, err = base64.StdEncoding.DecodeString(value); err == nil {
+					stmt.stmt.BindBytes(i, bytes)
+				} else {
+					return
+				}
+			case "INT":
+				fallthrough
+			case "INTEGER":
+				var c int64
+				if c, err = strconv.ParseInt(value, 10, 64); err == nil {
+					stmt.stmt.BindInt64(i, c)
+				} else {
+					return
+				}
+			case "FLOAT":
+				var f float64
+				if f, err = strconv.ParseFloat(value, 64); err == nil {
+					stmt.stmt.BindFloat(i, f)
+				} else {
+					return
+				}
+			case "NULL":
+				stmt.stmt.BindNull(i)
+			case "BOOL":
+				var b bool
+				if b, err = strconv.ParseBool(value); err == nil {
+					stmt.stmt.BindBool(i, b)
+				} else {
+					return
+				}
+			case "ZERO":
+				var l int64
+				if l, err = strconv.ParseInt(value, 10, 64); err == nil {
+					stmt.stmt.BindZeroBlob(i, l)
+				} else {
+					return
+				}
+			default:
+				err = errors.New("unknown type")
 			}
-		}
-		switch typ {
-		case "TEXT":
-			stmt.stmt.SetText(param, value)
-		case "BYTE":
-			var bytes []byte
-			if bytes, err = strutil.Base64Decode([]byte(value)); err != nil {
-				stmt.stmt.SetBytes(param, bytes)
-			} else {
-				return
-			}
-		case "INT":
-			fallthrough
-		case "INTEGER":
-			var i int64
-			if i, err = strconv.ParseInt(value, 10, 64); err != nil {
-				stmt.stmt.SetInt64(param, i)
-			} else {
-				return
-			}
-		case "FLOAT":
-			var f float64
-			if f, err = strconv.ParseFloat(value, 64); err != nil {
-				stmt.stmt.SetFloat(param, f)
-			} else {
-				return
-			}
-		case "NULL":
-			stmt.stmt.SetNull(param)
-		case "BOOL":
-			var b bool
-			if b, err = strconv.ParseBool(value); err != nil {
-				stmt.stmt.SetBool(param, b)
-			} else {
-				return
-			}
-		case "ZERO":
-			var l int64
-			if l, err = strconv.ParseInt(value, 10, 64); err != nil {
-				stmt.stmt.SetZeroBlob(param, l)
-			} else {
-				return
+		} else {
+			switch typ {
+			case "TEXT":
+				stmt.stmt.SetText(param, value)
+			case "BYTE":
+				var bytes []byte
+				if bytes, err = base64.StdEncoding.DecodeString(value); err == nil {
+					stmt.stmt.SetBytes(param, bytes)
+				} else {
+					return
+				}
+			case "INT":
+				fallthrough
+			case "INTEGER":
+				var i int64
+				if i, err = strconv.ParseInt(value, 10, 64); err == nil {
+					stmt.stmt.SetInt64(param, i)
+				} else {
+					return
+				}
+			case "FLOAT":
+				var f float64
+				if f, err = strconv.ParseFloat(value, 64); err == nil {
+					stmt.stmt.SetFloat(param, f)
+				} else {
+					return
+				}
+			case "NULL":
+				stmt.stmt.SetNull(param)
+			case "BOOL":
+				var b bool
+				if b, err = strconv.ParseBool(value); err == nil {
+					stmt.stmt.SetBool(param, b)
+				} else {
+					return
+				}
+			case "ZERO":
+				var l int64
+				if l, err = strconv.ParseInt(value, 10, 64); err == nil {
+					stmt.stmt.SetZeroBlob(param, l)
+				} else {
+					return
+				}
+			default:
+				err = errors.New("unknown type")
 			}
 		}
 	} else {

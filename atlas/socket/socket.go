@@ -24,6 +24,7 @@ import (
 	"go.uber.org/zap"
 	"net"
 	"os"
+	"time"
 )
 
 func ServeSocket(ctx context.Context) (func() error, error) {
@@ -40,10 +41,9 @@ func ServeSocket(ctx context.Context) (func() error, error) {
 
 	// start the server
 	go func() {
-		done := ctx.Done()
 		for {
 			select {
-			case <-done:
+			case <-ctx.Done():
 				return
 			default:
 				conn, err := ln.Accept()
@@ -53,8 +53,11 @@ func ServeSocket(ctx context.Context) (func() error, error) {
 				}
 				c := &Socket{
 					activeStmts: make(map[string]*Query),
+					timeout:     1 * time.Minute,
 				}
 				go func() {
+					ctx, done := context.WithCancel(ctx)
+					defer done()
 					c.HandleConnection(conn, ctx)
 					if c.session != nil {
 						c.session.Delete()

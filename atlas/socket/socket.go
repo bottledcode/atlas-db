@@ -53,7 +53,7 @@ func ServeSocket(ctx context.Context) (func() error, error) {
 				}
 				c := &Socket{
 					activeStmts: make(map[string]*Query),
-					timeout:     1 * time.Minute,
+					timeout:     0 * time.Minute,
 				}
 				go func() {
 					ctx, done := context.WithCancel(ctx)

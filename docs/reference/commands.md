@@ -208,7 +208,7 @@ Query results are returned incrementally to optimize performance and minimize me
 2. **Row Fetching:**
    ```
    SCROLL <StreamID> <Count>\r\n
-   ROW ROWNUM TYPE VALUE\r\n
+   ROW COLNUM TYPE VALUE\r\n
    ```
 3. **Final Metadata:**
    ```

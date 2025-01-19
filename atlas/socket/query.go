@@ -19,38 +19,34 @@
 package socket
 
 import (
-	"errors"
 	"github.com/bottledcode/atlas-db/atlas/commands"
+	"zombiezen.com/go/sqlite"
 )
 
-type Prepare struct {
+type Query struct {
+	stmt  *sqlite.Stmt
 	query *commands.SqlCommand
-	id    string
 }
 
-func ParsePrepare(query *commands.CommandString) (*Prepare, error) {
-	if err := query.CheckMinLen(3); err != nil {
+func ParseQuery(cmd *commands.CommandString) (*Query, error) {
+	if err := cmd.CheckMinLen(2); err != nil {
 		return nil, err
 	}
 
-	id, _ := query.SelectNormalizedCommand(1)
-	q := query.From(2)
-	return &Prepare{query: q, id: id}, nil
+	q := cmd.From(1)
+
+	return &Query{
+		query: q,
+		stmt:  nil,
+	}, nil
 }
 
-func (p *Prepare) Handle(s *Socket) error {
-	if _, ok := s.activeStmts[p.id]; ok {
-		return makeFatal(errors.New("statement already exists"))
-	}
-
-	stmt, err := s.sql.Prepare(p.query.Raw())
+func (q *Query) Handle(s *Socket) (err error) {
+	q.stmt, _, err = s.sql.PrepareTransient(q.query.Raw())
 	if err != nil {
 		return makeFatal(err)
 	}
 
-	s.activeStmts[p.id] = &Query{
-		stmt:  stmt,
-		query: p.query,
-	}
+	s.streams = append(s.streams, q.stmt)
 	return nil
 }

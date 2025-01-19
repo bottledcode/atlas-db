@@ -41,9 +41,9 @@ func (e *Execute) Handle(s *Socket) error {
 	if !ok {
 		return errors.New("statement not found")
 	}
-	if slices.Contains(s.streams, stmt) {
+	if slices.Contains(s.streams, stmt.stmt) {
 		return errors.New("statement already executing")
 	}
-	s.streams = append(s.streams, stmt)
+	s.streams = append(s.streams, stmt.stmt)
 	return nil
 }

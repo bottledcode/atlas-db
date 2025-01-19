@@ -67,6 +67,8 @@ func (s *Socket) writeRawMessage(msg string) error {
 	return nil
 }
 
+const EOL = "\r\n"
+
 func (s *Socket) writeMessage(msg string) error {
 	return s.writeRawMessage(msg + EOL)
 }
@@ -212,8 +214,6 @@ func (s *Socket) HandleConnection(conn net.Conn, ctx context.Context) {
 
 ready:
 
-	var changes []*commands.SqlCommand
-
 	s.sql, err = atlas.Pool.Take(ctx)
 	if err != nil {
 		atlas.Logger.Error("Error taking connection from pool", zap.Error(err))
@@ -264,7 +264,11 @@ ready:
 			}
 			s.inTransaction = true
 
-			// todo: attach session and authenticator?
+			s.session, err = atlas.InitializeSession(ctx, s.sql)
+			if err != nil {
+				err = makeFatal(err)
+				goto handleError
+			}
 
 			err = s.writeOk(OK)
 			goto handleError

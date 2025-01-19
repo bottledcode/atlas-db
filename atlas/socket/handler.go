@@ -39,14 +39,15 @@ import (
 )
 
 type Socket struct {
-	writer        *bufio.Writer
-	reader        *bufio.Reader
+	writer        *bufio.ReadWriter
+	conn          net.Conn
 	sql           *sqlite.Conn
 	inTransaction bool
 	session       *sqlite.Session
 	activeStmts   map[string]*Query
 	streams       []*sqlite.Stmt
 	principals    []*consensus.Principal
+	timeout       time.Duration
 }
 
 func (s *Socket) Cleanup() {
@@ -72,7 +73,11 @@ func (s *Socket) writeRawMessage(msg string) error {
 const EOL = "\r\n"
 
 func (s *Socket) writeMessage(msg string) error {
-	err := s.writeRawMessage(msg + EOL)
+	err := s.setTimeout(s.timeout)
+	if err != nil {
+		return err
+	}
+	err = s.writeRawMessage(msg + EOL)
 	if err != nil {
 		return err
 	}
@@ -154,6 +159,10 @@ func (s *Socket) rollbackAutoTransaction(ctx context.Context, err error) error {
 	return err
 }
 
+func (s *Socket) setTimeout(t time.Duration) error {
+	return s.conn.SetDeadline(time.Now().Add(t))
+}
+
 func (s *Socket) HandleConnection(conn net.Conn, ctx context.Context) {
 	defer func() {
 		err := conn.Close()
@@ -162,8 +171,8 @@ func (s *Socket) HandleConnection(conn net.Conn, ctx context.Context) {
 		}
 	}()
 
-	s.reader = bufio.NewReader(conn)
-	s.writer = bufio.NewWriter(conn)
+	s.conn = conn
+	s.writer = bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn))
 
 	err := s.writeMessage("WELCOME " + ProtoVersion + " " + ServerVersion)
 	if err != nil {
@@ -172,54 +181,60 @@ func (s *Socket) HandleConnection(conn net.Conn, ctx context.Context) {
 	}
 	handshakePart := 0
 
-	err = conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
-	if err != nil {
-		atlas.Logger.Error("Error setting read deadline", zap.Error(err))
-		return
-	}
+	scanner := NewScanner(s.writer)
+	cmds, errs := scanner.Scan(ctx)
 
 	// perform the handshake
-	scanner := bufio.NewScanner(s.reader)
-	for scanner.Scan() {
-		if scanner.Err() != nil {
-			atlas.Logger.Error("Error reading from connection", zap.Error(scanner.Err()))
+	for {
+		select {
+		case <-ctx.Done():
 			return
-		}
-		handshake := commands.CommandFromString(scanner.Text())
-		switch handshakePart {
-		case 0:
-			if handshake.CheckExactLen(3) != nil {
-				err := s.writeError(Fatal, errors.New("invalid handshake"))
+		case err = <-errs:
+			atlas.Logger.Error("Error reading from connection", zap.Error(err))
+			if s.inTransaction {
+				_, err := atlas.ExecuteSQL(ctx, "ROLLBACK", s.sql, false)
 				if err != nil {
-					atlas.Logger.Error("Error writing error message", zap.Error(err))
+					atlas.Logger.Error("Error rolling back transaction", zap.Error(err))
+				}
+				s.inTransaction = false
+			}
+			return
+		case handshake := <-cmds:
+			switch handshakePart {
+			case 0:
+				if handshake.CheckExactLen(3) != nil {
+					err := s.writeError(Fatal, errors.New("invalid handshake"))
+					if err != nil {
+						atlas.Logger.Error("Error writing error message", zap.Error(err))
+						return
+					}
+				}
+
+				if p, _ := handshake.SelectNormalizedCommand(0); p != "HELLO" {
+					err := s.writeError(Fatal, errors.New("invalid handshake"))
+					if err != nil {
+						atlas.Logger.Error("Error writing error message", zap.Error(err))
+						return
+					}
+				}
+
+				if v, _ := handshake.SelectNormalizedCommand(1); v != ProtoVersion {
+					err := s.writeError(Fatal, errors.New("invalid protocol version"))
+					if err != nil {
+						atlas.Logger.Error("Error writing error message", zap.Error(err))
+						return
+					}
+				}
+
+				// ignore client version for now
+				// ignore authentication for now
+				err := s.writeMessage("READY")
+				if err != nil {
+					atlas.Logger.Error("Error writing ready message", zap.Error(err))
 					return
 				}
+				goto ready
 			}
-
-			if p, _ := handshake.SelectNormalizedCommand(0); p != "HELLO" {
-				err := s.writeError(Fatal, errors.New("invalid handshake"))
-				if err != nil {
-					atlas.Logger.Error("Error writing error message", zap.Error(err))
-					return
-				}
-			}
-
-			if v, _ := handshake.SelectNormalizedCommand(1); v != ProtoVersion {
-				err := s.writeError(Fatal, errors.New("invalid protocol version"))
-				if err != nil {
-					atlas.Logger.Error("Error writing error message", zap.Error(err))
-					return
-				}
-			}
-
-			// ignore client version for now
-			// ignore authentication for now
-			err := s.writeMessage("READY")
-			if err != nil {
-				atlas.Logger.Error("Error writing ready message", zap.Error(err))
-				return
-			}
-			goto ready
 		}
 	}
 
@@ -232,171 +247,16 @@ ready:
 	}
 	defer atlas.Pool.Put(s.sql)
 
-	for scanner.Scan() {
-		if scanner.Err() != nil {
-			atlas.Logger.Error("Error reading from connection", zap.Error(scanner.Err()))
+	if err = s.setTimeout(s.timeout); err != nil {
+		return
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
 			return
-		}
-		cmd := commands.CommandFromString(scanner.Text())
-		if cmd.CheckMinLen(1) != nil {
-			err := s.writeError(Fatal, errors.New("invalid command"))
-			if err != nil {
-				atlas.Logger.Error("Error writing error message", zap.Error(err))
-				return
-			}
-			continue
-		}
-
-		switch k, _ := cmd.SelectNormalizedCommand(0); k {
-		case "PREPARE":
-			_, err = s.PerformPrepare(cmd)
-			goto handleError
-		case "EXECUTE":
-			_, err = s.PerformExecute(ctx, cmd)
-			goto handleError
-		case "QUERY":
-			_, err = s.PerformQuery(ctx, cmd)
-			goto handleError
-		case "FINALIZE":
-			err = s.PerformFinalize(cmd)
-			goto handleError
-		case "BIND":
-			err = s.PerformBind(cmd)
-			goto handleError
-		case "BEGIN":
-			if s.inTransaction {
-				err = makeFatal(errors.New("the transaction is already in progress"))
-				goto handleError
-			}
-			if t, ok := cmd.SelectNormalizedCommand(1); ok && t == "IMMEDIATE" {
-				_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", s.sql, false)
-			} else {
-				_, err = atlas.ExecuteSQL(ctx, "BEGIN", s.sql, false)
-			}
-			s.inTransaction = true
-
-			s.session, err = atlas.InitializeSession(ctx, s.sql)
-			if err != nil {
-				err = makeFatal(err)
-				goto handleError
-			}
-
-			err = s.writeOk(OK)
-			goto handleError
-		case "SAVEPOINT":
-			if !s.inTransaction {
-				err = makeFatal(errors.New("no transaction in progress"))
-				goto handleError
-			}
-			if name, ok := cmd.SelectNormalizedCommand(1); ok {
-				_, err = atlas.ExecuteSQL(ctx, "SAVEPOINT "+name, s.sql, false)
-				if err != nil {
-					goto handleError
-				}
-				err = s.writeOk(OK)
-			} else {
-				err = makeFatal(errors.New("invalid savepoint name"))
-			}
-			goto handleError
-		case "RELEASE":
-			if !s.inTransaction {
-				err = makeFatal(errors.New("no transaction in progress"))
-				goto handleError
-			}
-			if name, ok := cmd.SelectNormalizedCommand(1); ok {
-				_, err = atlas.ExecuteSQL(ctx, "RELEASE "+name, s.sql, false)
-				if err != nil {
-					goto handleError
-				}
-				err = s.writeOk(OK)
-			} else {
-				err = makeFatal(errors.New("invalid savepoint name"))
-			}
-			goto handleError
-		case "PRAGMA":
-			if !s.inTransaction {
-				err = makeFatal(errors.New("no transaction in progress"))
-				goto handleError
-			}
-			// todo: parse special pragmas
-			_, err = atlas.ExecuteSQL(ctx, cmd.Raw(), s.sql, false)
-			goto handleError
-		case "PRINCIPLE":
-			var principal *Principal
-			if principal, err = ParsePrincipal(cmd); err != nil {
-				goto handleError
-			}
-			if err = principal.Handle(s); err != nil {
-				goto handleError
-			}
-			err = s.writeOk(OK)
-			goto handleError
-		case "SCROLL":
-			var scroll *Scroll
-			if scroll, err = ParseScroll(cmd); err != nil {
-				goto handleError
-			}
-			if err = scroll.Handle(s); err != nil {
-				if errors.Is(err, ErrComplete) {
-					err = s.writeError(Info, err)
-				} else {
-					goto handleError
-				}
-			}
-			err = s.writeOk(OK)
-			goto handleError
-		case "RESET":
-			if err = cmd.CheckExactLen(2); err != nil {
-				goto handleError
-			}
-			id, _ := cmd.SelectNormalizedCommand(1)
-			if stmt, ok := s.activeStmts[id]; ok {
-				if idx := slices.Index(s.streams, stmt.stmt); idx >= 0 {
-					s.streams = append(s.streams[:idx], s.streams[idx+1:]...)
-				}
-				err = stmt.stmt.Reset()
-				if err != nil {
-					goto handleError
-				}
-			} else {
-				err = errors.New("unknown statement")
-				goto handleError
-			}
-			err = s.writeOk(OK)
-			goto handleError
-		case "CLEARBINDINGS":
-			if err = cmd.CheckExactLen(2); err != nil {
-				goto handleError
-			}
-			id, _ := cmd.SelectNormalizedCommand(1)
-			if stmt, ok := s.activeStmts[id]; ok {
-				err = stmt.stmt.ClearBindings()
-				if err != nil {
-					goto handleError
-				}
-			} else {
-				err = errors.New("unknown statement")
-				goto handleError
-			}
-			err = s.writeOk(OK)
-			goto handleError
-		case "COMMIT":
-			goto commit
-		default:
-			err = errors.New("unknown command")
-			goto handleError
-		}
-
-	commit:
-
-	handleError:
-		err = conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
-		if err != nil {
-			atlas.Logger.Error("Error setting read deadline", zap.Error(err))
-			return
-		}
-
-		if err != nil && errors.Is(err, FatalErr) {
+		case err = <-errs:
+			atlas.Logger.Error("Error reading from connection", zap.Error(err))
 			if s.inTransaction {
 				_, err := atlas.ExecuteSQL(ctx, "ROLLBACK", s.sql, false)
 				if err != nil {
@@ -404,17 +264,161 @@ ready:
 				}
 				s.inTransaction = false
 			}
-
-			err = s.writeError(Fatal, err)
-			if err != nil {
-				atlas.Logger.Error("Error writing error message", zap.Error(err))
-				return
-			}
 			return
-		} else if err != nil {
-			err = s.writeError(Warning, err)
-			if err != nil {
-				atlas.Logger.Error("Error writing error message", zap.Error(err))
+		case cmd := <-cmds:
+			if cmd.CheckMinLen(1) != nil {
+				err := s.writeError(Fatal, errors.New("invalid command"))
+				if err != nil {
+					atlas.Logger.Error("Error writing error message", zap.Error(err))
+					return
+				}
+				continue
+			}
+
+			switch k, _ := cmd.SelectNormalizedCommand(0); k {
+			case "PREPARE":
+				_, err = s.PerformPrepare(cmd)
+				goto handleError
+			case "EXECUTE":
+				_, err = s.PerformExecute(ctx, cmd)
+				goto handleError
+			case "QUERY":
+				_, err = s.PerformQuery(ctx, cmd)
+				goto handleError
+			case "FINALIZE":
+				err = s.PerformFinalize(cmd)
+				goto handleError
+			case "BIND":
+				err = s.PerformBind(cmd)
+				goto handleError
+			case "BEGIN":
+				if s.inTransaction {
+					err = makeFatal(errors.New("the transaction is already in progress"))
+					goto handleError
+				}
+				if t, ok := cmd.SelectNormalizedCommand(1); ok && t == "IMMEDIATE" {
+					_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", s.sql, false)
+				} else {
+					_, err = atlas.ExecuteSQL(ctx, "BEGIN", s.sql, false)
+				}
+				s.inTransaction = true
+
+				s.session, err = atlas.InitializeSession(ctx, s.sql)
+				if err != nil {
+					err = makeFatal(err)
+					goto handleError
+				}
+
+				err = s.writeOk(OK)
+				goto handleError
+			case "SAVEPOINT":
+				if !s.inTransaction {
+					err = makeFatal(errors.New("no transaction in progress"))
+					goto handleError
+				}
+				if name, ok := cmd.SelectNormalizedCommand(1); ok {
+					_, err = atlas.ExecuteSQL(ctx, "SAVEPOINT "+name, s.sql, false)
+					if err != nil {
+						goto handleError
+					}
+					err = s.writeOk(OK)
+				} else {
+					err = makeFatal(errors.New("invalid savepoint name"))
+				}
+				goto handleError
+			case "RELEASE":
+				if !s.inTransaction {
+					err = makeFatal(errors.New("no transaction in progress"))
+					goto handleError
+				}
+				if name, ok := cmd.SelectNormalizedCommand(1); ok {
+					_, err = atlas.ExecuteSQL(ctx, "RELEASE "+name, s.sql, false)
+					if err != nil {
+						goto handleError
+					}
+					err = s.writeOk(OK)
+				} else {
+					err = makeFatal(errors.New("invalid savepoint name"))
+				}
+				goto handleError
+			case "PRAGMA":
+				if !s.inTransaction {
+					err = makeFatal(errors.New("no transaction in progress"))
+					goto handleError
+				}
+				// todo: parse special pragmas
+				_, err = atlas.ExecuteSQL(ctx, cmd.Raw(), s.sql, false)
+				goto handleError
+			case "PRINCIPLE":
+				var principal *Principal
+				if principal, err = ParsePrincipal(cmd); err != nil {
+					goto handleError
+				}
+				if err = principal.Handle(s); err != nil {
+					goto handleError
+				}
+				err = s.writeOk(OK)
+				goto handleError
+			case "SCROLL":
+				var scroll *Scroll
+				if scroll, err = ParseScroll(cmd); err != nil {
+					goto handleError
+				}
+				if err = scroll.Handle(s); err != nil {
+					if errors.Is(err, ErrComplete) {
+						err = s.writeError(Info, err)
+					} else {
+						goto handleError
+					}
+				}
+				err = s.writeOk(OK)
+				goto handleError
+			case "RESET":
+				if err = cmd.CheckExactLen(2); err != nil {
+					goto handleError
+				}
+				id, _ := cmd.SelectNormalizedCommand(1)
+				if stmt, ok := s.activeStmts[id]; ok {
+					if idx := slices.Index(s.streams, stmt.stmt); idx >= 0 {
+						s.streams = append(s.streams[:idx], s.streams[idx+1:]...)
+					}
+					err = stmt.stmt.Reset()
+					if err != nil {
+						goto handleError
+					}
+				} else {
+					err = errors.New("unknown statement")
+					goto handleError
+				}
+				err = s.writeOk(OK)
+				goto handleError
+			case "CLEARBINDINGS":
+				if err = cmd.CheckExactLen(2); err != nil {
+					goto handleError
+				}
+				id, _ := cmd.SelectNormalizedCommand(1)
+				if stmt, ok := s.activeStmts[id]; ok {
+					err = stmt.stmt.ClearBindings()
+					if err != nil {
+						goto handleError
+					}
+				} else {
+					err = errors.New("unknown statement")
+					goto handleError
+				}
+				err = s.writeOk(OK)
+				goto handleError
+			case "COMMIT":
+				goto commit
+			default:
+				err = errors.New("unknown command")
+				goto handleError
+			}
+
+		commit:
+
+		handleError:
+			if err != nil && errors.Is(err, FatalErr) {
 				if s.inTransaction {
 					_, err := atlas.ExecuteSQL(ctx, "ROLLBACK", s.sql, false)
 					if err != nil {
@@ -422,6 +426,29 @@ ready:
 					}
 					s.inTransaction = false
 				}
+
+				err = s.writeError(Fatal, err)
+				if err != nil {
+					atlas.Logger.Error("Error writing error message", zap.Error(err))
+					return
+				}
+				return
+			} else if err != nil {
+				err = s.writeError(Warning, err)
+				if err != nil {
+					atlas.Logger.Error("Error writing error message", zap.Error(err))
+					if s.inTransaction {
+						_, err := atlas.ExecuteSQL(ctx, "ROLLBACK", s.sql, false)
+						if err != nil {
+							atlas.Logger.Error("Error rolling back transaction", zap.Error(err))
+						}
+						s.inTransaction = false
+					}
+					return
+				}
+			}
+			err = s.setTimeout(s.timeout)
+			if err != nil {
 				return
 			}
 		}

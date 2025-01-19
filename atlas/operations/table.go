@@ -137,6 +137,9 @@ func CreateTable(c commands.Command) ([]*consensus.Table, error) {
 		name, _ = c.SelectNormalizedCommand(CreateTableNameOrIfNotExists)
 	}
 	name = c.NormalizeName(name)
+	if name == "" {
+		return nil, errors.New("CREATE TABLE: missing table name")
+	}
 
 	var groups []string
 	var shards []string

@@ -19,38 +19,30 @@
 package socket
 
 import (
-	"errors"
 	"github.com/bottledcode/atlas-db/atlas/commands"
+	"github.com/bottledcode/atlas-db/atlas/consensus"
 )
 
-type Prepare struct {
-	query *commands.SqlCommand
-	id    string
+type Principal struct {
+	name  string
+	value string
 }
 
-func ParsePrepare(query *commands.CommandString) (*Prepare, error) {
-	if err := query.CheckMinLen(3); err != nil {
-		return nil, err
+func ParsePrincipal(cmd *commands.CommandString) (principal *Principal, err error) {
+	if err = cmd.CheckExactLen(2); err != nil {
+		return
 	}
 
-	id, _ := query.SelectNormalizedCommand(1)
-	q := query.From(2)
-	return &Prepare{query: q, id: id}, nil
+	name, _ := cmd.SelectNormalizedCommand(2)
+	value := cmd.SelectCommand(3)
+	return &Principal{name: name, value: value}, nil
 }
 
-func (p *Prepare) Handle(s *Socket) error {
-	if _, ok := s.activeStmts[p.id]; ok {
-		return makeFatal(errors.New("statement already exists"))
+func (p *Principal) Handle(s *Socket) error {
+	principal := &consensus.Principal{
+		Name:  p.name,
+		Value: p.value,
 	}
-
-	stmt, err := s.sql.Prepare(p.query.Raw())
-	if err != nil {
-		return makeFatal(err)
-	}
-
-	s.activeStmts[p.id] = &Query{
-		stmt:  stmt,
-		query: p.query,
-	}
+	s.principals = append(s.principals, principal)
 	return nil
 }

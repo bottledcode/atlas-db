@@ -130,7 +130,11 @@ func replaceCommand(query, command, newPrefix string) string {
 
 	for _, field := range fields {
 		// consume the field from the query
-		endpos := strings.Index(strings.ToUpper(query), strings.ToUpper(field)) + len(field)
+		endpos := strings.Index(strings.ToUpper(query), strings.ToUpper(field))
+		if endpos == -1 {
+			return query
+		}
+		endpos += len(field)
 		query = query[endpos:]
 	}
 
@@ -143,6 +147,9 @@ func (c *CommandString) RemoveAfter(k int) Command {
 		k = k * -1
 	}
 
+	if k > len(c.rawParts) {
+		return EmptyCommandString
+	}
 	fields := c.rawParts[:len(c.rawParts)-k]
 	if len(fields) == 0 {
 		return EmptyCommandString
@@ -170,7 +177,11 @@ func removeCommand(query string, num int) string {
 	}
 
 	for i := 0; i < num; i++ {
-		endpos := strings.Index(query, fields[i]) + len(fields[i])
+		endpos := strings.Index(query, fields[i])
+		if endpos == -1 {
+			return query
+		}
+		endpos += len(fields[i])
 		query = query[endpos:]
 	}
 

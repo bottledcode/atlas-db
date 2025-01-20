@@ -16,7 +16,7 @@
  *
  */
 
-package socket
+package commands
 
 import (
 	"github.com/stretchr/testify/assert"
@@ -25,79 +25,87 @@ import (
 
 func TestCommandFromString(t *testing.T) {
 	command := "SELECT * FROM table"
-	cs := commandFromString(command)
+	cs := CommandFromString(command)
 
-	assert.Equal(t, command, cs.raw)
+	assert.Equal(t, command, cs.Raw())
 
 	expectedNormalized := "SELECT * FROM TABLE"
-	assert.Equal(t, expectedNormalized, cs.normalized)
+	assert.Equal(t, expectedNormalized, cs.Normalized())
 
 	expectedParts := []string{"SELECT", "*", "FROM", "TABLE"}
 	assert.Equal(t, expectedParts, cs.parts)
 }
 
 func TestValidate(t *testing.T) {
-	cs := commandFromString("SELECT * FROM table")
-	err := cs.validate(4)
+	cs := CommandFromString("SELECT * FROM table")
+	err := cs.CheckMinLen(4)
 	assert.NoError(t, err)
 
-	err = cs.validate(5)
+	err = cs.CheckMinLen(5)
 	assert.Errorf(t, err, "expected error, got nil")
 }
 
 func TestValidateExact(t *testing.T) {
-	cs := commandFromString("SELECT * FROM table")
-	err := cs.validateExact(4)
+	cs := CommandFromString("SELECT * FROM table")
+	err := cs.CheckExactLen(4)
 	assert.NoError(t, err)
 
-	err = cs.validateExact(3)
+	err = cs.CheckExactLen(3)
 	assert.Errorf(t, err, "expected error, got nil")
 }
 
 func TestRemoveCommand(t *testing.T) {
-	cs := commandFromString("SELECT * FROM table")
-	newCs := cs.removeCommand(2)
+	cs := CommandFromString("SELECT * FROM table")
+	newCs := cs.From(2)
 
 	expected := "FROM table"
-	assert.Equal(t, expected, newCs.raw)
+	assert.Equal(t, expected, newCs.Raw())
 }
 
 func TestRemoveButKeepSpace(t *testing.T) {
-	cs := commandFromString("bind cu :name text  ")
-	newCs := cs.removeCommand(4)
+	cs := CommandFromString("bind cu :name text  ")
+	newCs := cs.From(4)
 
 	expected := " "
-	assert.Equal(t, expected, newCs.raw)
+	assert.Equal(t, expected, newCs.Raw())
 }
 
 func TestSelectCommand(t *testing.T) {
-	cs := commandFromString("SELECT * FROM table")
-	part := cs.selectCommand(2)
+	cs := CommandFromString("SELECT * FROM table")
+	part := cs.SelectCommand(2)
 
 	expected := "FROM"
 	assert.Equal(t, expected, part)
 }
 
 func TestSelectSpace(t *testing.T) {
-	cs := commandFromString("bind cu :name text  ")
-	part := cs.selectCommand(4)
+	cs := CommandFromString("bind cu :name text  ")
+	part := cs.SelectCommand(4)
 
 	expected := " "
 	assert.Equal(t, expected, part)
 }
 
 func TestSelectNormalizedCommand(t *testing.T) {
-	cs := commandFromString("SELECT * FROM table")
-	part := cs.selectNormalizedCommand(2)
+	cs := CommandFromString("SELECT * FROM table")
+	part, _ := cs.SelectNormalizedCommand(2)
 
 	expected := "FROM"
 	assert.Equal(t, expected, part)
 }
 
 func TestReplaceCommand(t *testing.T) {
-	cs := commandFromString("SELECT LOCAL * FROM table")
-	newCs := cs.replaceCommand("SELECT LOCAL", "SELECT")
+	cs := CommandFromString("SELECT LOCAL * FROM table")
+	newCs := cs.ReplaceCommand("SELECT LOCAL", "SELECT")
 
 	expected := "SELECT * FROM table"
-	assert.Equal(t, expected, newCs.raw)
+	assert.Equal(t, expected, newCs.Raw())
+}
+
+func TestRemoveAfter(t *testing.T) {
+	cs := CommandFromString("create table test (id int) group test")
+	newCs := cs.RemoveAfter(-2)
+
+	expected := "create table test (id int)"
+	assert.Equal(t, expected, newCs.Raw())
 }

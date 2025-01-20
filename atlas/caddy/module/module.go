@@ -218,6 +218,30 @@ func init() {
 				}
 				defer conn.Close()
 
+				// perform handshake
+				handshakePart := 0
+				scanner := bufio.NewScanner(reader)
+				for scanner.Scan() {
+					switch handshakePart {
+					case 0:
+						welcome := scanner.Text()
+						if !strings.HasPrefix(welcome, "WELCOME 1.0") {
+							return 1, errors.New("unexpected welcome message")
+						}
+						_, _ = writer.WriteString("HELLO 1.0 clientId=repl" + socket.EOL)
+						_ = writer.Flush()
+						handshakePart++
+					case 1:
+						ready := scanner.Text()
+						if !strings.HasPrefix(ready, "READY") {
+							return 1, errors.New("unexpected ready message")
+						}
+						goto ready
+					}
+				}
+
+			ready:
+
 				atlas.Logger.Info("🌐 Atlas Client Started")
 
 				rl, err := readline.New("> ")
@@ -260,8 +284,22 @@ func init() {
 					}
 					fmt.Println(strings.TrimSpace(buf.String()))
 
-					if strings.HasPrefix(buf.String(), string(socket.OK)) || strings.HasPrefix(buf.String(), string(socket.Fatal)) {
+					if strings.HasPrefix(buf.String(), string(socket.OK)) {
 						continue
+					}
+					if strings.HasPrefix(buf.String(), "ERROR") {
+						fields := strings.Fields(buf.String())
+						switch fields[1] {
+						case string(socket.Fatal):
+							return 1, errors.New(strings.Join(fields[2:], " "))
+						case string(socket.Warning):
+							continue
+						case string(socket.Info):
+							buf.Reset()
+							goto keepReading
+						case string(socket.OK):
+							continue
+						}
 					}
 
 					buf.Reset()

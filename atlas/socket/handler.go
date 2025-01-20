@@ -560,8 +560,13 @@ func (s *Socket) PerformExecute(ctx context.Context, cmd *commands.CommandString
 		return
 	}
 
-	if !s.activeStmts[execute.id].query.IsQueryReadOnly() && !s.inTransaction {
-		err = s.rollbackAutoTransaction(ctx, errors.New("cannot execute a non-read-only query outside transaction"))
+	if smt, ok := s.activeStmts[execute.id]; ok {
+		if !smt.query.IsQueryReadOnly() && !s.inTransaction {
+			err = s.rollbackAutoTransaction(ctx, errors.New("cannot execute a non-read-only query outside transaction"))
+			return
+		}
+	} else {
+		err = s.rollbackAutoTransaction(ctx, errors.New("unknown statement"))
 		return
 	}
 

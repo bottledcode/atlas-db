@@ -23,7 +23,6 @@ import (
 	_ "embed"
 	"runtime"
 	"strings"
-	"sync"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitemigration"
 )
@@ -34,26 +33,17 @@ var migrations string
 var Pool *sqlitemigration.Pool
 var MigrationsPool *sqlitemigration.Pool
 
-var authorizers = map[*sqlite.Conn]*Authorizer{}
-
 // CreatePool creates a new connection pool for the database and the migrations database.
 func CreatePool(options *Options) {
 	if Pool != nil {
 		return
 	}
 
-	authorizers = make(map[*sqlite.Conn]*Authorizer)
-	amu := sync.Mutex{}
-
 	Pool = sqlitemigration.NewPool(options.DbFilename, sqlitemigration.Schema{}, sqlitemigration.Options{
 		Flags:    sqlite.OpenReadWrite | sqlite.OpenCreate | sqlite.OpenWAL,
 		PoolSize: runtime.NumCPU() * 2,
 		PrepareConn: func(conn *sqlite.Conn) (err error) {
 			auth := &Authorizer{}
-
-			amu.Lock()
-			authorizers[conn] = auth
-			amu.Unlock()
 
 			err = conn.SetAuthorizer(auth)
 			if err != nil {

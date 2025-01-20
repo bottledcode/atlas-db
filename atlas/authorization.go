@@ -21,14 +21,16 @@ package atlas
 import (
 	"go.uber.org/zap"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 	"zombiezen.com/go/sqlite"
 )
 
 type Authorizer struct {
-	boundTime time.Duration
-	mu        sync.RWMutex
+	boundTime  time.Duration
+	mu         sync.RWMutex
+	LastTables map[string]struct{}
 }
 
 var writeOps []sqlite.OpType = []sqlite.OpType{
@@ -74,6 +76,7 @@ func (a *Authorizer) Reset() {
 	defer a.mu.Unlock()
 
 	a.boundTime = 0
+	a.LastTables = make(map[string]struct{})
 }
 
 func (a *Authorizer) isJournalModeChange(action sqlite.Action) bool {
@@ -90,6 +93,11 @@ func (a *Authorizer) isAtlasChange(action sqlite.Action) bool {
 
 func (a *Authorizer) Authorize(action sqlite.Action) sqlite.AuthResult {
 	Logger.Info("Auth", zap.Any("action", action), zap.String("table", action.Table()))
+
+	if action.Table() != "" && action.Database() != "" && action.Table() != "sqlite_master" {
+		name := strings.ToUpper(action.Database()) + "." + strings.ToUpper(action.Table())
+		a.LastTables[name] = struct{}{}
+	}
 
 	if a.isJournalModeChange(action) || a.isAtlasChange(action) {
 		return sqlite.AuthResultDeny

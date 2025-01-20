@@ -48,6 +48,7 @@ type Socket struct {
 	streams       []*sqlite.Stmt
 	principals    []*consensus.Principal
 	timeout       time.Duration
+	authorizer    *atlas.Authorizer
 }
 
 func (s *Socket) Cleanup() {
@@ -160,6 +161,9 @@ func (s *Socket) rollbackAutoTransaction(ctx context.Context, err error) error {
 }
 
 func (s *Socket) setTimeout(t time.Duration) error {
+	if t == 0 {
+		return s.conn.SetDeadline(time.Time{})
+	}
 	return s.conn.SetDeadline(time.Now().Add(t))
 }
 
@@ -247,9 +251,20 @@ ready:
 	}
 	defer atlas.Pool.Put(s.sql)
 
+	s.authorizer = &atlas.Authorizer{}
+
+	err = s.sql.SetAuthorizer(s.authorizer)
+	if err != nil {
+		atlas.Logger.Error("Error setting authorizer", zap.Error(err))
+		return
+	}
+	defer s.sql.SetAuthorizer(nil)
+
 	if err = s.setTimeout(s.timeout); err != nil {
 		return
 	}
+
+	var changes []*consensus.Migration
 
 	for {
 		select {
@@ -283,7 +298,30 @@ ready:
 				_, err = s.PerformExecute(ctx, cmd)
 				goto handleError
 			case "QUERY":
-				_, err = s.PerformQuery(ctx, cmd)
+				var q *Query
+				q, err = s.PerformQuery(ctx, cmd)
+				if err != nil {
+					goto handleError
+				}
+				if len(q.tables) > 0 {
+					// we need ownership over all tables
+					for _, table := range q.tables {
+						qm := consensus.GetDefaultQuorumManager(ctx)
+						var qu consensus.Quorum
+						qu, err = qm.GetQuorum(ctx, table.GetName())
+						if err != nil {
+							err = makeFatal(err)
+							goto handleError
+						}
+
+						result, err = qu.StealTableOwnership(ctx, &consensus.StealTableOwnershipRequest{
+							Sender: consensus.ConstructCurrentNode(),
+							Reason: consensus.StealReason_schemaReason,
+							Table:  nil,
+						})
+					}
+				}
+
 				goto handleError
 			case "FINALIZE":
 				err = s.PerformFinalize(cmd)

@@ -388,7 +388,7 @@ func (s *Server) applyMigration(migrations []*Migration, commitConn *sqlite.Conn
 	return nil
 }
 
-func constructCurrentNode() *Node {
+func ConstructCurrentNode() *Node {
 	return &Node{
 		Id:      atlas.CurrentOptions.ServerId,
 		Address: atlas.CurrentOptions.AdvertiseAddress,
@@ -515,7 +515,7 @@ VALUES (:id, :address, :port, :region, 1, current_timestamp, 0)`, conn, false, a
 	}
 
 	mreq := &WriteMigrationRequest{
-		Sender:    constructCurrentNode(),
+		Sender:    ConstructCurrentNode(),
 		Migration: migration,
 	}
 
@@ -635,7 +635,7 @@ func SendGossip(ctx context.Context, req *GossipMigration, conn *sqlite.Conn) er
 		Table:             req.GetTable(),
 		PreviousMigration: req.GetPreviousMigration(),
 		Ttl:               req.GetTtl() - 1,
-		Sender:            constructCurrentNode(),
+		Sender:            ConstructCurrentNode(),
 	}
 
 	wg := sync.WaitGroup{}

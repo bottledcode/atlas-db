@@ -56,6 +56,18 @@ func (c *CommandString) Raw() string {
 	return c.raw
 }
 
+func countWhitespace(str string) int {
+	whitespace := 0
+	for i := len(str) - 1; i >= 0; i-- {
+		if str[i] == ' ' || str[i] == '\t' || str[i] == '\n' || str[i] == '\r' {
+			whitespace++
+		} else {
+			break
+		}
+	}
+	return whitespace
+}
+
 // CommandFromString creates a CommandString from a string,
 // normalizing it while still allowing access to the raw command
 func CommandFromString(command string) *CommandString {
@@ -65,17 +77,11 @@ func CommandFromString(command string) *CommandString {
 	rawParts := strings.Fields(command)
 
 	// count whitespace at the end of string
-	whitespace := 0
-	for i := len(command) - 1; i >= 0; i-- {
-		if command[i] == ' ' {
-			whitespace++
-		} else {
-			break
-		}
-	}
+	whitespace := countWhitespace(command)
 	if whitespace >= 2 {
-		parts = append(parts, strings.Repeat(" ", whitespace-1))
-		rawParts = append(rawParts, strings.Repeat(" ", whitespace-1))
+		ending := command[len(command)-whitespace+1:]
+		parts = append(parts, ending)
+		rawParts = append(rawParts, ending)
 	}
 
 	return &CommandString{
@@ -157,16 +163,10 @@ func (c *CommandString) RemoveAfter(k int) Command {
 func removeCommand(query string, num int) string {
 	fields := strings.Fields(query)
 	// count whitespace at the end of string
-	whitespace := 0
-	for i := len(query) - 1; i >= 0; i-- {
-		if query[i] == ' ' {
-			whitespace++
-		} else {
-			break
-		}
-	}
+	whitespace := countWhitespace(query)
 	if whitespace >= 2 {
-		fields = append(fields, strings.Repeat(" ", whitespace-1))
+		ending := query[len(query)-whitespace+1:]
+		fields = append(fields, ending)
 	}
 
 	for i := 0; i < num; i++ {

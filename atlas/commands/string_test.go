@@ -27,10 +27,10 @@ func TestCommandFromString(t *testing.T) {
 	command := "SELECT * FROM table"
 	cs := CommandFromString(command)
 
-	assert.Equal(t, command, cs.Raw)
+	assert.Equal(t, command, cs.Raw())
 
 	expectedNormalized := "SELECT * FROM TABLE"
-	assert.Equal(t, expectedNormalized, cs.Normalized)
+	assert.Equal(t, expectedNormalized, cs.Normalized())
 
 	expectedParts := []string{"SELECT", "*", "FROM", "TABLE"}
 	assert.Equal(t, expectedParts, cs.parts)
@@ -59,7 +59,7 @@ func TestRemoveCommand(t *testing.T) {
 	newCs := cs.From(2)
 
 	expected := "FROM table"
-	assert.Equal(t, expected, newCs.Raw)
+	assert.Equal(t, expected, newCs.Raw())
 }
 
 func TestRemoveButKeepSpace(t *testing.T) {
@@ -67,7 +67,7 @@ func TestRemoveButKeepSpace(t *testing.T) {
 	newCs := cs.From(4)
 
 	expected := " "
-	assert.Equal(t, expected, newCs.Raw)
+	assert.Equal(t, expected, newCs.Raw())
 }
 
 func TestSelectCommand(t *testing.T) {
@@ -99,7 +99,7 @@ func TestReplaceCommand(t *testing.T) {
 	newCs := cs.ReplaceCommand("SELECT LOCAL", "SELECT")
 
 	expected := "SELECT * FROM table"
-	assert.Equal(t, expected, newCs.Raw)
+	assert.Equal(t, expected, newCs.Raw())
 }
 
 func TestRemoveAfter(t *testing.T) {

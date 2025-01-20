@@ -57,7 +57,16 @@ func TestExecute_Handle(t *testing.T) {
 	existing := conn.Prep("SELECT 1")
 	defer existing.Finalize()
 
+	existingQuery := &Query{
+		stmt:  existing,
+		query: commands.CommandFromString("SELECT 1").From(0),
+	}
+
 	passed := conn.Prep("SELECT 1")
+	passedQuery := &Query{
+		stmt:  passed,
+		query: commands.CommandFromString("SELECT 1").From(0),
+	}
 
 	tests := []struct {
 		name      string
@@ -70,7 +79,7 @@ func TestExecute_Handle(t *testing.T) {
 			name:    "Valid Statement",
 			execute: &Execute{id: "stmt1"},
 			socket: &Socket{
-				activeStmts: map[string]*sqlite.Stmt{
+				activeStmts: map[string]*Query{
 					"stmt1": {},
 				},
 				streams: []*sqlite.Stmt{},
@@ -81,8 +90,8 @@ func TestExecute_Handle(t *testing.T) {
 			name:    "Statement Not Found",
 			execute: &Execute{id: "stmt2"},
 			socket: &Socket{
-				activeStmts: map[string]*sqlite.Stmt{
-					"stmt1": existing,
+				activeStmts: map[string]*Query{
+					"stmt1": existingQuery,
 				},
 				streams: []*sqlite.Stmt{},
 			},
@@ -93,8 +102,8 @@ func TestExecute_Handle(t *testing.T) {
 			name:    "Statement Already Executing",
 			execute: &Execute{id: "stmt1"},
 			socket: &Socket{
-				activeStmts: map[string]*sqlite.Stmt{
-					"stmt1": passed,
+				activeStmts: map[string]*Query{
+					"stmt1": passedQuery,
 				},
 				streams: []*sqlite.Stmt{
 					existing,

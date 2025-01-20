@@ -55,7 +55,7 @@ func TestPrepare_Handle(t *testing.T) {
 
 	s := &Socket{
 		sql:         conn,
-		activeStmts: make(map[string]*sqlite.Stmt),
+		activeStmts: make(map[string]*Query),
 	}
 
 	tests := []struct {

@@ -298,8 +298,16 @@ ready:
 				}
 				if t, ok := cmd.SelectNormalizedCommand(1); ok && t == "IMMEDIATE" {
 					_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", s.sql, false)
+					if err != nil {
+						err = makeFatal(err)
+						goto handleError
+					}
 				} else {
 					_, err = atlas.ExecuteSQL(ctx, "BEGIN", s.sql, false)
+					if err != nil {
+						err = makeFatal(err)
+						goto handleError
+					}
 				}
 				s.inTransaction = true
 
@@ -367,6 +375,10 @@ ready:
 				if err = scroll.Handle(s); err != nil {
 					if errors.Is(err, ErrComplete) {
 						err = s.writeError(Info, err)
+						if err != nil {
+							err = makeFatal(err)
+							goto handleError
+						}
 					} else {
 						goto handleError
 					}
@@ -631,6 +643,7 @@ func (s *Socket) PerformBind(cmd *commands.CommandString) (err error) {
 				}
 			default:
 				err = errors.New("unknown type")
+				return
 			}
 		} else {
 			switch typ {
@@ -677,6 +690,7 @@ func (s *Socket) PerformBind(cmd *commands.CommandString) (err error) {
 				}
 			default:
 				err = errors.New("unknown type")
+				return
 			}
 		}
 	} else {

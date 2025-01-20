@@ -55,7 +55,9 @@ func TestExecute_Handle(t *testing.T) {
 	defer conn.Close()
 
 	existing := conn.Prep("SELECT 1")
-	defer existing.Finalize()
+	defer func() {
+		_ = existing.Finalize()
+	}()
 
 	existingQuery := &Query{
 		stmt:  existing,

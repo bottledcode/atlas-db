@@ -264,8 +264,6 @@ ready:
 		return
 	}
 
-	var changes []*consensus.Migration
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -298,30 +296,7 @@ ready:
 				_, err = s.PerformExecute(ctx, cmd)
 				goto handleError
 			case "QUERY":
-				var q *Query
-				q, err = s.PerformQuery(ctx, cmd)
-				if err != nil {
-					goto handleError
-				}
-				if len(q.tables) > 0 {
-					// we need ownership over all tables
-					for _, table := range q.tables {
-						qm := consensus.GetDefaultQuorumManager(ctx)
-						var qu consensus.Quorum
-						qu, err = qm.GetQuorum(ctx, table.GetName())
-						if err != nil {
-							err = makeFatal(err)
-							goto handleError
-						}
-
-						result, err = qu.StealTableOwnership(ctx, &consensus.StealTableOwnershipRequest{
-							Sender: consensus.ConstructCurrentNode(),
-							Reason: consensus.StealReason_schemaReason,
-							Table:  nil,
-						})
-					}
-				}
-
+				_, err = s.PerformQuery(ctx, cmd)
 				goto handleError
 			case "FINALIZE":
 				err = s.PerformFinalize(cmd)
@@ -503,6 +478,103 @@ ready:
 			}
 		}
 	}
+}
+
+func (s *Socket) SanitizeBegin(cmd commands.Command) (tables, views, triggers []string, err error) {
+	if s.inTransaction {
+		err = errors.New("the transaction is already in progress")
+		return
+	}
+
+	extractList := func() (list []string, err error) {
+		var rip []string
+		n := 3
+		expectingFirst := true
+		expectingLast := true
+		for {
+			first, _ := cmd.SelectNormalizedCommand(n)
+			rip = append(rip, first)
+			n++
+			isLast := false
+			first = strings.TrimSuffix(first, ",")
+			if first == "" {
+				break
+			}
+			if first == "(" {
+				expectingFirst = false
+				continue
+			}
+			if first == ")" {
+				expectingLast = false
+				break
+			}
+			if strings.HasPrefix(first, "(") {
+				first = strings.TrimPrefix(first, "(")
+				expectingFirst = false
+			}
+			if strings.HasSuffix(first, ")") {
+				expectingLast = false
+				first = strings.TrimSuffix(first, ")")
+				isLast = true
+			}
+			if expectingFirst {
+				err = errors.New("expected table name in parentheses")
+				return
+			}
+
+			if first == "," {
+				continue
+			}
+
+			list = append(list, cmd.NormalizeName(first))
+			if isLast {
+				break
+			}
+		}
+		if expectingFirst || expectingLast {
+			err = errors.New("expected table name in parentheses")
+			return
+		}
+		cmd = cmd.ReplaceCommand(strings.Join(rip, " "), "BEGIN IMMEDIATE")
+		return
+	}
+
+	if t, ok := cmd.SelectNormalizedCommand(1); ok && t == "IMMEDIATE" {
+		if err = cmd.CheckMinLen(3); err != nil {
+			return
+		}
+		for {
+			switch t, _ = cmd.SelectNormalizedCommand(2); t {
+			case "TABLE":
+				if err = cmd.CheckMinLen(4); err != nil {
+					return
+				}
+				tables, err = extractList()
+				if err != nil {
+					return
+				}
+			case "VIEW":
+				if err = cmd.CheckMinLen(4); err != nil {
+					return
+				}
+				views, err = extractList()
+				if err != nil {
+					return
+				}
+			case "TRIGGER":
+				if err = cmd.CheckMinLen(4); err != nil {
+					return
+				}
+				triggers, err = extractList()
+				if err != nil {
+					return
+				}
+			default:
+				return
+			}
+		}
+	}
+	return
 }
 
 func (s *Socket) PerformFinalize(cmd *commands.CommandString) (err error) {

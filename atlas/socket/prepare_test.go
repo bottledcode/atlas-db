@@ -76,3 +76,62 @@ func TestPrepare_Handle(t *testing.T) {
 		})
 	}
 }
+
+func TestSanitizeBegin(t *testing.T) {
+	tests := []struct {
+		name    string
+		cmd     commands.Command
+		want    [][]string
+		wantErr bool
+	}{
+		{
+			name:    "Transaction in progress",
+			cmd:     commands.CommandFromString("BEGIN IMMEDIATE TABLE Users"),
+			want:    nil,
+			wantErr: true,
+		},
+		{
+			name:    "Transaction in progress",
+			cmd:     commands.CommandFromString("BEGIN IMMEDIATE TABLE (Users"),
+			want:    nil,
+			wantErr: true,
+		},
+		{
+			name:    "Valid command with tables",
+			cmd:     commands.CommandFromString("BEGIN IMMEDIATE TABLE (Users, Orders)"),
+			want:    [][]string{{"MAIN.USERS", "MAIN.ORDERS"}, nil, nil},
+			wantErr: false,
+		},
+		{
+			name:    "Valid command with tables",
+			cmd:     commands.CommandFromString("BEGIN IMMEDIATE TABLE ( Users, Orders )"),
+			want:    [][]string{{"MAIN.USERS", "MAIN.ORDERS"}, nil, nil},
+			wantErr: false,
+		},
+		{
+			name:    "Valid command with tables",
+			cmd:     commands.CommandFromString("BEGIN IMMEDIATE TABLE ( Users, Orders ) VIEW (STUFF)"),
+			want:    [][]string{{"MAIN.USERS", "MAIN.ORDERS"}, {"MAIN.STUFF"}, nil},
+			wantErr: false,
+		},
+		{
+			name:    "Invalid command length",
+			cmd:     commands.CommandFromString("BEGIN IMMEDIATE"),
+			want:    nil,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &Socket{}
+			got, got2, got3, err := s.SanitizeBegin(tt.cmd)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.want, [][]string{got, got2, got3})
+			}
+		})
+	}
+}

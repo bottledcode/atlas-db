@@ -48,6 +48,7 @@ type Socket struct {
 	streams       []*sqlite.Stmt
 	principals    []*consensus.Principal
 	timeout       time.Duration
+	authorizer    *atlas.Authorizer
 }
 
 func (s *Socket) Cleanup() {
@@ -160,6 +161,9 @@ func (s *Socket) rollbackAutoTransaction(ctx context.Context, err error) error {
 }
 
 func (s *Socket) setTimeout(t time.Duration) error {
+	if t == 0 {
+		return s.conn.SetDeadline(time.Time{})
+	}
 	return s.conn.SetDeadline(time.Now().Add(t))
 }
 
@@ -246,6 +250,15 @@ ready:
 		return
 	}
 	defer atlas.Pool.Put(s.sql)
+
+	s.authorizer = &atlas.Authorizer{}
+
+	err = s.sql.SetAuthorizer(s.authorizer)
+	if err != nil {
+		atlas.Logger.Error("Error setting authorizer", zap.Error(err))
+		return
+	}
+	defer s.sql.SetAuthorizer(nil)
 
 	if err = s.setTimeout(s.timeout); err != nil {
 		return
@@ -465,6 +478,103 @@ ready:
 			}
 		}
 	}
+}
+
+func (s *Socket) SanitizeBegin(cmd commands.Command) (tables, views, triggers []string, err error) {
+	if s.inTransaction {
+		err = errors.New("the transaction is already in progress")
+		return
+	}
+
+	extractList := func() (list []string, err error) {
+		var rip []string
+		n := 3
+		expectingFirst := true
+		expectingLast := true
+		for {
+			first, _ := cmd.SelectNormalizedCommand(n)
+			rip = append(rip, first)
+			n++
+			isLast := false
+			first = strings.TrimSuffix(first, ",")
+			if first == "" {
+				break
+			}
+			if first == "(" {
+				expectingFirst = false
+				continue
+			}
+			if first == ")" {
+				expectingLast = false
+				break
+			}
+			if strings.HasPrefix(first, "(") {
+				first = strings.TrimPrefix(first, "(")
+				expectingFirst = false
+			}
+			if strings.HasSuffix(first, ")") {
+				expectingLast = false
+				first = strings.TrimSuffix(first, ")")
+				isLast = true
+			}
+			if expectingFirst {
+				err = errors.New("expected table name in parentheses")
+				return
+			}
+
+			if first == "," {
+				continue
+			}
+
+			list = append(list, cmd.NormalizeName(first))
+			if isLast {
+				break
+			}
+		}
+		if expectingFirst || expectingLast {
+			err = errors.New("expected table name in parentheses")
+			return
+		}
+		cmd = cmd.ReplaceCommand(strings.Join(rip, " "), "BEGIN IMMEDIATE")
+		return
+	}
+
+	if t, ok := cmd.SelectNormalizedCommand(1); ok && t == "IMMEDIATE" {
+		if err = cmd.CheckMinLen(3); err != nil {
+			return
+		}
+		for {
+			switch t, _ = cmd.SelectNormalizedCommand(2); t {
+			case "TABLE":
+				if err = cmd.CheckMinLen(4); err != nil {
+					return
+				}
+				tables, err = extractList()
+				if err != nil {
+					return
+				}
+			case "VIEW":
+				if err = cmd.CheckMinLen(4); err != nil {
+					return
+				}
+				views, err = extractList()
+				if err != nil {
+					return
+				}
+			case "TRIGGER":
+				if err = cmd.CheckMinLen(4); err != nil {
+					return
+				}
+				triggers, err = extractList()
+				if err != nil {
+					return
+				}
+			default:
+				return
+			}
+		}
+	}
+	return
 }
 
 func (s *Socket) PerformFinalize(cmd *commands.CommandString) (err error) {

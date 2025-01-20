@@ -122,11 +122,15 @@ rules.
    ```
    Prepares a query for execution, associating it with an identifier.
 
+   Returns: OK or ERROR
+
 2. **Execute a Prepared Query:**
    ```
    EXECUTE [ID]\r\n
    ```
    Executes a previously prepared query.
+
+   Returns: Stream + Metadata + OK
 
 3. **Perform a One-Off Query:**
    ```
@@ -134,11 +138,15 @@ rules.
    ```
    Executes a single query without preparation.
 
+   Returns: Stream + Metadata + OK
+
 4. **Remove a Prepared Query:**
    ```
    FINALIZE [ID]\r\n
    ```
    Removes a previously prepared query from memory.
+
+   Returns: OK or ERROR
 
 5. **Bind a Value to a Prepared Query:**
    ```
@@ -146,35 +154,95 @@ rules.
    ```
    Binds a value to a parameter in a prepared query.
 
-6. **Transaction Commands:**
+   Returns: OK or ERROR
+
+6. **Begin:**
+
    ```
-   BEGIN IMMEDIATE\r\n
+   BEGIN\r\n
+   ```
+   Starts a readonly transaction.
+
+   Returns: OK or ERROR
+
+7. **BEGIN IMMEDIATE**
+   ```
+   BEGIN IMMEDIATE WITH [TABLE (table_name, other table)] [VIEW (view_name, other_view)] [TRIGGER (trigger_name)]\r\n
+   ```
+   Starts a writable transaction with write access to the declared objects.
+   Note that if any tables require a principal, the principal must be declared before starting the transaction.
+
+   Returns: OK or ERROR
+
+8. **COMMIT**
+   ```
    COMMIT\r\n
+   ```
+   Commits the current transaction.
+
+   Returns: OK or ERROR
+
+9. **ROLLBACK**
+   ```
    ROLLBACK\r\n
+   ```
+   Rollback the current transaction.
+
+   Returns: OK or ERROR
+
+10. **SAVEPOINT**
+   ```
    SAVEPOINT [name]\r\n
+   ```
+   Create a savepoint in the current transaction.
+
+   Returns: OK or ERROR
+
+11. **RELEASE**
+   ```
    RELEASE [name]\r\n
    ```
-   Manages database transactions, including savepoints for partial rollbacks.
+   Release a savepoint in the current transaction.
 
-7. **Pragmas:**
-   ```
-   PRAGMA [name]=[VALUE]\r\n
-   PRAGMA [name]\r\n
-   ```
-   Configures or queries node-specific settings.
+12. **Pragmas:**
+    ```
+    PRAGMA [name]=[VALUE]\r\n
+    PRAGMA [name]\r\n
+    ```
+    Configures or queries node-specific settings.
 
-8. **Principle Command:**
-   ```
-   PRINCIPLE [principle_name] [id]\r\n
-   ```
-   Sets the principle context for row-level security. A valid principle must be established before interacting with
-   tables that use row-level security.
+13. **Principle Command:**
+    ```
+    PRINCIPLE [principle_name] [id]\r\n
+    ```
+    Sets the principle context for row-level security.
+    A valid principle must be established before interacting with tables that use row-level security.
+    It cannot be used in a transaction.
 
-9. **Scroll Command:**
+    Returns: OK or ERROR
+
+14. **Scroll Command:**
+    ```
+    SCROLL [StreamID] [Count]\r\n
+    ```
+    Fetches a specific number of rows from a stream identified by `StreamID`.
+
+    RETURNS: ROWS + METADATA + OK
+15. **RESET:**
    ```
-   SCROLL [StreamID] [Count]\r\n
+   RESET [ID]\r\n
    ```
-   Fetches a specific number of rows from a stream identified by `StreamID`.
+   Resets a prepared query, so it can be run again.
+
+   Returns: OK or ERROR
+
+16. **CLEAR BINDINGS:**
+   ```
+   CLEARBINDINGS [ID]\r\n
+   ```
+   Clears the bindings for a prepared query.
+
+   Returns: OK or ERROR
 
 ---
 

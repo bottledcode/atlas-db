@@ -74,7 +74,7 @@ func (c *Scroll) outputRow(stmt *sqlite.Stmt, s *Socket) (complete bool, err err
 					return
 				}
 			case sqlite.TypeBlob:
-				var bytes []byte
+				bytes := make([]byte, stmt.ColumnLen(i))
 				stmt.ColumnBytes(i, bytes)
 				str := base64.StdEncoding.EncodeToString(bytes)
 				err = s.writeMessage(fmt.Sprintf("ROW %d BLOB %d %s", i, len(str), str))

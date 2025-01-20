@@ -21,6 +21,7 @@ package socket
 import (
 	"bufio"
 	"context"
+	"errors"
 	"github.com/bottledcode/atlas-db/atlas/commands"
 	"strings"
 )
@@ -35,6 +36,8 @@ func NewScanner(reader *bufio.ReadWriter) *Scanner {
 	}
 }
 
+const maxScannerLength = 128 * 1024 * 1024 // 128mb
+
 func (s *Scanner) Scan(ctx context.Context) (chan *commands.CommandString, chan error) {
 	out := make(chan *commands.CommandString)
 	errs := make(chan error)
@@ -48,6 +51,7 @@ func (s *Scanner) Scan(ctx context.Context) (chan *commands.CommandString, chan 
 		for {
 			select {
 			case <-ctx.Done():
+				buf.Reset()
 				return
 			default:
 				line, isPrefix, err := s.reader.ReadLine()
@@ -56,6 +60,11 @@ func (s *Scanner) Scan(ctx context.Context) (chan *commands.CommandString, chan 
 					return
 				}
 				buf.WriteString(string(line))
+				if buf.Len() > maxScannerLength {
+					errs <- errors.New("command exceeded maximum length")
+					return
+				}
+
 				if !isPrefix {
 					out <- commands.CommandFromString(buf.String())
 					buf.Reset()

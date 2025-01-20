@@ -29,12 +29,12 @@ type Principal struct {
 }
 
 func ParsePrincipal(cmd *commands.CommandString) (principal *Principal, err error) {
-	if err = cmd.CheckExactLen(2); err != nil {
+	if err = cmd.CheckExactLen(3); err != nil {
 		return
 	}
 
-	name, _ := cmd.SelectNormalizedCommand(2)
-	value := cmd.SelectCommand(3)
+	name, _ := cmd.SelectNormalizedCommand(1)
+	value := cmd.SelectCommand(2)
 	return &Principal{name: name, value: value}, nil
 }
 

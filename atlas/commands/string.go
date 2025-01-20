@@ -198,6 +198,9 @@ func (c *CommandString) From(start int) *SqlCommand {
 
 // SelectCommand returns the kth command from the raw command.
 func (c *CommandString) SelectCommand(k int) string {
+	if k >= len(c.rawParts) || k < 0 {
+		return ""
+	}
 	return c.rawParts[k]
 }
 

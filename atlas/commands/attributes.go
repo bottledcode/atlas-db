@@ -51,7 +51,7 @@ func (c *SqlCommand) IsQueryReadOnly() bool {
 }
 
 func (c *SqlCommand) NonAllowedQuery() bool {
-	switch c.SelectCommand(0) {
+	switch q, _ := c.SelectNormalizedCommand(0); q {
 	case "BEGIN":
 		return true
 	case "COMMIT":
@@ -74,7 +74,7 @@ func (c *SqlCommand) NonAllowedQuery() bool {
 }
 
 func (c *SqlCommand) IsQueryChangeSchema() bool {
-	switch c.SelectCommand(0) {
+	switch q, _ := c.SelectNormalizedCommand(0); q {
 	case "ALTER":
 		return true
 	case "CREATE":

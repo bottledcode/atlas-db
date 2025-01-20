@@ -227,7 +227,7 @@ func (c *CommandString) ReplaceCommand(original, new string) Command {
 }
 
 // EmptyCommandString is an empty CommandString
-var EmptyCommandString *CommandString = &CommandString{}
+var EmptyCommandString *CommandString = CommandFromString("")
 
 // NormalizedLen returns the number of parts in the normalized command.
 func (c *CommandString) NormalizedLen() int {

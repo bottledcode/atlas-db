@@ -96,7 +96,7 @@ func CreateTable(c commands.Command) ([]*consensus.Table, error) {
 	}
 
 	level := consensus.ReplicationLevel_global
-	tableType := consensus.TableType_table
+	var tableType consensus.TableType
 
 	switch l {
 	case "GLOBAL": // global table; the default
@@ -108,11 +108,11 @@ func CreateTable(c commands.Command) ([]*consensus.Table, error) {
 		level = consensus.ReplicationLevel_local
 		c = c.ReplaceCommand("CREATE LOCAL", "CREATE")
 	case "TABLE": // global table; the default
-		tableType = consensus.TableType_table
+		break
 	case "TRIGGER":
-		tableType = consensus.TableType_trigger
+		break
 	case "VIEW":
-		tableType = consensus.TableType_view
+		break
 	default:
 		return nil, errors.New("CREATE TABLE: unknown replication level")
 	}

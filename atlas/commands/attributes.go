@@ -16,45 +16,15 @@
  *
  */
 
-package socket
+package commands
 
-import (
-	"context"
-	"zombiezen.com/go/sqlite"
-)
-
-func maybeWatchTable(ctx context.Context, query *commandString, session *sqlite.Session) error {
-	if query.selectNormalizedCommand(0) != "CREATE" {
-		return nil
-	}
-
-	var tableName string
-
-	switch query.selectNormalizedCommand(1) {
-	case "TABLE":
-		tableName = query.selectNormalizedCommand(2)
-	case "REGIONAL":
-		tableName = query.selectNormalizedCommand(3)
-	}
-
-	if tableName == "" {
-		// this is a local table
-
-		return nil
-	}
-
-	// watch the table
-	err := session.Attach(tableName)
-	if err != nil {
-		return err
-	}
-
-	return nil
+type SqlCommand struct {
+	CommandString
 }
 
-// isQueryReadOnly returns whether a query is read-only or not
-func isQueryReadOnly(query *commandString) bool {
-	switch query.selectCommand(0) {
+// IsQueryReadOnly returns whether a query is read-only or not
+func (c *SqlCommand) IsQueryReadOnly() bool {
+	switch d, _ := c.SelectNormalizedCommand(0); d {
 	case "ALTER":
 		return false
 	case "CREATE":
@@ -80,8 +50,8 @@ func isQueryReadOnly(query *commandString) bool {
 	return true
 }
 
-func nonAllowedQuery(query *commandString) bool {
-	switch query.selectCommand(0) {
+func (c *SqlCommand) NonAllowedQuery() bool {
+	switch q, _ := c.SelectNormalizedCommand(0); q {
 	case "BEGIN":
 		return true
 	case "COMMIT":
@@ -103,8 +73,8 @@ func nonAllowedQuery(query *commandString) bool {
 	return false
 }
 
-func isQueryChangeSchema(query *commandString) bool {
-	switch query.selectCommand(0) {
+func (c *SqlCommand) IsQueryChangeSchema() bool {
+	switch q, _ := c.SelectNormalizedCommand(0); q {
 	case "ALTER":
 		return true
 	case "CREATE":

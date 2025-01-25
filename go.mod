@@ -1,6 +1,6 @@
 module github.com/bottledcode/atlas-db
 
-go 1.23.4
+go 1.23.5
 
 require (
 	github.com/caddyserver/caddy/v2 v2.9.1

@@ -15,7 +15,7 @@
     // "forwardPorts": [],
 
     // Use 'postCreateCommand' to run commands after the container is created.
-    // "postCreateCommand": "go version",
+    "postCreateCommand": "go version && go install golang.org/x/tools/gopls@latest && go install github.com/go-delve/delve/cmd/dlv@latest",
 
     // Configure tool-specific properties.
     "customizations": {

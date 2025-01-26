@@ -34,7 +34,7 @@ import (
 	"zombiezen.com/go/sqlite"
 )
 
-const NodeTable = "atlas.nodes"
+const NodeTable = "ATLAS.NODES"
 
 type Server struct {
 	UnimplementedConsensusServer
@@ -303,7 +303,7 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 	}()
 
 	commitConn := conn
-	if !strings.HasPrefix(req.GetMigration().GetVersion().GetTableName(), "atlas.") {
+	if !strings.HasPrefix(req.GetMigration().GetVersion().GetTableName(), "ATLAS.") {
 		commitConn, err = atlas.Pool.Take(ctx)
 		if err != nil {
 			return nil, err

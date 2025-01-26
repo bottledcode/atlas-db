@@ -28,9 +28,10 @@ import (
 )
 
 type Authorizer struct {
-	boundTime  time.Duration
-	mu         sync.RWMutex
-	LastTables map[string]struct{}
+	boundTime     time.Duration
+	mu            sync.RWMutex
+	LastTables    map[string]struct{}
+	ForceReadonly bool
 }
 
 var writeOps []sqlite.OpType = []sqlite.OpType{
@@ -93,6 +94,10 @@ func (a *Authorizer) isAtlasChange(action sqlite.Action) bool {
 
 func (a *Authorizer) Authorize(action sqlite.Action) sqlite.AuthResult {
 	Logger.Info("Auth", zap.Any("action", action), zap.String("table", action.Table()))
+
+	if a.ForceReadonly && a.isWrite(action) {
+		return sqlite.AuthResultDeny
+	}
 
 	if action.Table() != "" && action.Database() != "" && action.Table() != "sqlite_master" {
 		name := strings.ToUpper(action.Database()) + "." + strings.ToUpper(action.Table())

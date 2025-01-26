@@ -305,28 +305,8 @@ ready:
 				err = s.PerformBind(cmd)
 				goto handleError
 			case "BEGIN":
-				if s.inTransaction {
-					err = makeFatal(errors.New("the transaction is already in progress"))
-					goto handleError
-				}
-				if t, ok := cmd.SelectNormalizedCommand(1); ok && t == "IMMEDIATE" {
-					_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", s.sql, false)
-					if err != nil {
-						err = makeFatal(err)
-						goto handleError
-					}
-				} else {
-					_, err = atlas.ExecuteSQL(ctx, "BEGIN", s.sql, false)
-					if err != nil {
-						err = makeFatal(err)
-						goto handleError
-					}
-				}
-				s.inTransaction = true
-
-				s.session, err = atlas.InitializeSession(ctx, s.sql)
+				_, err = s.PerformBegin(ctx, cmd)
 				if err != nil {
-					err = makeFatal(err)
 					goto handleError
 				}
 
@@ -480,103 +460,6 @@ ready:
 	}
 }
 
-func (s *Socket) SanitizeBegin(cmd commands.Command) (tables, views, triggers []string, err error) {
-	if s.inTransaction {
-		err = errors.New("the transaction is already in progress")
-		return
-	}
-
-	extractList := func() (list []string, err error) {
-		var rip []string
-		n := 3
-		expectingFirst := true
-		expectingLast := true
-		for {
-			first, _ := cmd.SelectNormalizedCommand(n)
-			rip = append(rip, first)
-			n++
-			isLast := false
-			first = strings.TrimSuffix(first, ",")
-			if first == "" {
-				break
-			}
-			if first == "(" {
-				expectingFirst = false
-				continue
-			}
-			if first == ")" {
-				expectingLast = false
-				break
-			}
-			if strings.HasPrefix(first, "(") {
-				first = strings.TrimPrefix(first, "(")
-				expectingFirst = false
-			}
-			if strings.HasSuffix(first, ")") {
-				expectingLast = false
-				first = strings.TrimSuffix(first, ")")
-				isLast = true
-			}
-			if expectingFirst {
-				err = errors.New("expected table name in parentheses")
-				return
-			}
-
-			if first == "," {
-				continue
-			}
-
-			list = append(list, cmd.NormalizeName(first))
-			if isLast {
-				break
-			}
-		}
-		if expectingFirst || expectingLast {
-			err = errors.New("expected table name in parentheses")
-			return
-		}
-		cmd = cmd.ReplaceCommand(strings.Join(rip, " "), "BEGIN IMMEDIATE")
-		return
-	}
-
-	if t, ok := cmd.SelectNormalizedCommand(1); ok && t == "IMMEDIATE" {
-		if err = cmd.CheckMinLen(3); err != nil {
-			return
-		}
-		for {
-			switch t, _ = cmd.SelectNormalizedCommand(2); t {
-			case "TABLE":
-				if err = cmd.CheckMinLen(4); err != nil {
-					return
-				}
-				tables, err = extractList()
-				if err != nil {
-					return
-				}
-			case "VIEW":
-				if err = cmd.CheckMinLen(4); err != nil {
-					return
-				}
-				views, err = extractList()
-				if err != nil {
-					return
-				}
-			case "TRIGGER":
-				if err = cmd.CheckMinLen(4); err != nil {
-					return
-				}
-				triggers, err = extractList()
-				if err != nil {
-					return
-				}
-			default:
-				return
-			}
-		}
-	}
-	return
-}
-
 func (s *Socket) PerformFinalize(cmd *commands.CommandString) (err error) {
 	if err = cmd.CheckExactLen(2); err != nil {
 		return
@@ -596,6 +479,94 @@ func (s *Socket) PerformFinalize(cmd *commands.CommandString) (err error) {
 		return
 	}
 	err = s.writeOk(OK)
+	return
+}
+
+func (s *Socket) PerformBegin(ctx context.Context, cmd *commands.CommandString) (begin *Begin, err error) {
+	if begin, err = ParseBegin(cmd); err != nil {
+		return
+	}
+	if err = begin.Handle(s); err != nil {
+		return
+	}
+
+	if begin.isReadonly {
+		_, err = atlas.ExecuteSQL(ctx, "BEGIN", s.sql, false)
+		return
+	}
+
+	q := make(map[string]consensus.Quorum)
+
+	conn, err := atlas.MigrationsPool.Take(ctx)
+	if err != nil {
+		return
+	}
+	defer atlas.MigrationsPool.Put(conn)
+
+	tr := consensus.GetDefaultTableRepository(ctx, conn)
+
+	// before doing anything, we need to flag the tables as being held so we do not give them up if we become an owner
+	for _, p := range begin.tables {
+		// see if this table already exists
+		var t *consensus.Table
+		t, err = tr.GetTable(p)
+		if err != nil {
+			return
+		}
+		if t == nil {
+			// we either expect the table to be created in the new transaction, or we do not have any information about it yet
+			continue
+		}
+
+		atlas.Ownership.Hold(p)
+		defer func(p string) {
+			if err != nil {
+				atlas.Ownership.Release(p)
+			}
+		}(p)
+
+		q[p], err = consensus.GetDefaultQuorumManager(ctx).GetQuorum(ctx, p)
+		if err != nil {
+			return
+		}
+
+	retry:
+
+		var resp *consensus.StealTableOwnershipResponse
+		resp, err = q[p].StealTableOwnership(ctx, &consensus.StealTableOwnershipRequest{
+			Sender: consensus.ConstructCurrentNode(),
+			Reason: consensus.StealReason_queryReason,
+			Table:  t,
+		})
+		if err != nil {
+			return
+		}
+
+		// we do not have the table and this could be because the table was updated or some other reason
+		switch resp.GetResponse().(type) {
+		case *consensus.StealTableOwnershipResponse_Failure:
+			// update the table if newer
+			if resp.GetFailure().GetTable().GetVersion() > t.GetVersion() {
+				t = resp.GetFailure().GetTable()
+				err = tr.UpdateTable(t)
+				if err != nil {
+					return
+				}
+				goto retry
+			}
+			// We were denied ownership for some reason unrelated to the table being updated.
+			// This is most likely because the table owner has refused the movement to the current region.
+			err = errors.New("forwarding required")
+			return
+		case *consensus.StealTableOwnershipResponse_Success:
+			// check that we were promised the ownership
+			if resp.GetPromised() {
+				// we have the table and now we can proceed once we apply any missing migrations
+
+			}
+		}
+	}
+
 	return
 }
 

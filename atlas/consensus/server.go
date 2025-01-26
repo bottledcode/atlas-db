@@ -53,6 +53,9 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 	}()
 
 	_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", conn, false)
+	if err != nil {
+		return nil, err
+	}
 
 	tr := GetDefaultTableRepository(ctx, conn)
 	existingTable, err := tr.GetTable(req.GetTable().GetName())

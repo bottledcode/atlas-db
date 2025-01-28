@@ -30,11 +30,10 @@ jobs:
 
     - name: Build
       run: |
-        cd atlas/caddy
-        go build -v
+        make
 
     - name: Test
-      run: go test -v ./...
+      run: make test
 
   lint:
     runs-on: self-hosted
@@ -46,6 +45,10 @@ jobs:
       with:
         go-version: '1.23.4'
         cache: true
+
+    - name: Build
+      run: |
+        make
 
     - name: golangci-lint
       uses: golangci/golangci-lint-action@7ec71f69b140deafe2ba0c477db8aacd59cdfe55 # v6.1

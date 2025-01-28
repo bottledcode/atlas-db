@@ -21,8 +21,8 @@
 #install protoc
 #https://github.com/protocolbuffers/protobuf/releases/
 
-OS=`uname`
-OS=$(echo "$OS" | tr '[A-Z]' '[a-z]')
+OS=$(uname)
+OS=$(echo "$OS" | tr '[:upper]' '[:lower]')
 
 if [ "$OS" = "darwin" ]; then
     platform="osx-universal_binary"
@@ -33,6 +33,7 @@ fi
 TAG="29.3"
 wget https://github.com/protocolbuffers/protobuf/releases/download/v${TAG}/protoc-${TAG}-${platform}.zip -O protoc.zip
 
+# shellcheck disable=SC2181
 if [ $? -eq 0 ]; then
     unzip protoc.zip -d tools/
     rm -f protoc.zip

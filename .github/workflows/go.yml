@@ -46,6 +46,10 @@ jobs:
         go-version: '1.23.4'
         cache: true
 
+    - name: Build
+      run: |
+        make
+
     - name: golangci-lint
       uses: golangci/golangci-lint-action@7ec71f69b140deafe2ba0c477db8aacd59cdfe55 # v6.1
       with:

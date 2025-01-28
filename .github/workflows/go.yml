@@ -30,11 +30,10 @@ jobs:
 
     - name: Build
       run: |
-        cd atlas/caddy
-        go build -v
+        make
 
     - name: Test
-      run: go test -v ./...
+      run: make test
 
   lint:
     runs-on: self-hosted

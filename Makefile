@@ -18,7 +18,13 @@ atlas/consensus/consensus.pb.go: atlas/consensus/consensus.proto tools/bin/proto
 	@echo "Generating consensus protobuf files"
 	@cd atlas && protoc --go_out=. --go-grpc_out=. consensus/consensus.proto
 
-tools/bin/protoc-gen-go-grpc:
+tools/bin/protoc-gen-go:
+	@echo "Installing protoc"
+	@mkdir -p tools
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+	cp $(shell go env GOPATH)/bin/protoc-gen-go tools/bin/protoc-gen-go
+
+tools/bin/protoc-gen-go-grpc: tools/bin/protoc-gen-go
 	@echo "Installing protoc"
 	@mkdir -p tools
 	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest

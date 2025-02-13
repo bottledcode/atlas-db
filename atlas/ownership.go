@@ -42,12 +42,51 @@ type TableOwnerships struct {
 	mu            sync.RWMutex
 	subscriptions map[string][]chan<- TableOwnershipChange
 	commitTimes   map[string]time.Time
+	holds         map[string]int
 }
 
 var Ownership = &TableOwnerships{
 	own:           map[string]struct{}{},
 	subscriptions: map[string][]chan<- TableOwnershipChange{},
 	commitTimes:   map[string]time.Time{},
+	holds:         map[string]int{},
+}
+
+func (t *TableOwnerships) Hold(table string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if c, ok := t.holds[table]; ok {
+		t.holds[table] = c + 1
+		return
+	}
+
+	t.holds[table] = 1
+}
+
+func (t *TableOwnerships) Release(table string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if c, ok := t.holds[table]; ok {
+		if c == 1 {
+			delete(t.holds, table)
+		} else {
+			t.holds[table] = c - 1
+		}
+	}
+
+	if c, ok := t.holds[table]; ok && c <= 0 {
+		delete(t.holds, table)
+	}
+}
+
+func (t *TableOwnerships) IsHeld(table string) bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	_, ok := t.holds[table]
+	return ok
 }
 
 func (t *TableOwnerships) Add(table string, version int64) {

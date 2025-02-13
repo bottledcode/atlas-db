@@ -48,6 +48,7 @@ type Socket struct {
 	streams       []*sqlite.Stmt
 	principals    []*consensus.Principal
 	timeout       time.Duration
+	authorizer    *atlas.Authorizer
 }
 
 func (s *Socket) Cleanup() {
@@ -160,6 +161,9 @@ func (s *Socket) rollbackAutoTransaction(ctx context.Context, err error) error {
 }
 
 func (s *Socket) setTimeout(t time.Duration) error {
+	if t == 0 {
+		return s.conn.SetDeadline(time.Time{})
+	}
 	return s.conn.SetDeadline(time.Now().Add(t))
 }
 
@@ -247,6 +251,15 @@ ready:
 	}
 	defer atlas.Pool.Put(s.sql)
 
+	s.authorizer = &atlas.Authorizer{}
+
+	err = s.sql.SetAuthorizer(s.authorizer)
+	if err != nil {
+		atlas.Logger.Error("Error setting authorizer", zap.Error(err))
+		return
+	}
+	defer s.sql.SetAuthorizer(nil)
+
 	if err = s.setTimeout(s.timeout); err != nil {
 		return
 	}
@@ -292,28 +305,8 @@ ready:
 				err = s.PerformBind(cmd)
 				goto handleError
 			case "BEGIN":
-				if s.inTransaction {
-					err = makeFatal(errors.New("the transaction is already in progress"))
-					goto handleError
-				}
-				if t, ok := cmd.SelectNormalizedCommand(1); ok && t == "IMMEDIATE" {
-					_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", s.sql, false)
-					if err != nil {
-						err = makeFatal(err)
-						goto handleError
-					}
-				} else {
-					_, err = atlas.ExecuteSQL(ctx, "BEGIN", s.sql, false)
-					if err != nil {
-						err = makeFatal(err)
-						goto handleError
-					}
-				}
-				s.inTransaction = true
-
-				s.session, err = atlas.InitializeSession(ctx, s.sql)
+				_, err = s.PerformBegin(ctx, cmd)
 				if err != nil {
-					err = makeFatal(err)
 					goto handleError
 				}
 
@@ -486,6 +479,94 @@ func (s *Socket) PerformFinalize(cmd *commands.CommandString) (err error) {
 		return
 	}
 	err = s.writeOk(OK)
+	return
+}
+
+func (s *Socket) PerformBegin(ctx context.Context, cmd *commands.CommandString) (begin *Begin, err error) {
+	if begin, err = ParseBegin(cmd); err != nil {
+		return
+	}
+	if err = begin.Handle(s); err != nil {
+		return
+	}
+
+	if begin.isReadonly {
+		_, err = atlas.ExecuteSQL(ctx, "BEGIN", s.sql, false)
+		return
+	}
+
+	q := make(map[string]consensus.Quorum)
+
+	conn, err := atlas.MigrationsPool.Take(ctx)
+	if err != nil {
+		return
+	}
+	defer atlas.MigrationsPool.Put(conn)
+
+	tr := consensus.GetDefaultTableRepository(ctx, conn)
+
+	// before doing anything, we need to flag the tables as being held so we do not give them up if we become an owner
+	for _, p := range begin.tables {
+		// see if this table already exists
+		var t *consensus.Table
+		t, err = tr.GetTable(p)
+		if err != nil {
+			return
+		}
+		if t == nil {
+			// we either expect the table to be created in the new transaction, or we do not have any information about it yet
+			continue
+		}
+
+		atlas.Ownership.Hold(p)
+		defer func(p string) {
+			if err != nil {
+				atlas.Ownership.Release(p)
+			}
+		}(p)
+
+		q[p], err = consensus.GetDefaultQuorumManager(ctx).GetQuorum(ctx, p)
+		if err != nil {
+			return
+		}
+
+	retry:
+
+		var resp *consensus.StealTableOwnershipResponse
+		resp, err = q[p].StealTableOwnership(ctx, &consensus.StealTableOwnershipRequest{
+			Sender: consensus.ConstructCurrentNode(),
+			Reason: consensus.StealReason_queryReason,
+			Table:  t,
+		})
+		if err != nil {
+			return
+		}
+
+		// we do not have the table and this could be because the table was updated or some other reason
+		switch resp.GetResponse().(type) {
+		case *consensus.StealTableOwnershipResponse_Failure:
+			// update the table if newer
+			if resp.GetFailure().GetTable().GetVersion() > t.GetVersion() {
+				t = resp.GetFailure().GetTable()
+				err = tr.UpdateTable(t)
+				if err != nil {
+					return
+				}
+				goto retry
+			}
+			// We were denied ownership for some reason unrelated to the table being updated.
+			// This is most likely because the table owner has refused the movement to the current region.
+			err = errors.New("forwarding required")
+			return
+		case *consensus.StealTableOwnershipResponse_Success:
+			// check that we were promised the ownership
+			if resp.GetPromised() {
+				// we have the table and now we can proceed once we apply any missing migrations
+
+			}
+		}
+	}
+
 	return
 }
 

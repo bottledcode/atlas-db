@@ -51,7 +51,7 @@ jobs:
         make
 
     - name: golangci-lint
-      uses: golangci/golangci-lint-action@db1c463e05c87f65a1da26368fb4f6639406da0a # v6.1
+      uses: golangci/golangci-lint-action@3b4f037d0e94e85d98f9824ef87b2dc32d53fbd5 # v6.1
       with:
         version: v1.60
         only-new-issues: true

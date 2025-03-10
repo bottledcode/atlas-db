@@ -25,11 +25,21 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"sync"
+	"sync/atomic"
 )
 
 type majorityQuorum struct {
-	q1 []*QuorumNode
-	q2 []*QuorumNode
+	q1                   []*QuorumNode
+	q2                   []*QuorumNode
+	nextMigrationVersion atomic.Int64
+}
+
+func (m *majorityQuorum) SetNextMigrationVersion(version int64) {
+	m.nextMigrationVersion.Store(version)
+}
+
+func (m *majorityQuorum) GetNextMigrationVersion() int64 {
+	return m.nextMigrationVersion.Load()
 }
 
 func (m *majorityQuorum) Gossip(ctx context.Context, in *GossipMigration, opts ...grpc.CallOption) (*emptypb.Empty, error) {

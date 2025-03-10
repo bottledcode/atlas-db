@@ -19,32 +19,54 @@
 package socket
 
 import (
+	"github.com/bottledcode/atlas-db/atlas"
 	"github.com/bottledcode/atlas-db/atlas/commands"
+	"github.com/bottledcode/atlas-db/atlas/consensus"
+	"github.com/bottledcode/atlas-db/atlas/operations"
+	"go.uber.org/zap"
 	"zombiezen.com/go/sqlite"
 )
 
 type Query struct {
-	stmt  *sqlite.Stmt
-	query *commands.SqlCommand
+	stmt   *sqlite.Stmt
+	query  *commands.SqlCommand
+	tables []*consensus.Table
 }
 
-func ParseQuery(cmd *commands.CommandString) (*Query, error) {
+func ParseQuery(cmd *commands.CommandString) (query *Query, err error) {
 	if err := cmd.CheckMinLen(2); err != nil {
 		return nil, err
 	}
 
 	q := cmd.From(1)
 
-	return &Query{
+	query = &Query{
 		query: q,
 		stmt:  nil,
-	}, nil
+	}
+
+	return query, nil
 }
 
 func (q *Query) Handle(s *Socket) (err error) {
+	s.authorizer.Reset()
 	q.stmt, _, err = s.sql.PrepareTransient(q.query.Raw())
 	if err != nil {
 		return makeFatal(err)
+	}
+	tables := s.authorizer.LastTables
+	atlas.Logger.Info("tables", zap.Any("tables", tables))
+
+	if !q.query.IsQueryReadOnly() {
+		first, _ := q.query.SelectNormalizedCommand(0)
+		if first == "CREATE" {
+			q.tables, err = operations.CreateTable(q.query)
+			if err != nil {
+				return nil
+			}
+		}
+
+		// todo: handle alters
 	}
 
 	s.streams = append(s.streams, q.stmt)

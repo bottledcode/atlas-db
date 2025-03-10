@@ -34,7 +34,7 @@ import (
 	"zombiezen.com/go/sqlite"
 )
 
-const NodeTable = "atlas.nodes"
+const NodeTable = "ATLAS.NODES"
 
 type Server struct {
 	UnimplementedConsensusServer
@@ -53,6 +53,9 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 	}()
 
 	_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", conn, false)
+	if err != nil {
+		return nil, err
+	}
 
 	tr := GetDefaultTableRepository(ctx, conn)
 	existingTable, err := tr.GetTable(req.GetTable().GetName())
@@ -303,7 +306,7 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 	}()
 
 	commitConn := conn
-	if !strings.HasPrefix(req.GetMigration().GetVersion().GetTableName(), "atlas.") {
+	if !strings.HasPrefix(req.GetMigration().GetVersion().GetTableName(), "ATLAS.") {
 		commitConn, err = atlas.Pool.Take(ctx)
 		if err != nil {
 			return nil, err
@@ -388,7 +391,7 @@ func (s *Server) applyMigration(migrations []*Migration, commitConn *sqlite.Conn
 	return nil
 }
 
-func constructCurrentNode() *Node {
+func ConstructCurrentNode() *Node {
 	return &Node{
 		Id:      atlas.CurrentOptions.ServerId,
 		Address: atlas.CurrentOptions.AdvertiseAddress,
@@ -515,7 +518,7 @@ VALUES (:id, :address, :port, :region, 1, current_timestamp, 0)`, conn, false, a
 	}
 
 	mreq := &WriteMigrationRequest{
-		Sender:    constructCurrentNode(),
+		Sender:    ConstructCurrentNode(),
 		Migration: migration,
 	}
 
@@ -635,7 +638,7 @@ func SendGossip(ctx context.Context, req *GossipMigration, conn *sqlite.Conn) er
 		Table:             req.GetTable(),
 		PreviousMigration: req.GetPreviousMigration(),
 		Ttl:               req.GetTtl() - 1,
-		Sender:            constructCurrentNode(),
+		Sender:            ConstructCurrentNode(),
 	}
 
 	wg := sync.WaitGroup{}

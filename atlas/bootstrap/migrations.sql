@@ -76,7 +76,7 @@ create table tables
 );
 /* Insert the nodes table as a tracked table */
 insert into tables
-values ('atlas.nodes', 'global', null, current_timestamp, 0, '', '');
+values ('ATLAS.NODES', 'global', null, current_timestamp, 0, '', '');
 
 /* Migrations are defined as rows on this table.
    They are ultimately numbered by the version and batch_part columns.

@@ -357,6 +357,9 @@ SET address = :address, port = :port, region = :region, active = 1
 		return err
 	}
 
+	// add the node to the quorum manager
+	qm.AddNode(node)
+
 	atlas.CurrentOptions.ServerId = node.Id
 
 	return err

@@ -73,6 +73,8 @@ func (q *defaultQuorumManager) AddNode(node *Node) {
 
 type Quorum interface {
 	ConsensusClient
+	SetNextMigrationVersion(version int64)
+	GetNextMigrationVersion() int64
 }
 
 type QuorumNode struct {

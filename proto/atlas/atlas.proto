@@ -1,0 +1,162 @@
+syntax = "proto3";
+
+package atlas;
+
+option go_package = "github.com/withinboredom/atlas-db-2/proto/atlas";
+
+import "google/protobuf/timestamp.proto";
+
+// Database service for client operations
+service AtlasDB {
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Put(PutRequest) returns (PutResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc Scan(ScanRequest) returns (stream ScanResponse);
+  rpc Batch(BatchRequest) returns (BatchResponse);
+}
+
+// Consensus service for inter-node communication
+service Consensus {
+  rpc Prepare(PrepareRequest) returns (PrepareResponse);
+  rpc Accept(AcceptRequest) returns (AcceptResponse);
+  rpc Commit(CommitRequest) returns (CommitResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+}
+
+// Client database operations
+message GetRequest {
+  string key = 1;
+  bool consistent_read = 2;
+}
+
+message GetResponse {
+  bytes value = 1;
+  bool found = 2;
+  int64 version = 3;
+}
+
+message PutRequest {
+  string key = 1;
+  bytes value = 2;
+  int64 expected_version = 3; // For optimistic concurrency
+}
+
+message PutResponse {
+  bool success = 1;
+  int64 version = 2;
+  string error = 3;
+}
+
+message DeleteRequest {
+  string key = 1;
+  int64 expected_version = 2;
+}
+
+message DeleteResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message ScanRequest {
+  string start_key = 1;
+  string end_key = 2;
+  int32 limit = 3;
+  bool reverse = 4;
+}
+
+message ScanResponse {
+  string key = 1;
+  bytes value = 2;
+  int64 version = 3;
+}
+
+message BatchRequest {
+  repeated Operation operations = 1;
+}
+
+message BatchResponse {
+  repeated OperationResult results = 1;
+}
+
+message Operation {
+  enum Type {
+    GET = 0;
+    PUT = 1;
+    DELETE = 2;
+  }
+  Type type = 1;
+  string key = 2;
+  bytes value = 3;
+  int64 expected_version = 4;
+}
+
+message OperationResult {
+  bool success = 1;
+  bytes value = 2;
+  int64 version = 3;
+  string error = 4;
+}
+
+// W-Paxos consensus protocol messages
+message PrepareRequest {
+  int64 proposal_number = 1;
+  string instance_id = 2;
+  int32 region_id = 3;
+}
+
+message PrepareResponse {
+  bool promise = 1;
+  int64 highest_proposal = 2;
+  bytes accepted_value = 3;
+  int64 accepted_proposal = 4;
+  repeated int32 fast_quorum_regions = 5;
+}
+
+message AcceptRequest {
+  int64 proposal_number = 1;
+  string instance_id = 2;
+  bytes value = 3;
+  int32 region_id = 4;
+  bool fast_path = 5;
+}
+
+message AcceptResponse {
+  bool accepted = 1;
+  int64 proposal_number = 2;
+}
+
+message CommitRequest {
+  string instance_id = 1;
+  bytes value = 2;
+  int64 proposal_number = 3;
+}
+
+message CommitResponse {
+  bool committed = 1;
+}
+
+message HeartbeatRequest {
+  string node_id = 1;
+  int32 region_id = 2;
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+message HeartbeatResponse {
+  bool alive = 1;
+  repeated string active_nodes = 2;
+}
+
+// Node and cluster information
+message NodeInfo {
+  string node_id = 1;
+  string address = 2;
+  int32 region_id = 3;
+  bool is_leader = 4;
+  google.protobuf.Timestamp last_seen = 5;
+}
+
+message ClusterInfo {
+  repeated NodeInfo nodes = 1;
+  int32 total_regions = 2;
+  string cluster_id = 3;
+}

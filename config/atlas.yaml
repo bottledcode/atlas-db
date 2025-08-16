@@ -1,0 +1,48 @@
+node:
+  id: "atlas-node-1"
+  address: "localhost:8080"
+  data_dir: "./data"
+  region_id: 1
+
+storage:
+  sync_writes: true
+  num_versions: 10
+  gc_interval: "5m"
+  value_log_gc_ratio: 0.5
+  max_table_size: 67108864  # 64MB
+  level_one_size: 268435456 # 256MB
+  value_log_file_size: 1073741824 # 1GB
+
+transport:
+  port: 8080
+  max_recv_msg_size: 4194304 # 4MB
+  max_send_msg_size: 4194304 # 4MB
+  connection_timeout: "10s"
+  keep_alive_time: "30s"
+  keep_alive_timeout: "5s"
+  max_connection_idle: "15m"
+  max_connection_age: "30m"
+  max_concurrent_stream: 100
+
+consensus:
+  prepare_timeout: "2s"
+  accept_timeout: "2s"
+  commit_timeout: "1s"
+  heartbeat_interval: "1s"
+  election_timeout: "5s"
+  max_proposal_retries: 3
+  fast_path_enabled: true
+  local_quorum_threshold: 0.6
+
+region:
+  latency_monitor_interval: "30s"
+  region_sync_enabled: true
+  region_sync_interval: "10s"
+  write_strategy: "local"
+  read_strategy: "local"
+  max_region_latency: "100ms"
+
+logging:
+  level: "info"
+  format: "json"
+  output: "stdout"

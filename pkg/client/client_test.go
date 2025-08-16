@@ -437,7 +437,7 @@ func TestClient_Batch(t *testing.T) {
 	}
 
 	// Check Put results
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if !result.Results[i].Success {
 			t.Errorf("Expected Put operation %d to succeed", i)
 		}

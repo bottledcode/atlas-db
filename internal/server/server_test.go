@@ -284,7 +284,7 @@ func TestServer_BatchOperation(t *testing.T) {
 	}
 
 	// Check Put results
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if !resp.Results[i].Success {
 			t.Errorf("Expected Put operation %d to succeed: %s", i, resp.Results[i].Error)
 		}
@@ -366,7 +366,7 @@ func TestServer_ConcurrentClients(t *testing.T) {
 
 	// Create multiple clients
 	clients := make([]client.Client, numClients)
-	for i := 0; i < numClients; i++ {
+	for i := range numClients {
 		db, err := client.Connect(address)
 		if err != nil {
 			t.Fatalf("Client %d connect failed: %v", i, err)
@@ -379,12 +379,12 @@ func TestServer_ConcurrentClients(t *testing.T) {
 	ctx := context.Background()
 	errChan := make(chan error, numClients)
 
-	for i := 0; i < numClients; i++ {
+	for i := range numClients {
 		go func(clientID int) {
 			db := clients[clientID]
-			for j := 0; j < numOperations; j++ {
+			for j := range numOperations {
 				key := fmt.Sprintf("client-%d-key-%d", clientID, j)
-				value := []byte(fmt.Sprintf("client-%d-value-%d", clientID, j))
+				value := fmt.Appendf(nil, "client-%d-value-%d", clientID, j)
 
 				_, err := db.Put(ctx, key, value)
 				if err != nil {
@@ -408,7 +408,7 @@ func TestServer_ConcurrentClients(t *testing.T) {
 	}
 
 	// Wait for all clients
-	for i := 0; i < numClients; i++ {
+	for range numClients {
 		if err := <-errChan; err != nil {
 			t.Fatalf("Concurrent client test failed: %v", err)
 		}
@@ -427,9 +427,9 @@ func TestServer_Stats(t *testing.T) {
 	defer db.Close()
 
 	ctx := context.Background()
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		key := fmt.Sprintf("stats-key-%d", i)
-		value := []byte(fmt.Sprintf("stats-value-%d", i))
+		value := fmt.Appendf(nil, "stats-value-%d", i)
 		_, err := db.Put(ctx, key, value)
 		if err != nil {
 			t.Fatalf("Put failed: %v", err)
@@ -491,7 +491,7 @@ func TestServer_MultipleStartStop(t *testing.T) {
 	}
 
 	// Start and stop multiple times
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		err := srv.Start()
 		if err != nil {
 			t.Fatalf("Start %d failed: %v", i, err)
@@ -568,7 +568,7 @@ func BenchmarkServer_PutGet(b *testing.B) {
 		i := 0
 		for pb.Next() {
 			key := fmt.Sprintf("bench-key-%d", i)
-			value := []byte(fmt.Sprintf("bench-value-%d", i))
+			value := fmt.Appendf(nil, "bench-value-%d", i)
 
 			_, err := db.Put(ctx, key, value)
 			if err != nil {

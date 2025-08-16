@@ -214,7 +214,7 @@ func TestWPaxos_MultiNodeProposal(t *testing.T) {
 	nodes := make([]*WPaxos, 3)
 	storages := make([]*mockStorage, 3)
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		storages[i] = newMockStorage()
 		nodeID := fmt.Sprintf("node%d", i+1)
 		nodes[i] = NewWPaxos(nodeID, 1, transport, storages[i])
@@ -265,7 +265,7 @@ func TestWPaxos_MultiRegionProposal(t *testing.T) {
 	// 2 nodes in region 1, 2 nodes in region 2
 	regions := []int32{1, 1, 2, 2}
 
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		storages[i] = newMockStorage()
 		nodeID := fmt.Sprintf("node%d", i+1)
 		nodes[i] = NewWPaxos(nodeID, regions[i], transport, storages[i])
@@ -492,7 +492,7 @@ func TestWPaxos_ConcurrentProposals(t *testing.T) {
 	nodes := make([]*WPaxos, 3)
 	storages := make([]*mockStorage, 3)
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		storages[i] = newMockStorage()
 		nodeID := fmt.Sprintf("node%d", i+1)
 		nodes[i] = NewWPaxos(nodeID, 1, transport, storages[i])
@@ -506,10 +506,10 @@ func TestWPaxos_ConcurrentProposals(t *testing.T) {
 	results := make(chan error, numProposals)
 
 	// Start concurrent proposals
-	for i := 0; i < numProposals; i++ {
+	for i := range numProposals {
 		go func(proposalID int) {
 			instanceID := fmt.Sprintf("concurrent-instance-%d", proposalID)
-			value := []byte(fmt.Sprintf("value-%d", proposalID))
+			value := fmt.Appendf(nil, "value-%d", proposalID)
 
 			// Use different nodes for proposals
 			nodeIndex := proposalID % len(nodes)
@@ -520,7 +520,7 @@ func TestWPaxos_ConcurrentProposals(t *testing.T) {
 
 	// Wait for all proposals to complete
 	successCount := 0
-	for i := 0; i < numProposals; i++ {
+	for i := range numProposals {
 		err := <-results
 		if err == nil {
 			successCount++

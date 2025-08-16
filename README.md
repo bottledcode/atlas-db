@@ -277,10 +277,6 @@ Atlas DB is designed for:
 - **Scalability**: Horizontal scaling across regions
 - **Consistency**: Configurable consistency levels
 
-## License
-
-MIT License - see LICENSE file for details.
-
 ## Support
 
 - Issues: GitHub Issues

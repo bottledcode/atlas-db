@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -270,16 +271,16 @@ logging:
 func TestLoadConfigMissingFile(t *testing.T) {
 	// Reset Viper state to clear any cached config
 	ResetViper()
-	
+
 	// Clear any environment variables that might interfere
 	originalEnvVars := make(map[string]string)
 	envVars := []string{"ATLAS_NODE_ID", "ATLAS_REGION_ID", "ATLAS_LOG_LEVEL", "ATLAS_NODE_ADDRESS", "ATLAS_DATA_DIR", "ATLAS_PORT", "ATLAS_WRITE_STRATEGY", "ATLAS_READ_STRATEGY"}
-	
+
 	for _, envVar := range envVars {
 		originalEnvVars[envVar] = os.Getenv(envVar)
 		os.Unsetenv(envVar)
 	}
-	
+
 	defer func() {
 		for envVar, value := range originalEnvVars {
 			if value != "" {
@@ -290,7 +291,7 @@ func TestLoadConfigMissingFile(t *testing.T) {
 		}
 		ResetViper() // Reset after test
 	}()
-	
+
 	// Loading missing file should use defaults (config file not found is not an error)
 	cfg, err := LoadConfig("")
 	if err != nil {
@@ -431,21 +432,21 @@ nodes:
 func TestEnvironmentVariableOverrides(t *testing.T) {
 	// Reset Viper state to clear any cached config
 	ResetViper()
-	
+
 	// Clear any existing environment variables first
 	envVars := []string{"ATLAS_NODE_ID", "ATLAS_REGION_ID", "ATLAS_LOG_LEVEL", "ATLAS_NODE_ADDRESS", "ATLAS_DATA_DIR", "ATLAS_PORT", "ATLAS_WRITE_STRATEGY", "ATLAS_READ_STRATEGY"}
 	originalValues := make(map[string]string)
-	
+
 	for _, envVar := range envVars {
 		originalValues[envVar] = os.Getenv(envVar)
 		os.Unsetenv(envVar)
 	}
-	
+
 	// Set environment variables
 	os.Setenv("ATLAS_NODE_ID", "env-node")
 	os.Setenv("ATLAS_REGION_ID", "5")
 	os.Setenv("ATLAS_LOG_LEVEL", "error")
-	
+
 	defer func() {
 		// Restore original values
 		for envVar, value := range originalValues {
@@ -522,13 +523,7 @@ func TestConfigSizes(t *testing.T) {
 	}
 }
 
-
 // Helper function to check if slice contains string
 func stringInSlice(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, item)
 }

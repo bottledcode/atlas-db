@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/spf13/viper"
@@ -104,7 +105,7 @@ func DefaultConfig() *Config {
 			NumVersions:      10,
 			GCInterval:       5 * time.Minute,
 			ValueLogGCRatio:  0.5,
-			MaxTableSize:     64 << 20, // 64MB
+			MaxTableSize:     64 << 20,  // 64MB
 			LevelOneSize:     256 << 20, // 256MB
 			ValueLogFileSize: 1 << 30,   // 1GB
 		},
@@ -156,7 +157,7 @@ func LoadConfig(configPath string) (*Config, error) {
 
 	viper.SetConfigType("yaml")
 	viper.SetConfigName("atlas")
-	
+
 	if configPath != "" {
 		viper.SetConfigFile(configPath)
 	} else {
@@ -277,12 +278,7 @@ func (c *Config) Validate() error {
 
 // contains checks if a slice contains a string
 func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, item)
 }
 
 // SaveConfig saves the configuration to a file
@@ -294,6 +290,6 @@ func (c *Config) SaveConfig(path string) error {
 	viper.Set("consensus", c.Consensus)
 	viper.Set("region", c.Region)
 	viper.Set("logging", c.Logging)
-	
+
 	return viper.WriteConfig()
 }

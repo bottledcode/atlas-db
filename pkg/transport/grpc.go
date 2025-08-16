@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"slices"
 	"sync"
 
 	"google.golang.org/grpc"
@@ -113,13 +114,7 @@ func (gt *GRPCTransport) AddNode(nodeInfo *atlas.NodeInfo) {
 	}
 
 	// Add node if not already present
-	found := false
-	for _, id := range regionNodes {
-		if id == nodeInfo.NodeId {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(regionNodes, nodeInfo.NodeId)
 
 	if !found {
 		gt.regions[nodeInfo.RegionId] = append(regionNodes, nodeInfo.NodeId)

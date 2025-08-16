@@ -200,7 +200,7 @@ func (wo *WriteOptimizer) getConsistent(ctx context.Context, key string) (*atlas
 	responses := 0
 	quorum := len(allNodes)/2 + 1
 
-	for i := 0; i < len(allNodes); i++ {
+	for range allNodes {
 		select {
 		case result := <-results:
 			if result.err != nil {
@@ -304,7 +304,7 @@ func (wo *WriteOptimizer) putGlobal(ctx context.Context, key string, value []byt
 	failures := 0
 	quorum := len(allNodes)/2 + 1
 
-	for i := 0; i < len(allNodes); i++ {
+	for range allNodes {
 		select {
 		case result := <-results:
 			if result.err != nil || !result.resp.Success {

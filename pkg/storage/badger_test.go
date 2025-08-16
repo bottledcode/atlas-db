@@ -80,7 +80,7 @@ func TestBadgerStorage_GetNonExistent(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	
+
 	result, err := storage.Get(ctx, "non-existent-key")
 	if err != nil {
 		t.Fatalf("Get non-existent key failed: %v", err)
@@ -174,9 +174,9 @@ func TestBadgerStorage_Scan(t *testing.T) {
 
 	// Put test data
 	testData := map[string]string{
-		"key1": "value1",
-		"key2": "value2",
-		"key3": "value3",
+		"key1":     "value1",
+		"key2":     "value2",
+		"key3":     "value3",
 		"prefix_a": "value_a",
 		"prefix_b": "value_b",
 	}
@@ -269,7 +269,7 @@ func TestBadgerStorage_Batch(t *testing.T) {
 		}
 
 		if string(result.Value) != string(op.Value) {
-			t.Errorf("Expected value %s for key %s, got %s", 
+			t.Errorf("Expected value %s for key %s, got %s",
 				string(op.Value), op.Key, string(result.Value))
 		}
 	}
@@ -400,9 +400,9 @@ func TestBadgerStorage_Stats(t *testing.T) {
 	ctx := context.Background()
 
 	// Add some data
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		key := fmt.Sprintf("stats-key-%d", i)
-		value := []byte(fmt.Sprintf("stats-value-%d", i))
+		value := fmt.Appendf(nil, "stats-value-%d", i)
 		err := storage.Put(ctx, key, value)
 		if err != nil {
 			t.Fatalf("Put failed: %v", err)
@@ -419,7 +419,7 @@ func TestBadgerStorage_Stats(t *testing.T) {
 		t.Error("Expected non-negative total size")
 	}
 
-	if stats.TotalSize != stats.LSMSize + stats.VLogSize {
+	if stats.TotalSize != stats.LSMSize+stats.VLogSize {
 		t.Error("Total size should equal LSM + VLog size")
 	}
 }
@@ -484,13 +484,13 @@ func TestBadgerStorage_ConcurrentAccess(t *testing.T) {
 
 	// Test concurrent writes
 	errChan := make(chan error, numGoroutines)
-	
-	for i := 0; i < numGoroutines; i++ {
+
+	for i := range numGoroutines {
 		go func(goroutineID int) {
-			for j := 0; j < numOperations; j++ {
+			for j := range numOperations {
 				key := fmt.Sprintf("concurrent-%d-%d", goroutineID, j)
-				value := []byte(fmt.Sprintf("value-%d-%d", goroutineID, j))
-				
+				value := fmt.Appendf(nil, "value-%d-%d", goroutineID, j)
+
 				if err := storage.Put(ctx, key, value); err != nil {
 					errChan <- err
 					return
@@ -501,7 +501,7 @@ func TestBadgerStorage_ConcurrentAccess(t *testing.T) {
 	}
 
 	// Wait for all goroutines
-	for i := 0; i < numGoroutines; i++ {
+	for range numGoroutines {
 		if err := <-errChan; err != nil {
 			t.Fatalf("Concurrent write failed: %v", err)
 		}

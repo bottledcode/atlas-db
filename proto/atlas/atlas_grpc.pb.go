@@ -265,7 +265,7 @@ var _AtlasDB_serviceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "proto/atlas.proto",
+	Metadata: "proto/atlas/atlas.proto",
 }
 
 // ConsensusClient is the client API for Consensus service.
@@ -456,5 +456,5 @@ var _Consensus_serviceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "proto/atlas.proto",
+	Metadata: "proto/atlas/atlas.proto",
 }

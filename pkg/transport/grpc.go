@@ -53,6 +53,9 @@ func NewGRPCTransport(nodeID, address string, regionID int32) *GRPCTransport {
 }
 
 func (gt *GRPCTransport) Start(consensus ConsensusHandler, database DatabaseHandler) error {
+	gt.mu.Lock()
+	defer gt.mu.Unlock()
+	
 	gt.consensus = consensus
 	gt.database = database
 
@@ -68,7 +71,11 @@ func (gt *GRPCTransport) Start(consensus ConsensusHandler, database DatabaseHand
 	atlas.RegisterAtlasDBServer(gt.server, gt)
 
 	go func() {
-		if err := gt.server.Serve(lis); err != nil {
+		gt.mu.RLock()
+		server := gt.server
+		gt.mu.RUnlock()
+		
+		if err := server.Serve(lis); err != nil {
 			// Log error in production
 			fmt.Printf("Server failed: %v\n", err)
 		}
@@ -78,8 +85,12 @@ func (gt *GRPCTransport) Start(consensus ConsensusHandler, database DatabaseHand
 }
 
 func (gt *GRPCTransport) Stop() {
-	if gt.server != nil {
-		gt.server.GracefulStop()
+	gt.mu.RLock()
+	server := gt.server
+	gt.mu.RUnlock()
+	
+	if server != nil {
+		server.GracefulStop()
 	}
 
 	gt.mu.Lock()

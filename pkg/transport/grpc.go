@@ -9,22 +9,22 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/withinboredom/atlas-db-2/proto/atlas"
+	"github.com/bottledcode/atlas-db/proto/atlas"
 )
 
 type GRPCTransport struct {
 	atlas.UnimplementedConsensusServer
 	atlas.UnimplementedAtlasDBServer
-	nodeID       string
-	address      string
-	regionID     int32
-	server       *grpc.Server
-	connections  map[string]*grpc.ClientConn
-	nodes        map[string]*atlas.NodeInfo
-	regions      map[int32][]string // regionID -> nodeIDs
-	consensus    ConsensusHandler
-	database     DatabaseHandler
-	mu           sync.RWMutex
+	nodeID      string
+	address     string
+	regionID    int32
+	server      *grpc.Server
+	connections map[string]*grpc.ClientConn
+	nodes       map[string]*atlas.NodeInfo
+	regions     map[int32][]string // regionID -> nodeIDs
+	consensus   ConsensusHandler
+	database    DatabaseHandler
+	mu          sync.RWMutex
 }
 
 type ConsensusHandler interface {
@@ -55,7 +55,7 @@ func NewGRPCTransport(nodeID, address string, regionID int32) *GRPCTransport {
 func (gt *GRPCTransport) Start(consensus ConsensusHandler, database DatabaseHandler) error {
 	gt.mu.Lock()
 	defer gt.mu.Unlock()
-	
+
 	gt.consensus = consensus
 	gt.database = database
 
@@ -65,7 +65,7 @@ func (gt *GRPCTransport) Start(consensus ConsensusHandler, database DatabaseHand
 	}
 
 	gt.server = grpc.NewServer()
-	
+
 	// Register services
 	atlas.RegisterConsensusServer(gt.server, gt)
 	atlas.RegisterAtlasDBServer(gt.server, gt)
@@ -74,7 +74,7 @@ func (gt *GRPCTransport) Start(consensus ConsensusHandler, database DatabaseHand
 		gt.mu.RLock()
 		server := gt.server
 		gt.mu.RUnlock()
-		
+
 		if err := server.Serve(lis); err != nil {
 			// Log error in production
 			fmt.Printf("Server failed: %v\n", err)
@@ -88,7 +88,7 @@ func (gt *GRPCTransport) Stop() {
 	gt.mu.RLock()
 	server := gt.server
 	gt.mu.RUnlock()
-	
+
 	if server != nil {
 		server.GracefulStop()
 	}
@@ -106,12 +106,12 @@ func (gt *GRPCTransport) AddNode(nodeInfo *atlas.NodeInfo) {
 	defer gt.mu.Unlock()
 
 	gt.nodes[nodeInfo.NodeId] = nodeInfo
-	
+
 	regionNodes, exists := gt.regions[nodeInfo.RegionId]
 	if !exists {
 		regionNodes = make([]string, 0)
 	}
-	
+
 	// Add node if not already present
 	found := false
 	for _, id := range regionNodes {
@@ -120,7 +120,7 @@ func (gt *GRPCTransport) AddNode(nodeInfo *atlas.NodeInfo) {
 			break
 		}
 	}
-	
+
 	if !found {
 		gt.regions[nodeInfo.RegionId] = append(regionNodes, nodeInfo.NodeId)
 	}
@@ -265,7 +265,7 @@ func (gt *GRPCTransport) Heartbeat(ctx context.Context, req *atlas.HeartbeatRequ
 
 	// Return list of active nodes in the same region
 	activeNodes := gt.GetActiveNodes(req.RegionId)
-	
+
 	return &atlas.HeartbeatResponse{
 		Alive:       true,
 		ActiveNodes: activeNodes,

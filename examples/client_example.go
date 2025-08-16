@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/withinboredom/atlas-db-2/pkg/client"
+	"github.com/bottledcode/atlas-db/pkg/client"
 )
 
 func main() {
@@ -21,7 +21,7 @@ func main() {
 
 	// Example 1: Basic Put and Get operations
 	fmt.Println("=== Basic Operations ===")
-	
+
 	// Put a key-value pair
 	putResult, err := db.Put(ctx, "user:123", []byte(`{"name": "John Doe", "email": "john@example.com"}`))
 	if err != nil {
@@ -34,7 +34,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Get failed: %v", err)
 	}
-	
+
 	if getResult.Found {
 		fmt.Printf("Get successful: %s (version: %d)\n", string(getResult.Value), getResult.Version)
 	} else {
@@ -51,7 +51,7 @@ func main() {
 
 	// Example 3: Conditional updates with versioning
 	fmt.Println("\n=== Conditional Updates ===")
-	
+
 	// Update with expected version
 	updatedData := []byte(`{"name": "John Doe", "email": "john.doe@newdomain.com", "updated": true}`)
 	updateResult, err := db.Put(ctx, "user:123", updatedData, client.WithExpectedVersion(putResult.Version))
@@ -68,7 +68,7 @@ func main() {
 
 	// Example 4: Batch operations
 	fmt.Println("\n=== Batch Operations ===")
-	
+
 	batchResult, err := db.Batch(ctx,
 		client.Put("product:1", []byte(`{"name": "Laptop", "price": 999.99}`)),
 		client.Put("product:2", []byte(`{"name": "Mouse", "price": 29.99}`)),
@@ -94,8 +94,8 @@ func main() {
 
 	// Example 5: Scan operations
 	fmt.Println("\n=== Scan Operations ===")
-	
-	scanResult, err := db.Scan(ctx, 
+
+	scanResult, err := db.Scan(ctx,
 		client.WithStartKey("product:"),
 		client.WithEndKey("product:z"),
 		client.WithLimit(10),
@@ -111,7 +111,7 @@ func main() {
 
 	// Example 6: Delete operation
 	fmt.Println("\n=== Delete Operations ===")
-	
+
 	// Delete a product
 	err = db.Delete(ctx, "product:2")
 	if err != nil {
@@ -124,7 +124,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Get after delete failed: %v", err)
 	}
-	
+
 	if !deletedResult.Found {
 		fmt.Println("Confirmed: product:2 is no longer found")
 	} else {
@@ -133,7 +133,7 @@ func main() {
 
 	// Example 7: Conditional delete with version
 	fmt.Println("\n=== Conditional Delete ===")
-	
+
 	// Get current version of user:123
 	currentUser, err := db.Get(ctx, "user:123")
 	if err != nil {

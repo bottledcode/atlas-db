@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/withinboredom/atlas-db-2/internal/server"
-	"github.com/withinboredom/atlas-db-2/pkg/config"
+	"github.com/bottledcode/atlas-db/internal/server"
+	"github.com/bottledcode/atlas-db/pkg/config"
 )
 
 var (

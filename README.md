@@ -40,7 +40,7 @@ Atlas DB is a distributed database written in Go that provides global replicatio
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/withinboredom/atlas-db-2.git
+git clone https://github.com/bottledcode/atlas-db.git
 cd atlas-db-2
 ```
 
@@ -91,7 +91,7 @@ import (
     "context"
     "log"
     
-    "github.com/withinboredom/atlas-db-2/pkg/client"
+    "github.com/bottledcode/atlas-db/pkg/client"
 )
 
 func main() {

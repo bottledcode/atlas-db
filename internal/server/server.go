@@ -6,22 +6,22 @@ import (
 	"sync"
 	"time"
 
-	"github.com/withinboredom/atlas-db-2/internal/region"
-	"github.com/withinboredom/atlas-db-2/pkg/config"
-	"github.com/withinboredom/atlas-db-2/pkg/consensus"
-	"github.com/withinboredom/atlas-db-2/pkg/storage"
-	"github.com/withinboredom/atlas-db-2/pkg/transport"
-	"github.com/withinboredom/atlas-db-2/proto/atlas"
+	"github.com/bottledcode/atlas-db/internal/region"
+	"github.com/bottledcode/atlas-db/pkg/config"
+	"github.com/bottledcode/atlas-db/pkg/consensus"
+	"github.com/bottledcode/atlas-db/pkg/storage"
+	"github.com/bottledcode/atlas-db/pkg/transport"
+	"github.com/bottledcode/atlas-db/proto/atlas"
 )
 
 type Server struct {
-	config     *config.Config
-	storage    *storage.BadgerStorage
-	transport  *transport.GRPCTransport
-	consensus  *consensus.WPaxos
-	optimizer  *region.WriteOptimizer
-	running    bool
-	mu         sync.RWMutex
+	config    *config.Config
+	storage   *storage.BadgerStorage
+	transport *transport.GRPCTransport
+	consensus *consensus.WPaxos
+	optimizer *region.WriteOptimizer
+	running   bool
+	mu        sync.RWMutex
 }
 
 func NewServer(cfg *config.Config) (*Server, error) {
@@ -177,7 +177,7 @@ func (s *Server) HandleDelete(ctx context.Context, req *atlas.DeleteRequest) (*a
 
 func (s *Server) HandleScan(req *atlas.ScanRequest, stream atlas.AtlasDB_ScanServer) error {
 	ctx := stream.Context()
-	
+
 	opts := storage.ScanOptions{
 		StartKey: req.StartKey,
 		EndKey:   req.EndKey,
@@ -196,7 +196,7 @@ func (s *Server) HandleScan(req *atlas.ScanRequest, stream atlas.AtlasDB_ScanSer
 			Value:   result.Value,
 			Version: result.Version,
 		}
-		
+
 		if err := stream.Send(resp); err != nil {
 			return err
 		}
@@ -306,8 +306,8 @@ func (s *Server) GetStats() (*ServerStats, error) {
 }
 
 type ServerStats struct {
-	NodeID       string                  `json:"node_id"`
-	RegionID     int32                   `json:"region_id"`
-	StorageStats *storage.StorageStats   `json:"storage_stats"`
-	Running      bool                    `json:"running"`
+	NodeID       string                `json:"node_id"`
+	RegionID     int32                 `json:"region_id"`
+	StorageStats *storage.StorageStats `json:"storage_stats"`
+	Running      bool                  `json:"running"`
 }

@@ -10,9 +10,9 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/withinboredom/atlas-db-2/pkg/client"
-	"github.com/withinboredom/atlas-db-2/pkg/config"
-	"github.com/withinboredom/atlas-db-2/proto/atlas"
+	"github.com/bottledcode/atlas-db/pkg/client"
+	"github.com/bottledcode/atlas-db/pkg/config"
+	"github.com/bottledcode/atlas-db/proto/atlas"
 )
 
 func setupTestServer(t *testing.T) (*Server, string, func()) {
@@ -363,7 +363,7 @@ func TestServer_ConcurrentClients(t *testing.T) {
 
 	numClients := 5
 	numOperations := 10
-	
+
 	// Create multiple clients
 	clients := make([]client.Client, numClients)
 	for i := 0; i < numClients; i++ {

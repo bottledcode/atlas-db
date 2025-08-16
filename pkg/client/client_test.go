@@ -11,7 +11,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
-	"github.com/withinboredom/atlas-db-2/proto/atlas"
+	"github.com/bottledcode/atlas-db/proto/atlas"
 )
 
 // Mock Atlas DB server for testing
@@ -388,9 +388,9 @@ func TestClient_Scan(t *testing.T) {
 	}
 
 	// Test scan with prefix
-	result, err = client.Scan(ctx, 
-		WithStartKey("prefix_"), 
-		WithEndKey("prefix_z"), 
+	result, err = client.Scan(ctx,
+		WithStartKey("prefix_"),
+		WithEndKey("prefix_z"),
 		WithLimit(10))
 	if err != nil {
 		t.Fatalf("Prefix scan failed: %v", err)
@@ -505,7 +505,7 @@ func TestClient_ConnectionFailure(t *testing.T) {
 	// Try to connect to non-existent server with very short timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
-	
+
 	conn, err := grpc.DialContext(ctx, "localhost:99999", grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
 	if err == nil {
 		conn.Close()
@@ -518,7 +518,7 @@ func TestClient_ClosedClient(t *testing.T) {
 	defer serverCleanup()
 
 	client, _ := setupTestClient(t, listener)
-	
+
 	// Close the client
 	err := client.Close()
 	if err != nil {

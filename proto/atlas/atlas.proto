@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package atlas;
 
-option go_package = "github.com/withinboredom/atlas-db-2/proto/atlas";
+option go_package = "github.com/bottledcode/atlas-db/proto/atlas";
 
 import "google/protobuf/timestamp.proto";
 

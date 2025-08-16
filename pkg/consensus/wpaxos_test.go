@@ -7,17 +7,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/withinboredom/atlas-db-2/proto/atlas"
+	"github.com/bottledcode/atlas-db/proto/atlas"
 )
 
 // Mock transport for testing
 type mockTransport struct {
-	nodes     map[string]*mockNode
-	regions   map[int32][]string
-	prepares  chan *prepareCall
-	accepts   chan *acceptCall
-	commits   chan *commitCall
-	mu        sync.RWMutex
+	nodes    map[string]*mockNode
+	regions  map[int32][]string
+	prepares chan *prepareCall
+	accepts  chan *acceptCall
+	commits  chan *commitCall
+	mu       sync.RWMutex
 }
 
 type mockNode struct {
@@ -158,12 +158,12 @@ func (ms *mockStorage) Store(key string, value []byte) error {
 func (ms *mockStorage) Load(key string) ([]byte, error) {
 	ms.mu.RLock()
 	defer ms.mu.RUnlock()
-	
+
 	value, exists := ms.data[key]
 	if !exists {
 		return nil, nil
 	}
-	
+
 	result := make([]byte, len(value))
 	copy(result, value)
 	return result, nil
@@ -180,7 +180,7 @@ func TestWPaxos_SingleNodeProposal(t *testing.T) {
 	transport := newMockTransport()
 	storage1 := newMockStorage()
 	storage2 := newMockStorage()
-	
+
 	// Create two nodes for proper quorum
 	wp1 := NewWPaxos("node1", 1, transport, storage1)
 	wp2 := NewWPaxos("node2", 1, transport, storage2)
@@ -209,11 +209,11 @@ func TestWPaxos_SingleNodeProposal(t *testing.T) {
 
 func TestWPaxos_MultiNodeProposal(t *testing.T) {
 	transport := newMockTransport()
-	
+
 	// Create 3 nodes in same region
 	nodes := make([]*WPaxos, 3)
 	storages := make([]*mockStorage, 3)
-	
+
 	for i := 0; i < 3; i++ {
 		storages[i] = newMockStorage()
 		nodeID := fmt.Sprintf("node%d", i+1)
@@ -257,14 +257,14 @@ func TestWPaxos_MultiNodeProposal(t *testing.T) {
 
 func TestWPaxos_MultiRegionProposal(t *testing.T) {
 	transport := newMockTransport()
-	
+
 	// Create nodes in different regions
 	nodes := make([]*WPaxos, 4)
 	storages := make([]*mockStorage, 4)
-	
+
 	// 2 nodes in region 1, 2 nodes in region 2
 	regions := []int32{1, 1, 2, 2}
-	
+
 	for i := 0; i < 4; i++ {
 		storages[i] = newMockStorage()
 		nodeID := fmt.Sprintf("node%d", i+1)
@@ -311,9 +311,9 @@ func TestWPaxos_MultiRegionProposal(t *testing.T) {
 	// - At least one node from each other region (1 node in region 2)
 	// Total expected: 3 nodes (2 from region 1 + 1 from region 2)
 	numRegions := 2
-	localRegionSize := 2 // Region 1 has 2 nodes
+	localRegionSize := 2                                   // Region 1 has 2 nodes
 	expectedFastPath := localRegionSize + (numRegions - 1) // Local majority + 1 per other region
-	globalMajority := len(nodes)/2 + 1 // 3 nodes
+	globalMajority := len(nodes)/2 + 1                     // 3 nodes
 
 	if successCount >= globalMajority {
 		t.Logf("W-Paxos grid quorum achieved: %d nodes have the value", successCount)
@@ -325,7 +325,7 @@ func TestWPaxos_MultiRegionProposal(t *testing.T) {
 func TestWPaxos_HandlePrepare(t *testing.T) {
 	transport := newMockTransport()
 	storage := newMockStorage()
-	
+
 	wp := NewWPaxos("node1", 1, transport, storage)
 
 	ctx := context.Background()
@@ -391,7 +391,7 @@ func TestWPaxos_HandlePrepare(t *testing.T) {
 func TestWPaxos_HandleAccept(t *testing.T) {
 	transport := newMockTransport()
 	storage := newMockStorage()
-	
+
 	wp := NewWPaxos("node1", 1, transport, storage)
 
 	ctx := context.Background()
@@ -452,7 +452,7 @@ func TestWPaxos_HandleAccept(t *testing.T) {
 func TestWPaxos_HandleCommit(t *testing.T) {
 	transport := newMockTransport()
 	storage := newMockStorage()
-	
+
 	wp := NewWPaxos("node1", 1, transport, storage)
 
 	ctx := context.Background()
@@ -487,11 +487,11 @@ func TestWPaxos_HandleCommit(t *testing.T) {
 
 func TestWPaxos_ConcurrentProposals(t *testing.T) {
 	transport := newMockTransport()
-	
+
 	// Create 3 nodes
 	nodes := make([]*WPaxos, 3)
 	storages := make([]*mockStorage, 3)
-	
+
 	for i := 0; i < 3; i++ {
 		storages[i] = newMockStorage()
 		nodeID := fmt.Sprintf("node%d", i+1)
@@ -501,7 +501,7 @@ func TestWPaxos_ConcurrentProposals(t *testing.T) {
 
 	ctx := context.Background()
 	numProposals := 10
-	
+
 	// Create channel to collect results
 	results := make(chan error, numProposals)
 
@@ -510,7 +510,7 @@ func TestWPaxos_ConcurrentProposals(t *testing.T) {
 		go func(proposalID int) {
 			instanceID := fmt.Sprintf("concurrent-instance-%d", proposalID)
 			value := []byte(fmt.Sprintf("value-%d", proposalID))
-			
+
 			// Use different nodes for proposals
 			nodeIndex := proposalID % len(nodes)
 			err := nodes[nodeIndex].Propose(ctx, instanceID, value)
@@ -531,7 +531,7 @@ func TestWPaxos_ConcurrentProposals(t *testing.T) {
 
 	// Most proposals should succeed (some may fail due to conflicts)
 	if successCount < numProposals/2 {
-		t.Errorf("Expected at least %d successful proposals, got %d", 
+		t.Errorf("Expected at least %d successful proposals, got %d",
 			numProposals/2, successCount)
 	}
 
@@ -541,13 +541,13 @@ func TestWPaxos_ConcurrentProposals(t *testing.T) {
 func TestWPaxos_ProposalTimeout(t *testing.T) {
 	transport := newMockTransport()
 	storage := newMockStorage()
-	
-	// Create node and add a second node to force needing external responses  
+
+	// Create node and add a second node to force needing external responses
 	wp1 := NewWPaxos("node1", 1, transport, storage)
 	_ = NewWPaxos("node2", 1, transport, newMockStorage()) // Create but don't add to transport
 	transport.addNode("node1", 1, wp1)
 	// Don't add node2 to simulate network partition
-	
+
 	// Add node2 to regions so quorum calculation includes it, but don't add to transport
 	transport.mu.Lock()
 	transport.regions[1] = []string{"node1", "node2"}
@@ -560,7 +560,7 @@ func TestWPaxos_ProposalTimeout(t *testing.T) {
 	value := []byte("timeout-value")
 
 	err := wp1.Propose(ctx, instanceID, value)
-	
+
 	// Should fail due to insufficient responses from partitioned node
 	if err == nil {
 		t.Error("Expected proposal to fail due to insufficient responses")
@@ -571,7 +571,7 @@ func TestWPaxos_ProposalStates(t *testing.T) {
 	transport := newMockTransport()
 	storage1 := newMockStorage()
 	storage2 := newMockStorage()
-	
+
 	// Need at least 2 nodes for quorum
 	wp1 := NewWPaxos("node1", 1, transport, storage1)
 	wp2 := NewWPaxos("node2", 1, transport, storage2)

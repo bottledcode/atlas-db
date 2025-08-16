@@ -1,4 +1,4 @@
-module github.com/withinboredom/atlas-db-2
+module github.com/bottledcode/atlas-db
 
 go 1.25.0
 

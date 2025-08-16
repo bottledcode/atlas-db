@@ -6,18 +6,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/withinboredom/atlas-db-2/pkg/storage"
-	"github.com/withinboredom/atlas-db-2/proto/atlas"
+	"github.com/bottledcode/atlas-db/pkg/storage"
+	"github.com/bottledcode/atlas-db/proto/atlas"
 )
 
 type WriteOptimizer struct {
-	regionID     int32
-	localNodes   map[string]*atlas.NodeInfo
-	remoteNodes  map[int32]map[string]*atlas.NodeInfo // regionID -> nodeID -> nodeInfo
-	transport    Transport
-	storage      Storage
-	latencyMap   map[string]time.Duration // nodeID -> average latency
-	mu           sync.RWMutex
+	regionID    int32
+	localNodes  map[string]*atlas.NodeInfo
+	remoteNodes map[int32]map[string]*atlas.NodeInfo // regionID -> nodeID -> nodeInfo
+	transport   Transport
+	storage     Storage
+	latencyMap  map[string]time.Duration // nodeID -> average latency
+	mu          sync.RWMutex
 }
 
 type Transport interface {
@@ -151,7 +151,7 @@ func (wo *WriteOptimizer) getNearest(ctx context.Context, key string) (*atlas.Ge
 
 	// Try nearest regions based on latency
 	nearestNodes := wo.getNearestNodes()
-	
+
 	req := &atlas.GetRequest{
 		Key:            key,
 		ConsistentRead: false,
@@ -173,7 +173,7 @@ func (wo *WriteOptimizer) getNearest(ctx context.Context, key string) (*atlas.Ge
 func (wo *WriteOptimizer) getConsistent(ctx context.Context, key string) (*atlas.GetResponse, error) {
 	// For consistent reads, we need to contact a quorum of nodes
 	allNodes := wo.getAllNodes()
-	
+
 	req := &atlas.GetRequest{
 		Key:            key,
 		ConsistentRead: true,
@@ -185,7 +185,7 @@ func (wo *WriteOptimizer) getConsistent(ctx context.Context, key string) (*atlas
 	}
 
 	results := make(chan response, len(allNodes))
-	
+
 	// Send requests to all nodes in parallel
 	for _, nodeID := range allNodes {
 		go func(nid string) {
@@ -207,12 +207,12 @@ func (wo *WriteOptimizer) getConsistent(ctx context.Context, key string) (*atlas
 				continue
 			}
 			responses++
-			
+
 			if result.resp.Found && result.resp.Version > latestVersion {
 				latestResp = result.resp
 				latestVersion = result.resp.Version
 			}
-			
+
 			if responses >= quorum {
 				if latestResp != nil {
 					return latestResp, nil
@@ -276,9 +276,9 @@ func (wo *WriteOptimizer) putLocal(ctx context.Context, key string, value []byte
 func (wo *WriteOptimizer) putGlobal(ctx context.Context, key string, value []byte) (*atlas.PutResponse, error) {
 	// This should go through consensus for strong consistency
 	// For now, we'll implement a simple majority write
-	
+
 	allNodes := wo.getAllNodes()
-	
+
 	req := &atlas.PutRequest{
 		Key:   key,
 		Value: value,
@@ -290,7 +290,7 @@ func (wo *WriteOptimizer) putGlobal(ctx context.Context, key string, value []byt
 	}
 
 	results := make(chan response, len(allNodes))
-	
+
 	// Send to all nodes in parallel
 	for _, nodeID := range allNodes {
 		go func(nid string) {
@@ -303,7 +303,7 @@ func (wo *WriteOptimizer) putGlobal(ctx context.Context, key string, value []byt
 	successes := 0
 	failures := 0
 	quorum := len(allNodes)/2 + 1
-	
+
 	for i := 0; i < len(allNodes); i++ {
 		select {
 		case result := <-results:
@@ -312,14 +312,14 @@ func (wo *WriteOptimizer) putGlobal(ctx context.Context, key string, value []byt
 			} else {
 				successes++
 			}
-			
+
 			if successes >= quorum {
 				return &atlas.PutResponse{
 					Success: true,
 					Version: time.Now().UnixNano(),
 				}, nil
 			}
-			
+
 			if failures > len(allNodes)-quorum {
 				return &atlas.PutResponse{
 					Success: false,
@@ -354,10 +354,10 @@ func (wo *WriteOptimizer) measureLatency(nodeID string) {
 	}
 
 	latency := time.Since(start)
-	
+
 	wo.mu.Lock()
 	defer wo.mu.Unlock()
-	
+
 	// Simple exponential moving average
 	if existing, exists := wo.latencyMap[nodeID]; exists {
 		wo.latencyMap[nodeID] = time.Duration(float64(existing)*0.8 + float64(latency)*0.2)
@@ -376,7 +376,7 @@ func (wo *WriteOptimizer) getNearestNodes() []string {
 	}
 
 	var nodes []nodeLatency
-	
+
 	// Collect all remote nodes with their latencies
 	for _, regionNodes := range wo.remoteNodes {
 		for nodeID := range regionNodes {
@@ -408,19 +408,19 @@ func (wo *WriteOptimizer) getAllNodes() []string {
 	defer wo.mu.RUnlock()
 
 	var nodes []string
-	
+
 	// Add local nodes
 	for nodeID := range wo.localNodes {
 		nodes = append(nodes, nodeID)
 	}
-	
+
 	// Add remote nodes
 	for _, regionNodes := range wo.remoteNodes {
 		for nodeID := range regionNodes {
 			nodes = append(nodes, nodeID)
 		}
 	}
-	
+
 	return nodes
 }
 

@@ -313,7 +313,7 @@ func (i *BadgerItem) KeyCopy() []byte {
 }
 
 func (i *BadgerItem) Value() ([]byte, error) {
-	return i.item.Value()
+	return i.item.ValueCopy(nil)
 }
 
 func (i *BadgerItem) ValueCopy() ([]byte, error) {

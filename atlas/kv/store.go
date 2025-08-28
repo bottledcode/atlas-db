@@ -28,19 +28,19 @@ type Store interface {
 	Get(ctx context.Context, key []byte) ([]byte, error)
 	Put(ctx context.Context, key, value []byte) error
 	Delete(ctx context.Context, key []byte) error
-	
+
 	// Batch operations for atomic writes
 	NewBatch() Batch
-	
+
 	// Iteration support for range queries
 	NewIterator(opts IteratorOptions) Iterator
-	
+
 	// Transaction support
 	Begin(writable bool) (Transaction, error)
-	
+
 	// Lifecycle
 	Close() error
-	
+
 	// Statistics and maintenance
 	Size() (int64, error)
 	Sync() error
@@ -64,13 +64,13 @@ type Batch interface {
 // Iterator provides ordered key-value iteration
 type Iterator interface {
 	io.Closer
-	
+
 	// Navigation
 	Rewind()
 	Seek(key []byte)
 	Next()
 	Valid() bool
-	
+
 	// Data access
 	Item() Item
 }
@@ -85,8 +85,8 @@ type Item interface {
 
 // IteratorOptions configures iteration behavior
 type IteratorOptions struct {
-	Prefix   []byte
-	Reverse  bool
+	Prefix         []byte
+	Reverse        bool
 	PrefetchValues bool
 	PrefetchSize   int
 }

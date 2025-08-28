@@ -59,14 +59,14 @@ func NewPool(dataPath, metaPath string) (*Pool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create data store: %w", err)
 	}
-	
+
 	// Create metadata store (consensus, ownership, migrations)
 	metaStore, err := NewBadgerStore(filepath.Join(metaPath, "meta"))
 	if err != nil {
 		dataStore.Close()
 		return nil, fmt.Errorf("failed to create meta store: %w", err)
 	}
-	
+
 	return &Pool{
 		dataStore: dataStore,
 		metaStore: metaStore,
@@ -77,7 +77,7 @@ func NewPool(dataPath, metaPath string) (*Pool, error) {
 func (p *Pool) DataStore() Store {
 	p.mutex.RLock()
 	defer p.mutex.RUnlock()
-	
+
 	if p.closed {
 		return nil
 	}
@@ -88,7 +88,7 @@ func (p *Pool) DataStore() Store {
 func (p *Pool) MetaStore() Store {
 	p.mutex.RLock()
 	defer p.mutex.RUnlock()
-	
+
 	if p.closed {
 		return nil
 	}
@@ -99,27 +99,27 @@ func (p *Pool) MetaStore() Store {
 func (p *Pool) Close() error {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
-	
+
 	if p.closed {
 		return nil
 	}
-	
+
 	var errs []error
-	
+
 	if err := p.dataStore.Close(); err != nil {
 		errs = append(errs, fmt.Errorf("data store close error: %w", err))
 	}
-	
+
 	if err := p.metaStore.Close(); err != nil {
 		errs = append(errs, fmt.Errorf("meta store close error: %w", err))
 	}
-	
+
 	p.closed = true
-	
+
 	if len(errs) > 0 {
 		return fmt.Errorf("pool close errors: %v", errs)
 	}
-	
+
 	return nil
 }
 
@@ -127,19 +127,19 @@ func (p *Pool) Close() error {
 func (p *Pool) Sync() error {
 	p.mutex.RLock()
 	defer p.mutex.RUnlock()
-	
+
 	if p.closed {
 		return fmt.Errorf("pool is closed")
 	}
-	
+
 	if err := p.dataStore.Sync(); err != nil {
 		return fmt.Errorf("data store sync error: %w", err)
 	}
-	
+
 	if err := p.metaStore.Sync(); err != nil {
 		return fmt.Errorf("meta store sync error: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -147,21 +147,21 @@ func (p *Pool) Sync() error {
 func (p *Pool) Size() (dataSize, metaSize int64, err error) {
 	p.mutex.RLock()
 	defer p.mutex.RUnlock()
-	
+
 	if p.closed {
 		return 0, 0, fmt.Errorf("pool is closed")
 	}
-	
+
 	dataSize, err = p.dataStore.Size()
 	if err != nil {
 		return 0, 0, fmt.Errorf("data store size error: %w", err)
 	}
-	
+
 	metaSize, err = p.metaStore.Size()
 	if err != nil {
 		return 0, 0, fmt.Errorf("meta store size error: %w", err)
 	}
-	
+
 	return dataSize, metaSize, nil
 }
 
@@ -185,12 +185,12 @@ func (p *Pool) NewDataConnection(ctx context.Context, writable bool) (*StoreConn
 	if store == nil {
 		return nil, fmt.Errorf("pool is closed")
 	}
-	
+
 	txn, err := store.Begin(writable)
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	
+
 	return &StoreConnection{
 		store: store,
 		txn:   txn,
@@ -203,12 +203,12 @@ func (p *Pool) NewMetaConnection(ctx context.Context, writable bool) (*StoreConn
 	if store == nil {
 		return nil, fmt.Errorf("pool is closed")
 	}
-	
+
 	txn, err := store.Begin(writable)
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	
+
 	return &StoreConnection{
 		store: store,
 		txn:   txn,
@@ -245,7 +245,7 @@ func (c *StoreConnection) Close() error {
 func (p *Pool) BackgroundMaintenance(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -256,7 +256,7 @@ func (p *Pool) BackgroundMaintenance(ctx context.Context) {
 				// BadgerDB's RunValueLogGC can be called here if needed
 				_ = badgerData // Placeholder for GC calls
 			}
-			
+
 			if badgerMeta, ok := p.metaStore.(*BadgerStore); ok {
 				// BadgerDB's RunValueLogGC can be called here if needed
 				_ = badgerMeta // Placeholder for GC calls

@@ -21,6 +21,7 @@ package consensus
 import (
 	"context"
 	"errors"
+
 	"github.com/bottledcode/atlas-db/atlas"
 	"zombiezen.com/go/sqlite"
 )

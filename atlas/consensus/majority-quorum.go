@@ -21,10 +21,11 @@ package consensus
 import (
 	"context"
 	"errors"
+	"sync"
+
 	"github.com/bottledcode/atlas-db/atlas"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
-	"sync"
 )
 
 type majorityQuorum struct {

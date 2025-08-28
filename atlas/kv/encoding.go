@@ -109,8 +109,8 @@ func (kb *KeyBuilder) Clone() *KeyBuilder {
 
 // Value represents a typed value that can be stored in the KV store
 type Value struct {
-	Type TypeCode      `json:"type"`
-	Data interface{}   `json:"data"`
+	Type     TypeCode               `json:"type"`
+	Data     interface{}            `json:"data"`
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
@@ -374,10 +374,10 @@ func DecodeValue(data []byte) (*Value, error) {
 
 // Record represents a collection of named values (equivalent to a SQL row)
 type Record struct {
-	Fields map[string]*Value `json:"fields"`
-	Version uint64           `json:"version"`
-	Created time.Time        `json:"created"`
-	Updated time.Time        `json:"updated"`
+	Fields  map[string]*Value `json:"fields"`
+	Version uint64            `json:"version"`
+	Created time.Time         `json:"created"`
+	Updated time.Time         `json:"updated"`
 }
 
 // NewRecord creates a new record
@@ -439,10 +439,10 @@ func VersionKey(baseKey []byte, version uint64) []byte {
 func ParseTableRowKey(key []byte) (tableName, rowID string, valid bool) {
 	keyStr := string(key)
 	parts := strings.Split(keyStr, ":")
-	
+
 	if len(parts) >= 4 && parts[0] == "table" && parts[2] == "row" {
 		return parts[1], parts[3], true
 	}
-	
+
 	return "", "", false
 }

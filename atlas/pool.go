@@ -144,7 +144,7 @@ func DrainPool() {
 
 type Param struct {
 	Name  string
-	Value interface{}
+	Value any
 }
 
 // ExecuteSQL executes a SQL query on the given connection. Internal use only.

@@ -78,7 +78,7 @@ func (m *mockBootstrapServer) GetBootstrapData(req *bootstrap.BootstrapRequest, 
 	}
 
 	data := []byte("test data")
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		if err := stream.Send(&bootstrap.BootstrapResponse{
 			Response: &bootstrap.BootstrapResponse_BootstrapData{
 				BootstrapData: &bootstrap.BootstrapData{

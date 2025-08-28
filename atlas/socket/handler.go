@@ -126,7 +126,7 @@ func (s *Socket) outputMetaHeaders(stmt *sqlite.Stmt) (err error) {
 	if err != nil {
 		return
 	}
-	for i := 0; i < columns; i++ {
+	for i := range columns {
 		name := stmt.ColumnName(i)
 		err = s.writeMessage("META COLUMN_NAME " + strconv.Itoa(i) + " " + name)
 		if err != nil {

@@ -283,7 +283,7 @@ func CaptureChanges(query string, db *sqlite.Conn, output bool, params ...Param)
 			headers: &rows.Headers,
 		}
 		cols := stmt.ColumnCount()
-		for i := 0; i < cols; i++ {
+		for i := range cols {
 			switch stmt.ColumnType(i) {
 			case sqlite.TypeText:
 				row.Columns = append(row.Columns, &ValueColumnString{

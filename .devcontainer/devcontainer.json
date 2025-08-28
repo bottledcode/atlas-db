@@ -3,7 +3,7 @@
 {
     "name": "Go",
     // Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-    "image": "golang:1.24.3-bookworm",
+    "image": "golang:1.25.0-bookworm",
     "features": {
         "ghcr.io/devcontainers/features/docker-outside-of-docker": {},
         "ghcr.io/devcontainers/features/git": {},

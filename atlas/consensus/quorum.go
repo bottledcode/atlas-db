@@ -371,7 +371,7 @@ recalculate:
 	q2 := make([]*QuorumNode, 0, q2S)
 
 	for _, region := range selectedQ1Regions {
-		for i := int64(0); i < nodesPerQ1Region; i++ {
+		for i := range nodesPerQ1Region {
 			q1 = append(q1, q.nodes[region][i])
 		}
 	}

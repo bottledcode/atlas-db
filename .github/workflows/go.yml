@@ -25,7 +25,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.23.4'
+        go-version: '1.25.0'
         cache: true
 
     - name: Build
@@ -43,7 +43,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.23.4'
+        go-version: '1.25.0'
         cache: true
 
     - name: Build
@@ -51,7 +51,7 @@ jobs:
         make
 
     - name: golangci-lint
-      uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v6.1
+      uses: golangci/golangci-lint-action@v8
       with:
-        version: v2.1.6
+        version: latest
         only-new-issues: true

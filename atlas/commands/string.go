@@ -176,7 +176,7 @@ func removeCommand(query string, num int) string {
 		fields = append(fields, ending)
 	}
 
-	for i := 0; i < num; i++ {
+	for i := range num {
 		endpos := strings.Index(query, fields[i])
 		if endpos == -1 {
 			return query

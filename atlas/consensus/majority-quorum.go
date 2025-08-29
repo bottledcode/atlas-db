@@ -21,9 +21,11 @@ package consensus
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/bottledcode/atlas-db/atlas"
+	"github.com/bottledcode/atlas-db/atlas/kv"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
@@ -34,14 +36,18 @@ type majorityQuorum struct {
 }
 
 func (m *majorityQuorum) Gossip(ctx context.Context, in *GossipMigration, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	// get 5 nodes not in the quorum
-	conn, err := atlas.MigrationsPool.Take(ctx)
-	if err != nil {
-		return nil, err
+	// Get KV store for metadata operations
+	kvPool := kv.GetPool()
+	if kvPool == nil {
+		return nil, fmt.Errorf("KV pool not initialized")
 	}
-	defer atlas.MigrationsPool.Put(conn)
 
-	err = SendGossip(ctx, in, conn)
+	metaStore := kvPool.MetaStore()
+	if metaStore == nil {
+		return nil, fmt.Errorf("metaStore is closed")
+	}
+
+	err := SendGossip(ctx, in, metaStore)
 	if err != nil {
 		return nil, err
 	}

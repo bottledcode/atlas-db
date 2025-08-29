@@ -235,8 +235,46 @@ func (s *Socket) HandleConnection(conn net.Conn, ctx context.Context) {
 
 ready:
 
-	kv.CreatePool("/tmp/atlas/data", "/tmp/atlas/meta")
+	// Initialize KV pools with proper error handling
+	// First ensure parent directories exist
+	os.MkdirAll(filepath.Dir(atlas.CurrentOptions.DbFilename), 0755)
+	os.MkdirAll(filepath.Dir(atlas.CurrentOptions.MetaFilename), 0755)
+	err = kv.CreatePool(atlas.CurrentOptions.DbFilename, atlas.CurrentOptions.MetaFilename)
+	if err != nil {
+		atlas.Logger.Error("Failed to create KV pool", zap.Error(err))
+		return
+	}
 	pool := kv.GetPool()
+	if pool == nil {
+		atlas.Logger.Error("KV pool is nil after creation")
+		return
+	}
+
+	// Initialize minimal consensus configuration for single-node operation
+	if atlas.CurrentOptions.ServerId == 0 {
+		atlas.CurrentOptions.ServerId = 1
+		atlas.Logger.Info("Initialized single-node consensus", zap.Int64("serverId", atlas.CurrentOptions.ServerId))
+	}
+	if atlas.CurrentOptions.Region == "" {
+		atlas.CurrentOptions.Region = "default"
+	}
+	if atlas.CurrentOptions.AdvertiseAddress == "" {
+		atlas.CurrentOptions.AdvertiseAddress = "localhost"
+	}
+	if atlas.CurrentOptions.AdvertisePort == 0 {
+		atlas.CurrentOptions.AdvertisePort = 8080
+	}
+
+	// Add this node to the quorum manager for single-node consensus
+	qm := consensus.GetDefaultQuorumManager(ctx)
+	selfNode := &consensus.Node{
+		Id:      atlas.CurrentOptions.ServerId,
+		Region:  &consensus.Region{Name: atlas.CurrentOptions.Region},
+		Address: atlas.CurrentOptions.AdvertiseAddress,
+		Port:    int64(atlas.CurrentOptions.AdvertisePort),
+	}
+	qm.AddNode(selfNode)
+	atlas.Logger.Info("Added self to quorum manager", zap.Int64("nodeId", selfNode.Id), zap.String("region", atlas.CurrentOptions.Region))
 
 	for {
 		select {
@@ -256,55 +294,125 @@ ready:
 
 			switch k, _ := cmd.SelectNormalizedCommand(0); k {
 			case "SET":
-				kc, _ := pool.NewDataConnection(ctx, true)
+				// Validate command format: SET key value
+				if cmd.CheckMinLen(3) != nil {
+					err := s.writeError(Fatal, errors.New("SET requires key and value"))
+					if err != nil {
+						atlas.Logger.Error("Error writing error message", zap.Error(err))
+						return
+					}
+					continue
+				}
+
 				key := cmd.SelectCommand(1)
 				value := cmd.From(2).Raw()
 
-				parts := strings.Split(key, ".")
-				builder := kv.NewKeyBuilder()
-				if len(parts) > 2 {
-					builder.Table(parts[0])
-					builder.Row(parts[1])
-					builder.Append(strings.Join(parts[2:], "."))
-				} else if len(parts) > 1 {
-					builder.Table(parts[0])
-					builder.Row(parts[1])
-				} else {
-					builder.Append(strings.Join(parts, "."))
+				// Ensure node is properly configured for consensus
+				if atlas.CurrentOptions.ServerId == 0 {
+					err := s.writeError(Fatal, errors.New("node not properly initialized - missing server ID"))
+					if err != nil {
+						atlas.Logger.Error("Error writing error message", zap.Error(err))
+						return
+					}
+					continue
 				}
-				record := kv.NewRecord()
-				record.SetField("data", kv.NewStringValue(value))
-				data, _ := record.Encode()
 
-				_ = kc.Transaction().Put(ctx, builder.Build(), data)
-				_ = kc.Commit()
+				// Create properly initialized consensus server and adapter
+				server := &consensus.Server{}
+				dataStore := pool.DataStore()
+				if dataStore == nil {
+					err := s.writeError(Fatal, errors.New("data store not available"))
+					if err != nil {
+						atlas.Logger.Error("Error writing error message", zap.Error(err))
+						return
+					}
+					continue
+				}
 
-				_ = s.writeOk(OK)
+				// Initialize adapter - it will use atlas.CurrentOptions internally
+				adapter := consensus.NewKVConsensusAdapter(server, dataStore)
 
-				_ = kc.Close()
+				// Perform consensus-based SET operation
+				err := adapter.SetKey(ctx, key, []byte(value))
+				if err != nil {
+					atlas.Logger.Error("SET operation failed", zap.String("key", key), zap.Error(err))
+					err := s.writeError(Fatal, fmt.Errorf("SET failed: %w", err))
+					if err != nil {
+						atlas.Logger.Error("Error writing error message", zap.Error(err))
+						return
+					}
+					continue
+				}
+
+				// Send success response
+				err = s.writeOk(OK)
+				if err != nil {
+					atlas.Logger.Error("Error writing OK response", zap.Error(err))
+					return
+				}
 			case "GET":
-				kc, _ := pool.NewDataConnection(ctx, false)
+				// Validate command format: GET key
+				if cmd.CheckMinLen(2) != nil {
+					err := s.writeError(Fatal, errors.New("GET requires key"))
+					if err != nil {
+						atlas.Logger.Error("Error writing error message", zap.Error(err))
+						return
+					}
+					continue
+				}
+
 				key := cmd.SelectCommand(1)
 
-				parts := strings.Split(key, ".")
-				builder := kv.NewKeyBuilder()
-				if len(parts) > 2 {
-					builder.Table(parts[0])
-					builder.Row(parts[1])
-					builder.Append(strings.Join(parts[2:], "."))
-				} else if len(parts) > 1 {
-					builder.Table(parts[0])
-					builder.Row(parts[1])
-				} else {
-					builder.Append(strings.Join(parts, "."))
+				// Ensure node is properly configured for consensus
+				if atlas.CurrentOptions.ServerId == 0 {
+					err := s.writeError(Fatal, errors.New("node not properly initialized - missing server ID"))
+					if err != nil {
+						atlas.Logger.Error("Error writing error message", zap.Error(err))
+						return
+					}
+					continue
 				}
 
-				data, _ := kc.Transaction().Get(ctx, builder.Build())
-				rec, _ := kv.DecodeRecord(data)
-				if name, exists := rec.GetField("data"); exists {
-					_ = s.writeMessage("VALUE: " + name.GetString() + EOL)
+				// Create properly initialized consensus server and adapter
+				server := &consensus.Server{}
+				dataStore := pool.DataStore()
+				if dataStore == nil {
+					err := s.writeError(Fatal, errors.New("data store not available"))
+					if err != nil {
+						atlas.Logger.Error("Error writing error message", zap.Error(err))
+						return
+					}
+					continue
 				}
-				_ = kc.Close()
+
+				// Initialize adapter - it will use atlas.CurrentOptions internally
+				adapter := consensus.NewKVConsensusAdapter(server, dataStore)
+
+				// Perform consensus-aware GET operation
+				value, err := adapter.GetKey(ctx, key)
+				if err != nil {
+					atlas.Logger.Error("GET operation failed", zap.String("key", key), zap.Error(err))
+					err := s.writeError(Fatal, fmt.Errorf("GET failed: %w", err))
+					if err != nil {
+						atlas.Logger.Error("Error writing error message", zap.Error(err))
+						return
+					}
+					continue
+				}
+
+				// Send value response
+				if value == nil {
+					// Key not found
+					err = s.writeMessage("NOT_FOUND" + EOL)
+				} else {
+					// Key found, return value
+					err = s.writeMessage("VALUE: " + string(value) + EOL)
+				}
+				if err != nil {
+					atlas.Logger.Error("Error writing GET response", zap.Error(err))
+					return
+				}
+				s.writeOk(OK)
 			case "DELETE":
 			}
 		}

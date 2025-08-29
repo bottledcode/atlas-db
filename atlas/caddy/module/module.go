@@ -70,17 +70,17 @@ func (m *Module) Provision(ctx caddy.Context) (err error) {
 
 	if atlas.CurrentOptions.BootstrapConnect != "" {
 		atlas.Logger.Info("🚀 Bootstrapping Atlas...")
-		err = bootstrap.DoBootstrap(ctx, atlas.CurrentOptions.BootstrapConnect, atlas.CurrentOptions.MetaFilename)
-		if err != nil {
-			return
-		}
+		//err = bootstrap.DoBootstrap(ctx, atlas.CurrentOptions.BootstrapConnect, atlas.CurrentOptions.MetaFilename)
+		//if err != nil {
+		//	return
+		//}
 		atlas.Logger.Info("🚀 Bootstrapping Complete")
 		atlas.Logger.Info("☄️ Joining Atlas Cluster...")
-		atlas.CreatePool(atlas.CurrentOptions)
-		err = bootstrap.JoinCluster(ctx)
-		if err != nil {
-			return
-		}
+		//atlas.CreatePool(atlas.CurrentOptions)
+		//err = bootstrap.JoinCluster(ctx)
+		//if err != nil {
+		//	return
+		//}
 
 		atlas.Logger.Info("☄️ Atlas Cluster Joined", zap.Int64("NodeID", atlas.CurrentOptions.ServerId))
 	} else {

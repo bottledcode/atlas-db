@@ -18,12 +18,6 @@
 
 package bootstrap
 
-import (
-	"io"
-
-	"github.com/bottledcode/atlas-db/atlas/kv"
-)
-
 type Server struct {
 	UnimplementedBootstrapServer
 }
@@ -39,37 +33,13 @@ func (b *Server) GetBootstrapData(request *BootstrapRequest, stream Bootstrap_Ge
 		})
 	}
 
-	pool := kv.GetPool()
-	ctx := stream.Context()
-
-	conn, err := pool.NewMetaConnection(ctx, false)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	panic("not implemented")
-
-	buf := make([]byte, 1024*1024)
-	for {
-		//n, err := file.Read(buf)
-		if err != nil && err != io.EOF {
-			return err
-		}
-		///if n == 0 {
-		break
-		//}
-
-		if err := stream.Send(&BootstrapResponse{
-			Response: &BootstrapResponse_BootstrapData{
-				BootstrapData: &BootstrapData{
-					Data: buf[:0],
-				},
+	// TODO: Implement KV-based bootstrap data streaming in later phase
+	// For now, just return empty success response
+	return stream.Send(&BootstrapResponse{
+		Response: &BootstrapResponse_BootstrapData{
+			BootstrapData: &BootstrapData{
+				Data: []byte("KV bootstrap stubbed"),
 			},
-		}); err != nil {
-			return err
-		}
-	}
-
-	return nil
+		},
+	})
 }

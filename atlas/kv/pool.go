@@ -13,6 +13,7 @@
  *
  * You should have received a copy of the GNU Affero General Public License
  * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
+ *
  */
 
 package kv
@@ -20,7 +21,6 @@ package kv
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"sync"
 	"time"
 )
@@ -55,13 +55,13 @@ func GetPool() *Pool {
 // NewPool creates a new pool with data and metadata stores
 func NewPool(dataPath, metaPath string) (*Pool, error) {
 	// Create data store (main user data)
-	dataStore, err := NewBadgerStore(filepath.Join(dataPath, "data"))
+	dataStore, err := NewBadgerStore(dataPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create data store: %w", err)
 	}
 
 	// Create metadata store (consensus, ownership, migrations)
-	metaStore, err := NewBadgerStore(filepath.Join(metaPath, "meta"))
+	metaStore, err := NewBadgerStore(metaPath)
 	if err != nil {
 		dataStore.Close()
 		return nil, fmt.Errorf("failed to create meta store: %w", err)

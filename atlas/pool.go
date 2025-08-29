@@ -20,17 +20,15 @@ package atlas
 
 import (
 	"context"
-	_ "embed"
 	"runtime"
-	"strings"
 	"sync"
 
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitemigration"
 )
 
-//go:embed bootstrap/migrations.sql
-var migrations string
+// TODO: Remove SQLite migrations in KV-only phase
+// var migrations string // Removed for KV-only operation
 
 var Pool *sqlitemigration.Pool
 var MigrationsPool *sqlitemigration.Pool
@@ -92,24 +90,9 @@ func CreatePool(options *Options) {
 		},
 	})
 
-	// strip comments from migrations
-	migs := strings.Split(migrations, ";")
-	deleting := false
-	for i, mig := range migs {
-		// remove all substrings between /* and */
-		if strings.Contains(mig, "/*") {
-			deleting = true
-		}
-		if strings.Contains(mig, "*/") {
-			deleting = false
-			end := strings.Index(mig, "*/") + 2
-			migs[i] = mig[end:]
-			continue
-		}
-		if deleting {
-			migs[i] = ""
-		}
-	}
+	// TODO: Remove SQLite migrations processing in KV-only phase
+	// For now, create empty migrations pool for backward compatibility
+	var migs []string // Empty migrations for KV-only operation
 
 	MigrationsPool = sqlitemigration.NewPool(options.MetaFilename, sqlitemigration.Schema{
 		Migrations: migs,

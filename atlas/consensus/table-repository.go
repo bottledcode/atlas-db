@@ -21,10 +21,11 @@ package consensus
 import (
 	"context"
 	"errors"
+	"strings"
+
 	"github.com/bottledcode/atlas-db/atlas"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"strings"
 	"zombiezen.com/go/sqlite"
 )
 

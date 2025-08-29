@@ -24,10 +24,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/bottledcode/atlas-db/atlas"
-	"github.com/bottledcode/atlas-db/atlas/commands"
-	"github.com/bottledcode/atlas-db/atlas/consensus"
-	"go.uber.org/zap"
 	"net"
 	"os"
 	"path/filepath"
@@ -35,6 +31,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/bottledcode/atlas-db/atlas"
+	"github.com/bottledcode/atlas-db/atlas/commands"
+	"github.com/bottledcode/atlas-db/atlas/consensus"
+	"github.com/bottledcode/atlas-db/atlas/kv"
+	"go.uber.org/zap"
 	"zombiezen.com/go/sqlite"
 )
 
@@ -191,13 +193,6 @@ func (s *Socket) HandleConnection(conn net.Conn, ctx context.Context) {
 			return
 		case err = <-errs:
 			atlas.Logger.Error("Error reading from connection", zap.Error(err))
-			if s.inTransaction {
-				_, err := atlas.ExecuteSQL(ctx, "ROLLBACK", s.sql, false)
-				if err != nil {
-					atlas.Logger.Error("Error rolling back transaction", zap.Error(err))
-				}
-				s.inTransaction = false
-			}
 			return
 		case handshake := <-cmds:
 			switch handshakePart {
@@ -239,6 +234,81 @@ func (s *Socket) HandleConnection(conn net.Conn, ctx context.Context) {
 	}
 
 ready:
+
+	kv.CreatePool("/tmp/atlas/data", "/tmp/atlas/meta")
+	pool := kv.GetPool()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case err = <-errs:
+			atlas.Logger.Error("Error reading from connection", zap.Error(err))
+			continue
+		case cmd := <-cmds:
+			if cmd.CheckMinLen(1) != nil {
+				err := s.writeError(Fatal, errors.New("invalid command"))
+				if err != nil {
+					atlas.Logger.Error("Error writing error message", zap.Error(err))
+					return
+				}
+			}
+
+			switch k, _ := cmd.SelectNormalizedCommand(0); k {
+			case "SET":
+				kc, _ := pool.NewDataConnection(ctx, true)
+				key := cmd.SelectCommand(1)
+				value := cmd.From(2).Raw()
+
+				parts := strings.Split(key, ".")
+				builder := kv.NewKeyBuilder()
+				if len(parts) > 2 {
+					builder.Table(parts[0])
+					builder.Row(parts[1])
+					builder.Append(strings.Join(parts[2:], "."))
+				} else if len(parts) > 1 {
+					builder.Table(parts[0])
+					builder.Row(parts[1])
+				} else {
+					builder.Append(strings.Join(parts, "."))
+				}
+				record := kv.NewRecord()
+				record.SetField("data", kv.NewStringValue(value))
+				data, _ := record.Encode()
+
+				_ = kc.Transaction().Put(ctx, builder.Build(), data)
+				_ = kc.Commit()
+
+				_ = s.writeOk(OK)
+
+				_ = kc.Close()
+			case "GET":
+				kc, _ := pool.NewDataConnection(ctx, false)
+				key := cmd.SelectCommand(1)
+
+				parts := strings.Split(key, ".")
+				builder := kv.NewKeyBuilder()
+				if len(parts) > 2 {
+					builder.Table(parts[0])
+					builder.Row(parts[1])
+					builder.Append(strings.Join(parts[2:], "."))
+				} else if len(parts) > 1 {
+					builder.Table(parts[0])
+					builder.Row(parts[1])
+				} else {
+					builder.Append(strings.Join(parts, "."))
+				}
+
+				data, _ := kc.Transaction().Get(ctx, builder.Build())
+				rec, _ := kv.DecodeRecord(data)
+				if name, exists := rec.GetField("data"); exists {
+					_ = s.writeMessage("VALUE: " + name.GetString() + EOL)
+				}
+				_ = kc.Close()
+			case "DELETE":
+			}
+		}
+	}
 
 	s.sql, err = atlas.Pool.Take(ctx)
 	if err != nil {

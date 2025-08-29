@@ -20,6 +20,7 @@ package socket
 
 import (
 	"errors"
+
 	"github.com/bottledcode/atlas-db/atlas/commands"
 )
 

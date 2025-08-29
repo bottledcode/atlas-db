@@ -20,11 +20,12 @@ package socket
 
 import (
 	"context"
-	"github.com/bottledcode/atlas-db/atlas"
-	"go.uber.org/zap"
 	"net"
 	"os"
 	"time"
+
+	"github.com/bottledcode/atlas-db/atlas"
+	"go.uber.org/zap"
 )
 
 func ServeSocket(ctx context.Context) (func() error, error) {
@@ -53,7 +54,7 @@ func ServeSocket(ctx context.Context) (func() error, error) {
 				}
 				c := &Socket{
 					activeStmts: make(map[string]*Query),
-					timeout:     0 * time.Minute,
+					timeout:     5 * time.Minute,
 				}
 				go func() {
 					ctx, done := context.WithCancel(ctx)

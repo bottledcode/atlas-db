@@ -22,8 +22,9 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"github.com/bottledcode/atlas-db/atlas/commands"
 	"strings"
+
+	"github.com/bottledcode/atlas-db/atlas/commands"
 )
 
 type Scanner struct {

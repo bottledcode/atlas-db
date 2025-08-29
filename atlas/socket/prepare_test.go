@@ -19,8 +19,9 @@
 package socket
 
 import (
-	"github.com/stretchr/testify/assert"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 
 	"github.com/bottledcode/atlas-db/atlas/commands"
 	"zombiezen.com/go/sqlite"

@@ -23,6 +23,10 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
+	"os"
+	"strconv"
+
 	"github.com/bottledcode/atlas-db/atlas"
 	"github.com/bottledcode/atlas-db/atlas/consensus"
 	"go.uber.org/zap"
@@ -31,9 +35,6 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"io"
-	"os"
-	"strconv"
 	"zombiezen.com/go/sqlite"
 )
 

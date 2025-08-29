@@ -21,9 +21,10 @@ package atlas
 import (
 	"context"
 	"fmt"
-	"go.uber.org/zap"
 	"strings"
 	"time"
+
+	"go.uber.org/zap"
 	"zombiezen.com/go/sqlite"
 )
 

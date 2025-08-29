@@ -22,6 +22,11 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"strings"
+
 	"github.com/bottledcode/atlas-db/atlas"
 	"github.com/bottledcode/atlas-db/atlas/bootstrap"
 	"github.com/bottledcode/atlas-db/atlas/consensus"
@@ -35,10 +40,6 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"net"
-	"net/http"
-	"os"
-	"strings"
 )
 
 type Module struct {
@@ -83,11 +84,11 @@ func (m *Module) Provision(ctx caddy.Context) (err error) {
 
 		atlas.Logger.Info("☄️ Atlas Cluster Joined", zap.Int64("NodeID", atlas.CurrentOptions.ServerId))
 	} else {
-		atlas.CreatePool(atlas.CurrentOptions)
-		err = bootstrap.InitializeMaybe(ctx)
-		if err != nil {
-			return
-		}
+		//atlas.CreatePool(atlas.CurrentOptions)
+		//err = bootstrap.InitializeMaybe(ctx)
+		//if err != nil {
+		//	return
+		//}
 	}
 
 	m.bootstrapServer = grpc.NewServer()

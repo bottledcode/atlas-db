@@ -13,16 +13,18 @@
  *
  * You should have received a copy of the GNU Affero General Public License
  * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
+ *
  */
 
 package consensus
 
 import (
 	"errors"
+	"strings"
+
 	"github.com/bottledcode/atlas-db/atlas"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"strings"
 )
 
 func (t *Table) FromSqlRow(row *atlas.Row) error {

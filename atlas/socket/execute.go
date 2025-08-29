@@ -20,8 +20,9 @@ package socket
 
 import (
 	"errors"
-	"github.com/bottledcode/atlas-db/atlas/commands"
 	"slices"
+
+	"github.com/bottledcode/atlas-db/atlas/commands"
 )
 
 type Execute struct {

@@ -24,6 +24,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitemigration"
 )

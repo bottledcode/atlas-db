@@ -26,14 +26,15 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
-	"github.com/bottledcode/atlas-db/atlas"
-	"github.com/bottledcode/atlas-db/atlas/test"
-	"go.uber.org/zap"
 	"io"
 	"math/big"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/bottledcode/atlas-db/atlas"
+	"github.com/bottledcode/atlas-db/atlas/test"
+	"go.uber.org/zap"
 
 	"github.com/bottledcode/atlas-db/atlas/bootstrap"
 	"github.com/stretchr/testify/require"

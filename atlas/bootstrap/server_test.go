@@ -13,17 +13,19 @@
  *
  * You should have received a copy of the GNU Affero General Public License
  * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
+ *
  */
 
 package bootstrap_test
 
 import (
 	"context"
+	"os"
+	"testing"
+
 	"github.com/bottledcode/atlas-db/atlas/bootstrap"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
-	"os"
-	"testing"
 )
 
 func TestGetBootstrapData(t *testing.T) {

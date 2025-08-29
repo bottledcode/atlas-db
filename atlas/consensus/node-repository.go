@@ -21,9 +21,10 @@ package consensus
 import (
 	"context"
 	"fmt"
+	"strconv"
+
 	"github.com/bottledcode/atlas-db/atlas"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"strconv"
 	"zombiezen.com/go/sqlite"
 )
 

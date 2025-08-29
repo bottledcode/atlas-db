@@ -13,14 +13,15 @@
  *
  * You should have received a copy of the GNU Affero General Public License
  * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
+ *
  */
 
 package bootstrap
 
 import (
-	"github.com/bottledcode/atlas-db/atlas"
 	"io"
-	"os"
+
+	"github.com/bottledcode/atlas-db/atlas/kv"
 )
 
 type Server struct {
@@ -38,50 +39,31 @@ func (b *Server) GetBootstrapData(request *BootstrapRequest, stream Bootstrap_Ge
 		})
 	}
 
-	atlas.CreatePool(atlas.CurrentOptions)
-
+	pool := kv.GetPool()
 	ctx := stream.Context()
 
-	conn, err := atlas.MigrationsPool.Take(ctx)
+	conn, err := pool.NewMetaConnection(ctx, false)
 	if err != nil {
 		return err
 	}
-	defer atlas.MigrationsPool.Put(conn)
+	defer conn.Close()
 
-	// create a temporary file to store the data
-	f, err := os.CreateTemp("", "atlas-*.db")
-	if err != nil {
-		return err
-	}
-	f.Close()
-	defer os.Remove(f.Name())
-
-	_, err = atlas.ExecuteSQL(ctx, "VACUUM INTO '"+f.Name()+"'", conn, false)
-	if err != nil {
-		return
-	}
-
-	// stream the data to the client
-	file, err := os.Open(f.Name())
-	if err != nil {
-		return err
-	}
-	defer file.Close()
+	panic("not implemented")
 
 	buf := make([]byte, 1024*1024)
 	for {
-		n, err := file.Read(buf)
+		//n, err := file.Read(buf)
 		if err != nil && err != io.EOF {
 			return err
 		}
-		if n == 0 {
-			break
-		}
+		///if n == 0 {
+		break
+		//}
 
 		if err := stream.Send(&BootstrapResponse{
 			Response: &BootstrapResponse_BootstrapData{
 				BootstrapData: &BootstrapData{
-					Data: buf[:n],
+					Data: buf[:0],
 				},
 			},
 		}); err != nil {

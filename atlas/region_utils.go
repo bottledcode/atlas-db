@@ -20,6 +20,7 @@ package atlas
 
 import (
 	"context"
+
 	"zombiezen.com/go/sqlite"
 )
 

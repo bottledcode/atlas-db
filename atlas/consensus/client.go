@@ -21,6 +21,7 @@ package consensus
 import (
 	"context"
 	"crypto/tls"
+
 	"github.com/bottledcode/atlas-db/atlas"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"

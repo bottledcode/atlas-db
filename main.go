@@ -23,11 +23,12 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"os"
+	"strings"
+
 	"github.com/bottledcode/atlas-db/atlas"
 	"github.com/bottledcode/atlas-db/atlas/bootstrap"
 	"go.uber.org/zap"
-	"os"
-	"strings"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitemigration"
 )

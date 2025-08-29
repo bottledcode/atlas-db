@@ -19,10 +19,11 @@
 package atlas
 
 import (
-	"go.uber.org/zap"
 	"slices"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
 	"zombiezen.com/go/sqlite"
 )
 

@@ -21,14 +21,15 @@ package consensus
 import (
 	"context"
 	"errors"
-	"github.com/bottledcode/atlas-db/atlas"
-	"google.golang.org/grpc"
-	"google.golang.org/protobuf/types/known/emptypb"
 	"slices"
 	"sort"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/bottledcode/atlas-db/atlas"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 type QuorumManager interface {

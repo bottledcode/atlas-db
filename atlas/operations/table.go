@@ -20,6 +20,7 @@ package operations
 
 import (
 	"errors"
+
 	"github.com/bottledcode/atlas-db/atlas/commands"
 	"github.com/bottledcode/atlas-db/atlas/consensus"
 )

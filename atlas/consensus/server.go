@@ -26,8 +26,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/bottledcode/atlas-db/atlas"
 	"github.com/bottledcode/atlas-db/atlas/kv"
+	"github.com/bottledcode/atlas-db/atlas/options"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -93,7 +93,7 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 	}
 
 	if existingTable.GetVersion() > req.GetTable().GetVersion() {
-		atlas.Logger.Info(
+		options.Logger.Info(
 			"the existing table version is higher than the requested version",
 			zap.String("table", existingTable.GetName()),
 			zap.Int64("existing_version", existingTable.GetVersion()),
@@ -177,7 +177,7 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 }
 
 func (s *Server) stealTableOperation(tr TableRepository, mr MigrationRepository, table *Table) ([]*Migration, error) {
-	atlas.Ownership.Remove(table.GetName())
+	Ownership.Remove(table.GetName())
 	err := tr.UpdateTable(table)
 	if err != nil {
 		return nil, err
@@ -210,7 +210,7 @@ func (s *Server) WriteMigration(ctx context.Context, req *WriteMigrationRequest)
 	}
 
 	if existingTable == nil {
-		atlas.Logger.Warn("table not found, but expected", zap.String("table", req.GetMigration().GetVersion().GetTableName()))
+		options.Logger.Warn("table not found, but expected", zap.String("table", req.GetMigration().GetVersion().GetTableName()))
 
 		return &WriteMigrationResponse{
 			Success: false,
@@ -286,7 +286,7 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 		return nil, err
 	}
 
-	atlas.Ownership.Commit(req.GetMigration().GetVersion().GetTableName(), req.GetMigration().GetVersion().GetTableVersion())
+	Ownership.Commit(req.GetMigration().GetVersion().GetTableName(), req.GetMigration().GetVersion().GetTableVersion())
 
 	return &emptypb.Empty{}, nil
 }
@@ -297,7 +297,7 @@ func (s *Server) applyMigration(migrations []*Migration, kvStore kv.Store) error
 		case *Migration_Schema:
 			// Schema migrations are not supported in KV mode
 			// Skip silently for backward compatibility during transition
-			atlas.Logger.Warn("Schema migration ignored in KV mode", 
+			options.Logger.Warn("Schema migration ignored in KV mode",
 				zap.String("table", migration.GetVersion().GetTableName()))
 			continue
 		case *Migration_Data:
@@ -311,49 +311,131 @@ func (s *Server) applyMigration(migrations []*Migration, kvStore kv.Store) error
 }
 
 func (s *Server) applyKVDataMigration(dataMigration *DataMigration, kvStore kv.Store) error {
-	for _, sessionData := range dataMigration.GetSession() {
-		// Parse the KV change from the session data
-		var kvChange KVChange
-		err := json.Unmarshal(sessionData, &kvChange)
-		if err != nil {
-			return fmt.Errorf("failed to unmarshal KV change: %w", err)
+	ctx := context.Background()
+
+	switch migrationType := dataMigration.GetSession().(type) {
+	case *DataMigration_Change:
+		switch op := migrationType.Change.GetOperation().(type) {
+		case *KVChange_Set:
+			err := kvStore.Put(ctx, op.Set.Key, op.Set.Value)
+			if err != nil {
+				return fmt.Errorf("failed to SET key %s: %w", op.Set.Key, err)
+			}
+			options.Logger.Info("Applied KV SET migration",
+				zap.String("key", string(op.Set.Key)),
+				zap.Int("value_size", len(op.Set.Value)))
+		case *KVChange_Del:
+			err := kvStore.Delete(ctx, op.Del.Key)
+			if err != nil {
+				return fmt.Errorf("failed to DELETE key %s: %w", op.Del.Key, err)
+			}
+			options.Logger.Info("Applied KV DELETE migration", zap.String("key", string(op.Del.Key)))
+		default:
+			return fmt.Errorf("unknown KV operation: %s", op)
 		}
-
-		// Apply the KV operation to the store
-		ctx := context.Background()
-		keyBytes := []byte(kvChange.Key)
-
-		switch kvChange.Operation {
-		case "SET":
-			err = kvStore.Put(ctx, keyBytes, kvChange.Value)
+	case *DataMigration_RawData:
+		sessionData := migrationType.RawData.GetData()
+		var operationCheck map[string]interface{}
+		err := json.Unmarshal(sessionData, &operationCheck)
+		if err != nil {
+			return fmt.Errorf("failed to unmarshal operation data: %w", err)
+		}
+		operation, ok := operationCheck["operation"].(string)
+		if !ok {
+			return fmt.Errorf("missing or invalid operation field")
+		}
+		switch operation {
+		case "ADD_NODE":
+			// Parse as node data structure
+			err := s.applyAddNodeOperation(ctx, sessionData, kvStore)
 			if err != nil {
-				return fmt.Errorf("failed to SET key %s: %w", kvChange.Key, err)
+				return fmt.Errorf("failed to apply ADD_NODE operation: %w", err)
 			}
-			atlas.Logger.Debug("Applied KV SET migration", 
-				zap.String("key", kvChange.Key),
-				zap.Int("value_size", len(kvChange.Value)))
-
-		case "DEL":
-			err = kvStore.Delete(ctx, keyBytes)
-			if err != nil {
-				return fmt.Errorf("failed to DELETE key %s: %w", kvChange.Key, err)
-			}
-			atlas.Logger.Debug("Applied KV DELETE migration", zap.String("key", kvChange.Key))
 
 		default:
-			return fmt.Errorf("unknown KV operation: %s", kvChange.Operation)
+			return fmt.Errorf("unknown KV raw operation: %s", operation)
 		}
 	}
+
+	return nil
+}
+
+// applyAddNodeOperation handles the ADD_NODE operation by properly adding the node using NodeRepositoryKV
+func (s *Server) applyAddNodeOperation(ctx context.Context, sessionData []byte, kvStore kv.Store) error {
+	// Parse the node data from the ADD_NODE operation
+	var nodeData map[string]interface{}
+	err := json.Unmarshal(sessionData, &nodeData)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal ADD_NODE data: %w", err)
+	}
+
+	// Extract node information from the operation data
+	id, ok := nodeData["id"].(float64) // JSON unmarshals numbers as float64
+	if !ok {
+		return fmt.Errorf("missing or invalid node ID")
+	}
+
+	address, ok := nodeData["address"].(string)
+	if !ok {
+		return fmt.Errorf("missing or invalid node address")
+	}
+
+	port, ok := nodeData["port"].(float64)
+	if !ok {
+		return fmt.Errorf("missing or invalid node port")
+	}
+
+	region, ok := nodeData["region"].(string)
+	if !ok {
+		return fmt.Errorf("missing or invalid node region")
+	}
+
+	active, ok := nodeData["active"].(bool)
+	if !ok {
+		return fmt.Errorf("missing or invalid node active status")
+	}
+
+	// Construct the node object
+	node := &Node{
+		Id:      int64(id),
+		Address: address,
+		Port:    int64(port),
+		Region:  &Region{Name: region},
+		Active:  active,
+		Rtt:     durationpb.New(0), // Default RTT for new nodes
+	}
+
+	// Use NodeRepositoryKV to properly add the node with indexing
+	nodeRepo := NewNodeRepositoryKV(ctx, kvStore)
+	if kvRepo, ok := nodeRepo.(*NodeRepositoryKV); ok {
+		err = kvRepo.AddNode(node)
+		if err != nil {
+			return fmt.Errorf("failed to add node via repository: %w", err)
+		}
+		qm := GetDefaultQuorumManager(ctx)
+		err = qm.AddNode(ctx, node)
+		if err != nil {
+			return fmt.Errorf("failed to add node to quorum: %w", err)
+		}
+
+		options.Logger.Info("Applied ADD_NODE migration",
+			zap.Int64("node_id", node.Id),
+			zap.String("address", node.Address),
+			zap.String("region", node.Region.Name))
+	} else {
+		return fmt.Errorf("failed to cast to NodeRepositoryKV")
+	}
+
 	return nil
 }
 
 func constructCurrentNode() *Node {
 	return &Node{
-		Id:      atlas.CurrentOptions.ServerId,
-		Address: atlas.CurrentOptions.AdvertiseAddress,
-		Port:    int64(atlas.CurrentOptions.AdvertisePort),
+		Id:      options.CurrentOptions.ServerId,
+		Address: options.CurrentOptions.AdvertiseAddress,
+		Port:    int64(options.CurrentOptions.AdvertisePort),
 		Region: &Region{
-			Name: atlas.CurrentOptions.Region,
+			Name: options.CurrentOptions.Region,
 		},
 		Active: true,
 		Rtt:    durationpb.New(0),
@@ -384,7 +466,7 @@ func (s *Server) JoinCluster(ctx context.Context, req *Node) (*JoinClusterRespon
 		return nil, status.Errorf(codes.Internal, "node table not found")
 	}
 
-	if table.GetOwner().GetId() != atlas.CurrentOptions.ServerId {
+	if table.GetOwner().GetId() != options.CurrentOptions.ServerId {
 		return &JoinClusterResponse{
 			Success: false,
 			Table:   table,
@@ -397,7 +479,7 @@ func (s *Server) JoinCluster(ctx context.Context, req *Node) (*JoinClusterRespon
 		return nil, err
 	}
 
-	// Create KV change for adding the node (replaces SQLite session)
+	// Create KV change for adding the node
 	nodeChange := map[string]interface{}{
 		"operation": "ADD_NODE",
 		"id":        req.GetId(),
@@ -424,13 +506,15 @@ func (s *Server) JoinCluster(ctx context.Context, req *Node) (*JoinClusterRespon
 		Version: &MigrationVersion{
 			TableVersion:     nodeTable.GetVersion(),
 			MigrationVersion: nextVersion,
-			NodeId:           atlas.CurrentOptions.ServerId,
+			NodeId:           options.CurrentOptions.ServerId,
 			TableName:        NodeTable,
 		},
 		Migration: &Migration_Data{
 			Data: &DataMigration{
-				Session: [][]byte{
-					migrationData,
+				Session: &DataMigration_RawData{
+					RawData: &RawData{
+						Data: migrationData,
+					},
 				},
 			},
 		},
@@ -572,7 +656,7 @@ func SendGossip(ctx context.Context, req *GossipMigration, kvStore kv.Store) err
 	nr := NewNodeRepositoryKV(ctx, kvStore)
 	nodes, err := nr.GetRandomNodes(5,
 		req.GetMigrationRequest().GetVersion().GetNodeId(),
-		atlas.CurrentOptions.ServerId,
+		options.CurrentOptions.ServerId,
 		req.GetSender().GetId(),
 	)
 	if err != nil {
@@ -613,7 +697,7 @@ func SendGossip(ctx context.Context, req *GossipMigration, kvStore kv.Store) err
 	// wait for gossip to complete
 	wg.Wait()
 
-	atlas.Logger.Info("gossip complete", zap.String("table", req.GetTable().GetName()), zap.Int64("version", req.GetTable().GetVersion()))
+	options.Logger.Info("gossip complete", zap.String("table", req.GetTable().GetName()), zap.Int64("version", req.GetTable().GetVersion()))
 
 	return errors.Join(errs...)
 }
@@ -657,7 +741,7 @@ func (s *Server) Gossip(ctx context.Context, req *GossipMigration) (*emptypb.Emp
 		return nil, err
 	}
 
-	// gossip to other nodes  
+	// gossip to other nodes
 	err = SendGossip(ctx, req, metaStore)
 	if err != nil {
 		return nil, err

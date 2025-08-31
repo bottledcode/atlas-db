@@ -58,8 +58,31 @@ message SchemaMigration {
   repeated string commands = 1; // The commands to be executed
 }
 
+message RawData {
+  bytes data = 1;
+}
+
+message SetChange {
+  bytes key = 1;
+  bytes value = 2;
+}
+
+message DelChange {
+  bytes key = 1;
+}
+
+message KVChange {
+  oneof operation {
+    SetChange set = 1;
+    DelChange del = 2;
+  }
+}
+
 message DataMigration {
-  repeated bytes session = 1; // The data to be written
+  oneof session {
+    RawData rawData = 1;
+    KVChange change = 2;
+  }
 }
 
 message Migration {
@@ -162,4 +185,11 @@ message Node {
 
 message Region {
   string name = 1; // The region name
+}
+
+// Storage message for efficient migration persistence
+message StoredMigrationBatch {
+  Migration migration = 1; // The complete migration
+  bool committed = 2; // Whether this migration batch is committed
+  bool gossip = 3; // Whether this migration batch came from gossip
 }

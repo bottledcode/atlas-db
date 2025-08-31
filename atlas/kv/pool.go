@@ -35,20 +35,36 @@ type Pool struct {
 
 var (
 	globalPool *Pool
-	poolOnce   sync.Once
+	poolMutex  sync.Mutex
 )
 
 // CreatePool initializes the global KV store pool
 func CreatePool(dataPath, metaPath string) error {
+	poolMutex.Lock()
+	defer poolMutex.Unlock()
+	
+	// Close existing pool if it exists
+	if globalPool != nil {
+		if err := globalPool.Close(); err != nil {
+			return fmt.Errorf("failed to close existing pool: %w", err)
+		}
+	}
+	
+	// Create new pool
 	var err error
-	poolOnce.Do(func() {
-		globalPool, err = NewPool(dataPath, metaPath)
-	})
-	return err
+	globalPool, err = NewPool(dataPath, metaPath)
+	if err != nil {
+		globalPool = nil
+		return err
+	}
+	
+	return nil
 }
 
 // GetPool returns the global pool instance
 func GetPool() *Pool {
+	poolMutex.Lock()
+	defer poolMutex.Unlock()
 	return globalPool
 }
 
@@ -167,8 +183,13 @@ func (p *Pool) Size() (dataSize, metaSize int64, err error) {
 
 // DrainPool closes the global pool
 func DrainPool() error {
+	poolMutex.Lock()
+	defer poolMutex.Unlock()
+	
 	if globalPool != nil {
-		return globalPool.Close()
+		err := globalPool.Close()
+		globalPool = nil
+		return err
 	}
 	return nil
 }

@@ -16,9 +16,15 @@
  *
  */
 
-package atlas
+package options
 
-import "sync"
+import (
+	"sync"
+
+	"go.uber.org/zap"
+)
+
+var Logger *zap.Logger
 
 type Options struct {
 	DbFilename                   string

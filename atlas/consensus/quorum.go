@@ -21,20 +21,22 @@ package consensus
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"sort"
 	"strconv"
 	"sync"
 	"time"
 
-	"github.com/bottledcode/atlas-db/atlas"
+	"github.com/bottledcode/atlas-db/atlas/kv"
+	"github.com/bottledcode/atlas-db/atlas/options"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 type QuorumManager interface {
 	GetQuorum(ctx context.Context, table string) (Quorum, error)
-	AddNode(node *Node)
+	AddNode(ctx context.Context, node *Node) error
 }
 
 var manager *defaultQuorumManager
@@ -57,7 +59,7 @@ type defaultQuorumManager struct {
 	nodes map[RegionName][]*QuorumNode
 }
 
-func (q *defaultQuorumManager) AddNode(node *Node) {
+func (q *defaultQuorumManager) AddNode(ctx context.Context, node *Node) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -65,11 +67,17 @@ func (q *defaultQuorumManager) AddNode(node *Node) {
 		q.nodes[RegionName(node.GetRegion().GetName())] = make([]*QuorumNode, 0)
 	}
 
-	q.nodes[RegionName(node.GetRegion().GetName())] = append(q.nodes[RegionName(node.GetRegion().GetName())], &QuorumNode{
+	qn := &QuorumNode{
 		Node:   node,
 		closer: nil,
 		client: nil,
-	})
+	}
+	_, err := qn.JoinCluster(ctx, node)
+	if err == nil {
+		q.nodes[RegionName(node.GetRegion().GetName())] = append(q.nodes[RegionName(node.GetRegion().GetName())], qn)
+	}
+
+	return nil
 }
 
 type Quorum interface {
@@ -242,16 +250,20 @@ func (q *defaultQuorumManager) GetQuorum(ctx context.Context, table string) (Quo
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
-	Fz := atlas.CurrentOptions.GetFz()
-	Fn := atlas.CurrentOptions.GetFn()
+	Fz := options.CurrentOptions.GetFz()
+	Fn := options.CurrentOptions.GetFn()
 
-	conn, err := atlas.MigrationsPool.Take(ctx)
-	if err != nil {
-		return nil, err
+	kvPool := kv.GetPool()
+	if kvPool == nil {
+		return nil, fmt.Errorf("KV pool not initialized")
 	}
-	defer atlas.MigrationsPool.Put(conn)
 
-	tableRepo := GetDefaultTableRepository(ctx, conn)
+	metaStore := kvPool.MetaStore()
+	if metaStore == nil {
+		return nil, fmt.Errorf("metaStore is closed")
+	}
+
+	tableRepo := NewTableRepositoryKV(ctx, metaStore)
 	tableConfig, err := tableRepo.GetTable(table)
 	if err != nil {
 		return nil, err

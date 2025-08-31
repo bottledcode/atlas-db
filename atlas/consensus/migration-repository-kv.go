@@ -13,6 +13,7 @@
  *
  * You should have received a copy of the GNU Affero General Public License
  * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
+ *
  */
 
 package consensus
@@ -20,13 +21,13 @@ package consensus
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/bottledcode/atlas-db/atlas/kv"
+	"google.golang.org/protobuf/proto"
 )
 
 // MigrationRepositoryKV implements MigrationRepository using key-value operations
@@ -43,26 +44,6 @@ func NewMigrationRepositoryKV(ctx context.Context, store kv.Store) MigrationRepo
 	}
 }
 
-// MigrationStorageModel represents how migration data is stored in KV format
-type MigrationStorageModel struct {
-	TableID          string  `json:"table_id"`
-	TableVersion     int64   `json:"table_version"`
-	MigrationVersion int64   `json:"migration_version"`
-	BatchPart        int     `json:"batch_part"`
-	ByNodeID         int64   `json:"by_node_id"`
-	Command          *string `json:"command,omitempty"` // For schema migrations
-	Data             *[]byte `json:"data,omitempty"`    // For data migrations
-	Committed        bool    `json:"committed"`
-	Gossip           bool    `json:"gossip"`
-}
-
-// MigrationBatchModel represents a complete migration batch
-type MigrationBatchModel struct {
-	Version   *MigrationVersion        `json:"version"`
-	Parts     []*MigrationStorageModel `json:"parts"`
-	Committed bool                     `json:"committed"`
-	Gossip    bool                     `json:"gossip"`
-}
 
 func (m *MigrationRepositoryKV) GetNextVersion(table string) (int64, error) {
 	// Scan for the highest version number for this table
@@ -81,17 +62,17 @@ func (m *MigrationRepositoryKV) GetNextVersion(table string) (int64, error) {
 	defer iterator.Close()
 
 	maxVersion := int64(0)
-	
+
 	// Use proper BadgerDB prefix iteration pattern
 	for iterator.Seek(prefix); iterator.Valid(); iterator.Next() {
 		item := iterator.Item()
 		key := item.Key()
-		
+
 		// Check if key still has our prefix
 		if !bytes.HasPrefix(key, prefix) {
 			break
 		}
-		
+
 		keyStr := string(key)
 
 		// Parse version from key: meta:migration:{table}:version:{version}:...
@@ -135,58 +116,14 @@ func (m *MigrationRepositoryKV) GetMigrationVersion(version *MigrationVersion) (
 		return nil, fmt.Errorf("failed to get migration: %w", err)
 	}
 
-	var batch MigrationBatchModel
-	if err := json.Unmarshal(data, &batch); err != nil {
+	var batch StoredMigrationBatch
+	if err := proto.Unmarshal(data, &batch); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal migration batch: %w", err)
 	}
 
-	return m.convertBatchToMigrations(&batch), nil
+	return []*Migration{batch.Migration}, nil
 }
 
-func (m *MigrationRepositoryKV) convertBatchToMigrations(batch *MigrationBatchModel) []*Migration {
-	if len(batch.Parts) == 0 {
-		return []*Migration{}
-	}
-
-	// Group parts by migration type (schema vs data)
-	migrations := make([]*Migration, 0)
-	currentMigration := &Migration{
-		Version: batch.Version,
-	}
-
-	// Determine migration type from first part
-	firstPart := batch.Parts[0]
-	if firstPart.Command != nil {
-		// Schema migration
-		commands := make([]string, 0, len(batch.Parts))
-		for _, part := range batch.Parts {
-			if part.Command != nil {
-				commands = append(commands, *part.Command)
-			}
-		}
-		currentMigration.Migration = &Migration_Schema{
-			Schema: &SchemaMigration{
-				Commands: commands,
-			},
-		}
-	} else {
-		// Data migration
-		sessions := make([][]byte, 0, len(batch.Parts))
-		for _, part := range batch.Parts {
-			if part.Data != nil {
-				sessions = append(sessions, *part.Data)
-			}
-		}
-		currentMigration.Migration = &Migration_Data{
-			Data: &DataMigration{
-				Session: sessions,
-			},
-		}
-	}
-
-	migrations = append(migrations, currentMigration)
-	return migrations
-}
 
 func (m *MigrationRepositoryKV) CommitAllMigrations(table string) error {
 	// Update all migrations for this table to committed=true
@@ -212,15 +149,15 @@ func (m *MigrationRepositoryKV) CommitAllMigrations(table string) error {
 			continue
 		}
 
-		var migrationBatch MigrationBatchModel
-		if err := json.Unmarshal(data, &migrationBatch); err != nil {
+		var storedBatch StoredMigrationBatch
+		if err := proto.Unmarshal(data, &storedBatch); err != nil {
 			continue
 		}
 
 		// Mark as committed
-		migrationBatch.Committed = true
+		storedBatch.Committed = true
 
-		updatedData, err := json.Marshal(&migrationBatch)
+		updatedData, err := proto.Marshal(&storedBatch)
 		if err != nil {
 			continue
 		}
@@ -264,14 +201,14 @@ func (m *MigrationRepositoryKV) CommitMigrationExact(version *MigrationVersion) 
 		return fmt.Errorf("failed to get migration: %w", err)
 	}
 
-	var batch MigrationBatchModel
-	if err := json.Unmarshal(data, &batch); err != nil {
+	var storedBatch StoredMigrationBatch
+	if err := proto.Unmarshal(data, &storedBatch); err != nil {
 		return fmt.Errorf("failed to unmarshal migration batch: %w", err)
 	}
 
-	batch.Committed = true
+	storedBatch.Committed = true
 
-	updatedData, err := json.Marshal(&batch)
+	updatedData, err := proto.Marshal(&storedBatch)
 	if err != nil {
 		return fmt.Errorf("failed to marshal updated batch: %w", err)
 	}
@@ -308,18 +245,17 @@ func (m *MigrationRepositoryKV) GetUncommittedMigrations(table *Table) ([]*Migra
 			continue
 		}
 
-		var batch MigrationBatchModel
-		if err := json.Unmarshal(data, &batch); err != nil {
+		var storedBatch StoredMigrationBatch
+		if err := proto.Unmarshal(data, &storedBatch); err != nil {
 			continue
 		}
 
 		// Skip committed or gossip migrations
-		if batch.Committed || batch.Gossip {
+		if storedBatch.Committed || storedBatch.Gossip {
 			continue
 		}
 
-		batchMigrations := m.convertBatchToMigrations(&batch)
-		migrations = append(migrations, batchMigrations...)
+		migrations = append(migrations, storedBatch.Migration)
 	}
 
 	return migrations, nil
@@ -358,54 +294,14 @@ func (m *MigrationRepositoryKV) addMigrationInternal(migration *Migration, gossi
 		return fmt.Errorf("failed to check migration existence: %w", err)
 	}
 
-	// Convert migration to storage model
-	batch := &MigrationBatchModel{
-		Version:   version,
-		Parts:     make([]*MigrationStorageModel, 0),
+	// Create stored migration batch with protobuf
+	storedBatch := &StoredMigrationBatch{
+		Migration: migration,
 		Committed: false,
 		Gossip:    gossip,
 	}
 
-	batchPart := 0
-	switch migration.GetMigration().(type) {
-	case *Migration_Schema:
-		for _, command := range migration.GetSchema().GetCommands() {
-			part := &MigrationStorageModel{
-				TableID:          version.GetTableName(),
-				TableVersion:     version.GetTableVersion(),
-				MigrationVersion: version.GetMigrationVersion(),
-				BatchPart:        batchPart,
-				ByNodeID:         version.GetNodeId(),
-				Command:          &command,
-				Data:             nil,
-				Committed:        false,
-				Gossip:           gossip,
-			}
-			batch.Parts = append(batch.Parts, part)
-			batchPart++
-		}
-	case *Migration_Data:
-		for _, data := range migration.GetData().GetSession() {
-			dataCopy := make([]byte, len(data))
-			copy(dataCopy, data)
-
-			part := &MigrationStorageModel{
-				TableID:          version.GetTableName(),
-				TableVersion:     version.GetTableVersion(),
-				MigrationVersion: version.GetMigrationVersion(),
-				BatchPart:        batchPart,
-				ByNodeID:         version.GetNodeId(),
-				Command:          nil,
-				Data:             &dataCopy,
-				Committed:        false,
-				Gossip:           gossip,
-			}
-			batch.Parts = append(batch.Parts, part)
-			batchPart++
-		}
-	}
-
-	data, err := json.Marshal(batch)
+	data, err := proto.Marshal(storedBatch)
 	if err != nil {
 		return fmt.Errorf("failed to marshal migration batch: %w", err)
 	}
@@ -415,7 +311,7 @@ func (m *MigrationRepositoryKV) addMigrationInternal(migration *Migration, gossi
 	}
 
 	// Also create index entries for efficient querying
-	if err := m.updateMigrationIndexes(txn, batch); err != nil {
+	if err := m.updateMigrationIndexes(txn, storedBatch); err != nil {
 		return fmt.Errorf("failed to update migration indexes: %w", err)
 	}
 
@@ -423,8 +319,8 @@ func (m *MigrationRepositoryKV) addMigrationInternal(migration *Migration, gossi
 }
 
 // updateMigrationIndexes maintains indexes for efficient migration queries
-func (m *MigrationRepositoryKV) updateMigrationIndexes(txn kv.Transaction, batch *MigrationBatchModel) error {
-	version := batch.Version
+func (m *MigrationRepositoryKV) updateMigrationIndexes(txn kv.Transaction, storedBatch *StoredMigrationBatch) error {
+	version := storedBatch.Migration.GetVersion()
 
 	// Index by table: meta:index:migration:table:{table}:{version}:{nodeId} -> migration_key
 	tableIndexKey := kv.NewKeyBuilder().Meta().Append("index").Append("migration").
@@ -445,7 +341,7 @@ func (m *MigrationRepositoryKV) updateMigrationIndexes(txn kv.Transaction, batch
 	}
 
 	// Index by committed status: meta:index:migration:uncommitted:{table}:{version}:{nodeId} -> migration_key
-	if !batch.Committed && !batch.Gossip {
+	if !storedBatch.Committed && !storedBatch.Gossip {
 		uncommittedIndexKey := kv.NewKeyBuilder().Meta().Append("index").Append("migration").
 			Append("uncommitted").Append(version.GetTableName()).
 			Append(fmt.Sprintf("%d", version.GetMigrationVersion())).
@@ -485,13 +381,12 @@ func (m *MigrationRepositoryKV) GetMigrationsByTable(tableName string) ([]*Migra
 			continue
 		}
 
-		var batch MigrationBatchModel
-		if err := json.Unmarshal(data, &batch); err != nil {
+		var storedBatch StoredMigrationBatch
+		if err := proto.Unmarshal(data, &storedBatch); err != nil {
 			continue
 		}
 
-		batchMigrations := m.convertBatchToMigrations(&batch)
-		migrations = append(migrations, batchMigrations...)
+		migrations = append(migrations, storedBatch.Migration)
 	}
 
 	return migrations, nil

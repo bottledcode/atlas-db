@@ -131,7 +131,6 @@ func TestMigrationRepositoryKV_DataMigration(t *testing.T) {
 
 	// Test data migration
 	sessionData1 := []byte("INSERT INTO test (id) VALUES (1)")
-	sessionData2 := []byte("INSERT INTO test (id) VALUES (2)")
 
 	dataMigration := &Migration{
 		Version: &MigrationVersion{
@@ -142,7 +141,11 @@ func TestMigrationRepositoryKV_DataMigration(t *testing.T) {
 		},
 		Migration: &Migration_Data{
 			Data: &DataMigration{
-				Session: [][]byte{sessionData1, sessionData2},
+				Session: &DataMigration_RawData{
+					RawData: &RawData{
+						Data: sessionData1,
+					},
+				},
 			},
 		},
 	}
@@ -158,11 +161,10 @@ func TestMigrationRepositoryKV_DataMigration(t *testing.T) {
 	retrievedMigration := retrieved[0]
 	assert.Equal(t, dataMigration.Version.TableName, retrievedMigration.Version.TableName)
 
-	// Check data sessions
-	sessions := retrievedMigration.GetData().GetSession()
-	assert.Len(t, sessions, 2)
-	assert.Equal(t, sessionData1, sessions[0])
-	assert.Equal(t, sessionData2, sessions[1])
+	// Check data session
+	rawData := retrievedMigration.GetData().GetRawData()
+	assert.NotNil(t, rawData)
+	assert.Equal(t, sessionData1, rawData.GetData())
 }
 
 func TestMigrationRepositoryKV_CommitOperations(t *testing.T) {

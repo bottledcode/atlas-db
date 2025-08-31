@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/bottledcode/atlas-db/atlas"
 	"github.com/bottledcode/atlas-db/atlas/kv"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -159,7 +158,7 @@ func (m *majorityQuorum) WriteMigration(ctx context.Context, in *WriteMigrationR
 		}
 	}
 
-	atlas.Ownership.Add(in.GetMigration().GetVersion().GetTableName(), in.GetMigration().GetVersion().GetTableVersion())
+	Ownership.Add(in.GetMigration().GetVersion().GetTableName(), in.GetMigration().GetVersion().GetTableVersion())
 
 	return &WriteMigrationResponse{
 		Success: true,
@@ -187,7 +186,7 @@ func (m *majorityQuorum) AcceptMigration(ctx context.Context, in *WriteMigration
 		return nil, err
 	}
 
-	atlas.Ownership.Commit(in.GetMigration().GetVersion().GetTableName(), in.GetMigration().GetVersion().GetTableVersion())
+	Ownership.Commit(in.GetMigration().GetVersion().GetTableName(), in.GetMigration().GetVersion().GetTableVersion())
 
 	return &emptypb.Empty{}, nil
 }

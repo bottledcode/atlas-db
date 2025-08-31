@@ -24,17 +24,17 @@ import (
 	"os"
 	"time"
 
-	"github.com/bottledcode/atlas-db/atlas"
+	"github.com/bottledcode/atlas-db/atlas/options"
 	"go.uber.org/zap"
 )
 
 func ServeSocket(ctx context.Context) (func() error, error) {
 	// create the unix socket
-	ln, err := net.Listen("unix", atlas.CurrentOptions.SocketPath)
+	ln, err := net.Listen("unix", options.CurrentOptions.SocketPath)
 	if err != nil {
 		// try to remove the socket file if it exists
-		_ = os.Remove(atlas.CurrentOptions.SocketPath)
-		ln, err = net.Listen("unix", atlas.CurrentOptions.SocketPath)
+		_ = os.Remove(options.CurrentOptions.SocketPath)
+		ln, err = net.Listen("unix", options.CurrentOptions.SocketPath)
 		if err != nil {
 			return nil, err
 		}
@@ -49,7 +49,7 @@ func ServeSocket(ctx context.Context) (func() error, error) {
 			default:
 				conn, err := ln.Accept()
 				if err != nil {
-					atlas.Logger.Error("Error accepting connection", zap.Error(err))
+					options.Logger.Error("Error accepting connection", zap.Error(err))
 					continue
 				}
 				c := &Socket{

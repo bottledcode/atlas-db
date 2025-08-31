@@ -1,12 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="SqlDialectMappings">
-    <file url="file://$PROJECT_DIR$/atlas/bootstrap/migrations.sql" dialect="SQLite" />
-    <file url="file://$PROJECT_DIR$/main.go" dialect="SQLite" />
-    <file url="PROJECT" dialect="SQLite" />
-  </component>
   <component name="SqlResolveMappings">
-    <file url="file://$PROJECT_DIR$/main.go" scope="{&quot;node&quot;:{  &quot;@negative&quot;:&quot;1&quot;,  &quot;group&quot;:{   &quot;@kind&quot;:&quot;root&quot;,   &quot;node&quot;:{    &quot;name&quot;:{     &quot;@qname&quot;:&quot;acd1d312-64d4-4364-9943-7ade15b01890&quot;    },    &quot;group&quot;:{     &quot;@kind&quot;:&quot;schema&quot;,     &quot;node&quot;:{      &quot;name&quot;:{       &quot;@qname&quot;:&quot;main&quot;      }     }    }   }  } }}" />
     <file url="PROJECT" scope="{&quot;node&quot;:{  &quot;@negative&quot;:&quot;1&quot;,  &quot;group&quot;:{   &quot;@kind&quot;:&quot;root&quot;,   &quot;node&quot;:{    &quot;name&quot;:{     &quot;@qname&quot;:&quot;acd1d312-64d4-4364-9943-7ade15b01890&quot;    }   }  } }}" />
   </component>
 </project>

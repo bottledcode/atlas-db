@@ -16,7 +16,7 @@
  *
  */
 
-package atlas
+package consensus
 
 import (
 	"sync"

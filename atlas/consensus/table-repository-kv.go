@@ -405,8 +405,8 @@ func (r *TableRepositoryKV) GetShard(shard *Table, principals []*Principal) (*Sh
 	}
 
 	return &Shard{
-		Table:      shard,  // Parent table
-		Shard:      st,     // Retrieved shard table
+		Table:      shard, // Parent table
+		Shard:      st,    // Retrieved shard table
 		Principals: principals,
 	}, nil
 }

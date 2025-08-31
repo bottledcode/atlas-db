@@ -32,6 +32,8 @@ service Consensus {
   rpc JoinCluster(Node) returns (JoinClusterResponse) {}
   rpc Gossip(GossipMigration) returns (google.protobuf.Empty) {}
   rpc Ping(PingRequest) returns (PingResponse) {}
+  rpc ReadKey(ReadKeyRequest) returns (ReadKeyResponse) {}
+  rpc WriteKey(WriteKeyRequest) returns (WriteKeyResponse) {}
 }
 
 message MigrationVersion {
@@ -205,4 +207,29 @@ message PingResponse {
   bool success = 1; // Whether the ping was successful
   int64 responder_node_id = 2; // The ID of the node responding
   google.protobuf.Timestamp timestamp = 3; // Timestamp of the response
+}
+
+// Remote read messages for leader-based reads
+message ReadKeyRequest {
+  Node sender = 1; // The node requesting the read
+  string key = 2; // The key to read
+  string table = 3; // The table the key belongs to
+}
+
+message ReadKeyResponse {
+  bool success = 1; // Whether the read was successful
+  bytes value = 2; // The value if found, empty if not found
+  string error = 3; // Error message if not successful
+}
+
+message WriteKeyRequest {
+  Node sender = 1; // The node requesting the write
+  string key = 2; // The key to write
+  string table = 3; // The table the key belongs to
+  bytes value = 4; // The value to write
+}
+
+message WriteKeyResponse {
+  bool success = 1; // Whether the write was successful
+  string error = 2; // Error message if not successful
 }

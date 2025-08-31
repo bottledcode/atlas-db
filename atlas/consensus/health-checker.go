@@ -20,6 +20,7 @@ package consensus
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"time"
 
@@ -29,20 +30,37 @@ import (
 
 // HealthChecker monitors node health and maintains active node lists
 type HealthChecker struct {
-	manager        *NodeConnectionManager
-	interval       time.Duration
-	timeout        time.Duration
-	maxFailures    int64
-	stopChan       chan struct{}
+	manager       *NodeConnectionManager
+	interval      time.Duration
+	timeout       time.Duration
+	maxFailures   int64
+	healthTimeout time.Duration // Timeout before considering a ping needed
+	maxJitter     time.Duration // Maximum random jitter for ping timing
+	stopChan      chan struct{}
 }
 
 func NewHealthChecker(manager *NodeConnectionManager) *HealthChecker {
 	return &HealthChecker{
-		manager:     manager,
-		interval:    30 * time.Second, // Check every 30 seconds
-		timeout:     5 * time.Second,  // 5 second timeout per check
-		maxFailures: 3,                // Remove after 3 consecutive failures
-		stopChan:    make(chan struct{}),
+		manager:       manager,
+		interval:      30 * time.Second, // Check every 30 seconds
+		timeout:       5 * time.Second,  // 5 second timeout per check
+		maxFailures:   3,                // Remove after 3 consecutive failures
+		healthTimeout: 60 * time.Second, // Consider ping needed after 60s of no contact
+		maxJitter:     10 * time.Second, // Up to 10s random delay to avoid thundering herd
+		stopChan:      make(chan struct{}),
+	}
+}
+
+// NewHealthCheckerForTesting creates a health checker with no jitter for testing
+func NewHealthCheckerForTesting(manager *NodeConnectionManager) *HealthChecker {
+	return &HealthChecker{
+		manager:       manager,
+		interval:      30 * time.Second,
+		timeout:       5 * time.Second,
+		maxFailures:   3,
+		healthTimeout: 0, // Always ping in tests
+		maxJitter:     0, // No jitter in tests to avoid race conditions
+		stopChan:      make(chan struct{}),
 	}
 }
 
@@ -73,7 +91,8 @@ func (hc *HealthChecker) checkAllNodes(ctx context.Context) {
 	nodes := make([]*ManagedNode, 0, len(hc.manager.nodes))
 	currentNodeId := options.CurrentOptions.ServerId
 	skipped := 0
-	
+	needsPing := 0
+
 	for _, node := range hc.manager.nodes {
 		if node.GetStatus() == NodeStatusRemoved {
 			continue
@@ -82,19 +101,38 @@ func (hc *HealthChecker) checkAllNodes(ctx context.Context) {
 			skipped++
 			continue
 		}
-		nodes = append(nodes, node)
+
+		// Only ping nodes that haven't been contacted within healthTimeout
+		node.mu.RLock()
+		lastSeen := node.lastSeen
+		node.mu.RUnlock()
+
+		if time.Since(lastSeen) > hc.healthTimeout {
+			nodes = append(nodes, node)
+			needsPing++
+		}
 	}
 	hc.manager.mu.RUnlock()
-	
-	if skipped > 0 {
-		options.Logger.Debug("Skipped self-health checks",
-			zap.Int64("current_node_id", currentNodeId),
-			zap.Int("skipped_count", skipped),
-			zap.Int("checking_count", len(nodes)))
-	}
+
+	options.Logger.Debug("Health check evaluation",
+		zap.Int64("current_node_id", currentNodeId),
+		zap.Int("skipped_self", skipped),
+		zap.Int("needs_ping", needsPing),
+		zap.Int("total_nodes", len(hc.manager.nodes)))
 
 	for _, node := range nodes {
-		go hc.checkNode(ctx, node)
+		// In testing mode, skip jitter to avoid race conditions
+		var jitter time.Duration
+		if hc.maxJitter > 0 {
+			jitter = time.Duration(rand.Int63n(int64(hc.maxJitter)))
+		}
+
+		go func(n *ManagedNode, delay time.Duration) {
+			if delay > 0 {
+				time.Sleep(delay)
+			}
+			hc.checkNode(ctx, n)
+		}(node, jitter)
 	}
 }
 
@@ -104,7 +142,7 @@ func (hc *HealthChecker) checkNode(ctx context.Context, node *ManagedNode) {
 	defer cancel()
 
 	start := time.Now()
-	
+
 	// Add more detailed logging for debugging
 	options.Logger.Debug("Starting health check for node",
 		zap.Int64("node_id", node.Id),
@@ -112,7 +150,7 @@ func (hc *HealthChecker) checkNode(ctx context.Context, node *ManagedNode) {
 		zap.Int64("port", node.GetPort()),
 		zap.String("full_address", node.GetAddress()+":"+strconv.Itoa(int(node.GetPort()))),
 		zap.Duration("timeout", hc.timeout))
-	
+
 	// Ping the node
 	err := hc.manager.pingNode(checkCtx, node)
 	rtt := time.Since(start)
@@ -124,15 +162,19 @@ func (hc *HealthChecker) checkNode(ctx context.Context, node *ManagedNode) {
 			zap.Duration("elapsed", rtt),
 			zap.Error(err),
 			zap.String("error_type", fmt.Sprintf("%T", err)))
-		hc.handleNodeFailure(node, err)
+		hc.handleNodeFailure(ctx, node, err)
 	} else {
+		options.Logger.Debug("Health check succeeded, calling handleNodeSuccess",
+			zap.Int64("node_id", node.Id),
+			zap.String("address", node.GetAddress()),
+			zap.Duration("rtt", rtt))
 		hc.handleNodeSuccess(node, rtt)
 	}
 }
 
-func (hc *HealthChecker) handleNodeFailure(node *ManagedNode, err error) {
+func (hc *HealthChecker) handleNodeFailure(ctx context.Context, node *ManagedNode, err error) {
 	currentStatus := node.GetStatus()
-	
+
 	// Update status first, which increments failures safely
 	if currentStatus == NodeStatusActive {
 		// First failure, mark as failed but keep trying
@@ -142,7 +184,7 @@ func (hc *HealthChecker) handleNodeFailure(node *ManagedNode, err error) {
 		// Already failed, just increment failures
 		node.UpdateStatus(NodeStatusFailed)
 	}
-	
+
 	failures := node.GetFailures()
 	options.Logger.Warn("Node health check failed",
 		zap.Int64("node_id", node.Id),
@@ -150,31 +192,46 @@ func (hc *HealthChecker) handleNodeFailure(node *ManagedNode, err error) {
 		zap.Error(err),
 		zap.Int64("failures", failures))
 
-	// If we've exceeded max failures, try to reconnect
+	// If we've exceeded max failures, remove from quorum permanently
 	if failures >= hc.maxFailures {
-		options.Logger.Info("Attempting to reconnect to failed node",
+		options.Logger.Info("Node exceeded max failures, removing from quorum permanently",
 			zap.Int64("node_id", node.Id),
-			zap.String("address", node.GetAddress()))
-			
-		// Close existing connection and try to reconnect  
+			zap.String("address", node.GetAddress()),
+			zap.Int64("max_failures", hc.maxFailures))
+
+		// Remove the node from quorum calculations
+		quorumManager := GetDefaultQuorumManager(ctx)
+		if quorumManager != nil {
+			err := quorumManager.RemoveNode(node.Id)
+			if err != nil {
+				options.Logger.Warn("Failed to remove node from quorum manager",
+					zap.Int64("node_id", node.Id),
+					zap.Error(err))
+			}
+		}
+
+		// Close existing connection - node is considered permanently gone
 		node.Close()
-		// Use context.TODO() to indicate we need proper context propagation here
-		go hc.manager.connectToNode(context.TODO(), node)
 	}
 }
 
 func (hc *HealthChecker) handleNodeSuccess(node *ManagedNode, rtt time.Duration) {
 	currentStatus := node.GetStatus()
-	
+
 	// Record RTT measurement
 	node.AddRTTMeasurement(rtt)
-	
+
+	// Reset lastSeen time so this node won't need pinging for another healthTimeout
+	node.mu.Lock()
+	node.lastSeen = time.Now()
+	node.mu.Unlock()
+
 	if currentStatus != NodeStatusActive {
 		options.Logger.Info("Node recovered",
 			zap.Int64("node_id", node.Id),
 			zap.String("address", node.GetAddress()),
 			zap.Duration("rtt", rtt))
-		
+
 		node.UpdateStatus(NodeStatusActive)
 		hc.manager.addToActiveNodes(node)
 	}
@@ -204,14 +261,14 @@ func (hc *HealthChecker) GetHealthStats() *HealthStats {
 
 	for _, node := range hc.manager.nodes {
 		stats.TotalNodes++
-		
+
 		status := node.GetStatus()
 		switch status {
 		case NodeStatusActive:
 			stats.ActiveNodes++
 			regionName := node.GetRegion().GetName()
 			stats.RegionStats[regionName]++
-			
+
 			// Add to RTT calculation
 			avgRTT := node.GetAverageRTT()
 			if avgRTT > 0 {

@@ -30,6 +30,7 @@ import (
 
 	"github.com/bottledcode/atlas-db/atlas/kv"
 	"github.com/bottledcode/atlas-db/atlas/options"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
@@ -37,6 +38,7 @@ import (
 type QuorumManager interface {
 	GetQuorum(ctx context.Context, table string) (Quorum, error)
 	AddNode(ctx context.Context, node *Node) error
+	RemoveNode(nodeID int64) error
 }
 
 var manager *defaultQuorumManager
@@ -74,6 +76,13 @@ func (q *defaultQuorumManager) AddNode(ctx context.Context, node *Node) error {
 		closer: nil,
 		client: nil,
 	}
+
+	// special handling for self
+	if node.GetId() == options.CurrentOptions.ServerId {
+		q.nodes[RegionName(node.GetRegion().GetName())] = append(q.nodes[RegionName(node.GetRegion().GetName())], qn)
+		return nil
+	}
+
 	_, err := qn.JoinCluster(ctx, node)
 	if err == nil {
 		q.nodes[RegionName(node.GetRegion().GetName())] = append(q.nodes[RegionName(node.GetRegion().GetName())], qn)
@@ -83,6 +92,41 @@ func (q *defaultQuorumManager) AddNode(ctx context.Context, node *Node) error {
 	if q.connectionManager != nil {
 		q.connectionManager.AddNode(ctx, node)
 	}
+
+	return nil
+}
+
+func (q *defaultQuorumManager) RemoveNode(nodeID int64) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	// Find and remove the node from all regions
+	for region, nodes := range q.nodes {
+		for i, node := range nodes {
+			if node.Id == nodeID {
+				// Close the connection if it exists
+				node.Close()
+
+				// Remove the node from the slice
+				q.nodes[region] = append(nodes[:i], nodes[i+1:]...)
+
+				// If region has no nodes left, remove the region
+				if len(q.nodes[region]) == 0 {
+					delete(q.nodes, region)
+				}
+
+				options.Logger.Info("Removed node from quorum manager",
+					zap.Int64("node_id", nodeID),
+					zap.String("region", string(region)))
+
+				return nil
+			}
+		}
+	}
+
+	// Node not found - this is not necessarily an error
+	options.Logger.Debug("Node not found in quorum manager for removal",
+		zap.Int64("node_id", nodeID))
 
 	return nil
 }
@@ -161,6 +205,28 @@ func (q *QuorumNode) Ping(ctx context.Context, in *PingRequest, opts ...grpc.Cal
 		}
 	}
 	return q.client.Ping(ctx, in, opts...)
+}
+
+func (q *QuorumNode) ReadKey(ctx context.Context, in *ReadKeyRequest, opts ...grpc.CallOption) (*ReadKeyResponse, error) {
+	var err error
+	if q.client == nil {
+		q.client, err, q.closer = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return q.client.ReadKey(ctx, in, opts...)
+}
+
+func (q *QuorumNode) WriteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error) {
+	var err error
+	if q.client == nil {
+		q.client, err, q.closer = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return q.client.WriteKey(ctx, in, opts...)
 }
 
 func (q *QuorumNode) Close() {
@@ -433,32 +499,32 @@ recalculate:
 func (q *defaultQuorumManager) filterHealthyNodes(nodes map[RegionName][]*QuorumNode) map[RegionName][]*QuorumNode {
 	activeNodes := q.connectionManager.GetAllActiveNodes()
 	filteredNodes := make(map[RegionName][]*QuorumNode)
-	
+
 	for region, quorumNodes := range nodes {
 		activeInRegion, hasActiveNodes := activeNodes[string(region)]
 		if !hasActiveNodes {
 			// No active nodes in this region
 			continue
 		}
-		
+
 		// Create a map of active node IDs for quick lookup
 		activeNodeIDs := make(map[int64]bool)
 		for _, activeNode := range activeInRegion {
 			activeNodeIDs[activeNode.Id] = true
 		}
-		
+
 		// Filter quorum nodes to only include active ones
 		var healthyNodes []*QuorumNode
 		for _, qn := range quorumNodes {
-			if activeNodeIDs[qn.Id] {
+			if activeNodeIDs[qn.Id] || qn.Id == options.CurrentOptions.ServerId {
 				healthyNodes = append(healthyNodes, qn)
 			}
 		}
-		
+
 		if len(healthyNodes) > 0 {
 			filteredNodes[region] = healthyNodes
 		}
 	}
-	
+
 	return filteredNodes
 }

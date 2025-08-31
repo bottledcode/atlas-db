@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/bottledcode/atlas-db/atlas/kv"
 	"github.com/bottledcode/atlas-db/atlas/options"
@@ -753,9 +754,294 @@ func (s *Server) Gossip(ctx context.Context, req *GossipMigration) (*emptypb.Emp
 
 // Ping implements a simple health check endpoint
 func (s *Server) Ping(ctx context.Context, req *PingRequest) (*PingResponse, error) {
+	// Add mutual node discovery - when we receive a ping, add the sender to our node list
+	connectionManager := GetNodeConnectionManager(ctx)
+	if connectionManager != nil {
+		// Try to find existing node first
+		connectionManager.mu.RLock()
+		existingNode, exists := connectionManager.nodes[req.SenderNodeId]
+		connectionManager.mu.RUnlock()
+
+		if !exists {
+			// Node doesn't exist, we need to discover it from the node repository
+			nodeRepo := connectionManager.storage
+			if nodeRepo != nil {
+				var discoveredNode *Node
+				nodeRepo.Iterate(func(node *Node) error {
+					if node.Id == req.SenderNodeId {
+						discoveredNode = node
+						return nil // found it, stop iterating
+					}
+					return nil // continue searching
+				})
+
+				if discoveredNode != nil {
+					options.Logger.Info("Discovered node through ping, adding to connection manager",
+						zap.Int64("sender_node_id", req.SenderNodeId),
+						zap.String("address", discoveredNode.GetAddress()))
+
+					// Add the discovered node to our connection manager
+					err := connectionManager.AddNode(ctx, discoveredNode)
+					if err != nil {
+						options.Logger.Warn("Failed to add discovered node to connection manager",
+							zap.Int64("sender_node_id", req.SenderNodeId),
+							zap.Error(err))
+					}
+				} else {
+					options.Logger.Debug("Received ping from unknown node not in repository",
+						zap.Int64("sender_node_id", req.SenderNodeId))
+				}
+			}
+		} else {
+			// Node exists, update its last seen time to prevent health checks
+			existingNode.mu.Lock()
+			existingNode.lastSeen = time.Now()
+			existingNode.mu.Unlock()
+
+			// Also ensure it's marked as active if it was previously failed
+			if existingNode.GetStatus() != NodeStatusActive {
+				existingNode.UpdateStatus(NodeStatusActive)
+				connectionManager.addToActiveNodes(existingNode)
+
+				options.Logger.Info("Node recovered through ping",
+					zap.Int64("sender_node_id", req.SenderNodeId),
+					zap.String("address", existingNode.GetAddress()))
+			}
+		}
+	}
+
 	return &PingResponse{
-		Success:           true,
-		ResponderNodeId:   options.CurrentOptions.ServerId,
-		Timestamp:         timestamppb.Now(),
+		Success:         true,
+		ResponderNodeId: options.CurrentOptions.ServerId,
+		Timestamp:       timestamppb.Now(),
+	}, nil
+}
+
+func (s *Server) ReadKey(ctx context.Context, req *ReadKeyRequest) (*ReadKeyResponse, error) {
+	// Verify we're the leader for this table
+	kvPool := kv.GetPool()
+	if kvPool == nil {
+		return &ReadKeyResponse{
+			Success: false,
+			Error:   "KV pool not initialized",
+		}, nil
+	}
+
+	metaStore := kvPool.MetaStore()
+	if metaStore == nil {
+		return &ReadKeyResponse{
+			Success: false,
+			Error:   "metaStore is closed",
+		}, nil
+	}
+
+	// Check if we're actually the leader for this table
+	tr := NewTableRepositoryKV(ctx, metaStore)
+	table, err := tr.GetTable(req.GetTable())
+	if err != nil {
+		return &ReadKeyResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get table info: %v", err),
+		}, nil
+	}
+
+	if table == nil {
+		return &ReadKeyResponse{
+			Success: false,
+			Error:   "table not found",
+		}, nil
+	}
+
+	// Verify we're the owner of this table
+	if table.Owner.Id != options.CurrentOptions.ServerId {
+		return &ReadKeyResponse{
+			Success: false,
+			Error:   "not the leader for this table",
+		}, nil
+	}
+
+	// Read the key from local store
+	dataStore := kvPool.DataStore()
+	if dataStore == nil {
+		return &ReadKeyResponse{
+			Success: false,
+			Error:   "data store not available",
+		}, nil
+	}
+
+	keyBytes := []byte(req.GetKey())
+	value, err := dataStore.Get(ctx, keyBytes)
+	if err != nil {
+		if errors.Is(err, kv.ErrKeyNotFound) {
+			// Key not found, but this is a successful read
+			return &ReadKeyResponse{
+				Success: true,
+				Value:   nil, // nil value indicates key not found
+			}, nil
+		}
+		return &ReadKeyResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to read key: %v", err),
+		}, nil
+	}
+
+	return &ReadKeyResponse{
+		Success: true,
+		Value:   value,
+	}, nil
+}
+
+func (s *Server) WriteKey(ctx context.Context, req *WriteKeyRequest) (*WriteKeyResponse, error) {
+	// Verify we're the leader for this table
+	kvPool := kv.GetPool()
+	if kvPool == nil {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   "KV pool not initialized",
+		}, nil
+	}
+
+	metaStore := kvPool.MetaStore()
+	if metaStore == nil {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   "metaStore is closed",
+		}, nil
+	}
+
+	// Check if we're actually the leader for this table
+	tr := NewTableRepositoryKV(ctx, metaStore)
+	table, err := tr.GetTable(req.GetTable())
+	if err != nil {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get table info: %v", err),
+		}, nil
+	}
+
+	if table == nil {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   "table not found",
+		}, nil
+	}
+
+	// Verify we're the owner of this table
+	if table.Owner.Id != options.CurrentOptions.ServerId {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   "not the leader for this table",
+		}, nil
+	}
+
+	// We are the leader - execute the full consensus protocol
+	qm := GetDefaultQuorumManager(ctx)
+	nr := NewNodeRepositoryKV(ctx, metaStore)
+
+	currentNode, err := nr.GetNodeById(options.CurrentOptions.ServerId)
+	if err != nil {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get current node: %v", err),
+		}, nil
+	}
+	if currentNode == nil {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   "node not yet part of cluster",
+		}, nil
+	}
+
+	quorum, err := qm.GetQuorum(ctx, req.GetTable())
+	if err != nil {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get quorum: %v", err),
+		}, nil
+	}
+
+	// Attempt to steal table ownership to confirm leadership
+	tableOwnership, err := quorum.StealTableOwnership(ctx, &StealTableOwnershipRequest{
+		Sender: currentNode,
+		Reason: StealReason_queryReason,
+		Table:  table,
+	})
+	if err != nil {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to steal ownership: %v", err),
+		}, nil
+	}
+
+	if !tableOwnership.Promised {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   "leadership could not be confirmed",
+		}, nil
+	}
+
+	// Execute the migration
+	mr := NewMigrationRepositoryKV(ctx, metaStore)
+	version, err := mr.GetNextVersion(req.GetTable())
+	if err != nil {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get next version: %v", err),
+		}, nil
+	}
+
+	migration := &WriteMigrationRequest{
+		Sender: currentNode,
+		Migration: &Migration{
+			Version: &MigrationVersion{
+				TableVersion:     table.GetVersion(),
+				MigrationVersion: version,
+				NodeId:           currentNode.GetId(),
+				TableName:        req.GetTable(),
+			},
+			Migration: &Migration_Data{
+				Data: &DataMigration{
+					Session: &DataMigration_Change{
+						Change: &KVChange{
+							Operation: &KVChange_Set{
+								Set: &SetChange{
+									Key:   []byte(req.GetKey()),
+									Value: req.GetValue(),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Write migration phase
+	migrationResult, err := quorum.WriteMigration(ctx, migration)
+	if err != nil {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to write migration: %v", err),
+		}, nil
+	}
+
+	if !migrationResult.GetSuccess() {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   "migration failed due to outdated table",
+		}, nil
+	}
+
+	// Accept migration phase
+	_, err = quorum.AcceptMigration(ctx, migration)
+	if err != nil {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to accept migration: %v", err),
+		}, nil
+	}
+
+	return &WriteKeyResponse{
+		Success: true,
 	}, nil
 }

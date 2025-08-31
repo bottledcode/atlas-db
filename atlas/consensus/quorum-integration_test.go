@@ -35,11 +35,11 @@ import (
 func TestQuorumManagerIntegration(t *testing.T) {
 	// Setup test environment
 	options.Logger = zaptest.NewLogger(t)
-	
+
 	// Create a test KV store
 	dataPath := t.TempDir() + "/data.db"
 	metaPath := t.TempDir() + "/meta.db"
-	
+
 	err := kv.CreatePool(dataPath, metaPath)
 	require.NoError(t, err)
 	defer func() {
@@ -50,27 +50,27 @@ func TestQuorumManagerIntegration(t *testing.T) {
 	}()
 
 	ctx := context.Background()
-	
+
 	// Create a test table for quorum operations
 	kvPool := kv.GetPool()
 	require.NotNil(t, kvPool)
 	metaStore := kvPool.MetaStore()
 	require.NotNil(t, metaStore)
-	
+
 	tableRepo := NewTableRepositoryKV(ctx, metaStore)
 	testTable := &Table{
 		Name:              "test_integration_table",
 		ReplicationLevel:  ReplicationLevel_global,
-		Owner:            nil,
-		CreatedAt:        timestamppb.Now(),
-		Version:          1,
-		AllowedRegions:   []string{"us-east-1", "us-west-2"},
+		Owner:             nil,
+		CreatedAt:         timestamppb.Now(),
+		Version:           1,
+		AllowedRegions:    []string{"us-east-1", "us-west-2"},
 		RestrictedRegions: nil,
-		Group:            "",
-		Type:             TableType_table,
-		ShardPrincipals:  nil,
+		Group:             "",
+		Type:              TableType_table,
+		ShardPrincipals:   nil,
 	}
-	
+
 	err = tableRepo.InsertTable(testTable)
 	require.NoError(t, err)
 
@@ -82,29 +82,29 @@ func TestQuorumManagerIntegration(t *testing.T) {
 
 	// Get the quorum manager (which should now integrate with connection manager)
 	qm := GetDefaultQuorumManager(ctx)
-	
+
 	// Create test nodes
 	node1 := &Node{
 		Id:      1,
-		Address: "node1.test.com",
+		Address: "node1.example.com",
 		Port:    8080,
 		Region:  &Region{Name: "us-east-1"},
 		Active:  true,
 		Rtt:     durationpb.New(10 * time.Millisecond),
 	}
-	
+
 	node2 := &Node{
 		Id:      2,
-		Address: "node2.test.com",
+		Address: "node2.example.com",
 		Port:    8080,
 		Region:  &Region{Name: "us-east-1"},
 		Active:  true,
 		Rtt:     durationpb.New(15 * time.Millisecond),
 	}
-	
+
 	node3 := &Node{
 		Id:      3,
-		Address: "node3.test.com",
+		Address: "node3.example.com",
 		Port:    8080,
 		Region:  &Region{Name: "us-west-2"},
 		Active:  true,
@@ -114,10 +114,10 @@ func TestQuorumManagerIntegration(t *testing.T) {
 	// Add nodes to the quorum manager (which should also add them to connection manager)
 	err = qm.AddNode(ctx, node1)
 	assert.NoError(t, err)
-	
+
 	err = qm.AddNode(ctx, node2)
 	assert.NoError(t, err)
-	
+
 	err = qm.AddNode(ctx, node3)
 	assert.NoError(t, err)
 
@@ -130,7 +130,7 @@ func TestQuorumManagerIntegration(t *testing.T) {
 	defaultQM.connectionManager.mu.RLock()
 	managedNodesCount := len(defaultQM.connectionManager.nodes)
 	defaultQM.connectionManager.mu.RUnlock()
-	
+
 	assert.Equal(t, 3, managedNodesCount, "All 3 nodes should be in connection manager")
 
 	// Manually mark some nodes as active in the connection manager for testing
@@ -141,14 +141,14 @@ func TestQuorumManagerIntegration(t *testing.T) {
 		client:     nil, // In real usage this would have actual client
 		rttHistory: make([]time.Duration, 0),
 	}
-	
+
 	managedNode2 := &ManagedNode{
 		Node:       node2,
 		status:     NodeStatusFailed, // Mark node2 as failed
 		client:     nil,
 		rttHistory: make([]time.Duration, 0),
 	}
-	
+
 	managedNode3 := &ManagedNode{
 		Node:       node3,
 		status:     NodeStatusActive,
@@ -170,15 +170,15 @@ func TestQuorumManagerIntegration(t *testing.T) {
 
 	// Test quorum formation - should only use healthy nodes
 	quorum, err := qm.GetQuorum(ctx, "test_integration_table")
-	
+
 	if err != nil {
 		// This might fail with "insufficient active nodes" which is expected
 		// if the health filtering is working correctly and we don't have enough healthy nodes
 		t.Logf("Quorum formation failed as expected with health filtering: %v", err)
-		
+
 		// Verify that the error is due to insufficient nodes (health filtering working)
 		assert.Contains(t, err.Error(), "unable to form a quorum")
-		
+
 		// Check that only healthy nodes are considered
 		activeNodes := defaultQM.connectionManager.GetAllActiveNodes()
 		totalActiveNodes := 0
@@ -186,19 +186,19 @@ func TestQuorumManagerIntegration(t *testing.T) {
 			totalActiveNodes += len(regionNodes)
 		}
 		assert.Equal(t, 2, totalActiveNodes, "Should only have 2 active nodes (node1 and node3)")
-		
+
 		// Verify that node2 (failed) is not in active nodes
 		eastNodes := defaultQM.connectionManager.GetActiveNodesByRegion("us-east-1")
 		assert.Len(t, eastNodes, 1, "Only node1 should be active in us-east-1")
 		assert.Equal(t, int64(1), eastNodes[0].Id, "The active node in us-east-1 should be node1")
-		
+
 	} else {
 		// If quorum formation succeeded, verify it only uses healthy nodes
 		assert.NotNil(t, quorum, "Quorum should be formed successfully")
-		
+
 		majorityQuorum, ok := quorum.(*majorityQuorum)
 		require.True(t, ok, "Quorum should be *majorityQuorum")
-		
+
 		// Verify that the quorum only contains healthy nodes (node1 and node3)
 		allQuorumNodeIDs := make(map[int64]bool)
 		for _, qn := range majorityQuorum.q1 {
@@ -207,17 +207,17 @@ func TestQuorumManagerIntegration(t *testing.T) {
 		for _, qn := range majorityQuorum.q2 {
 			allQuorumNodeIDs[qn.Id] = true
 		}
-		
+
 		// Should not contain node2 (failed node)
 		assert.False(t, allQuorumNodeIDs[2], "Failed node2 should not be in quorum")
-		t.Logf("Quorum successfully formed with %d nodes in Q1 and %d nodes in Q2", 
+		t.Logf("Quorum successfully formed with %d nodes in Q1 and %d nodes in Q2",
 			len(majorityQuorum.q1), len(majorityQuorum.q2))
 	}
 }
 
 func TestQuorumManagerFilterHealthyNodes(t *testing.T) {
 	options.Logger = zaptest.NewLogger(t)
-	
+
 	// Create mock connection manager
 	mockRepo := NewMockNodeRepository()
 	connectionManager := &NodeConnectionManager{
@@ -249,7 +249,7 @@ func TestQuorumManagerFilterHealthyNodes(t *testing.T) {
 	// Add healthy nodes to connection manager (only node1 and node3 are healthy)
 	managedNode1 := &ManagedNode{Node: node1, status: NodeStatusActive}
 	managedNode3 := &ManagedNode{Node: node3, status: NodeStatusActive}
-	
+
 	connectionManager.addToActiveNodes(managedNode1)
 	connectionManager.addToActiveNodes(managedNode3)
 
@@ -259,7 +259,7 @@ func TestQuorumManagerFilterHealthyNodes(t *testing.T) {
 	// Should only contain healthy nodes
 	assert.Len(t, filteredNodes[RegionName("us-east-1")], 1, "Only node1 should be healthy in us-east-1")
 	assert.Equal(t, int64(1), filteredNodes[RegionName("us-east-1")][0].Id)
-	
+
 	assert.Len(t, filteredNodes[RegionName("us-west-2")], 1, "Node3 should be healthy in us-west-2")
 	assert.Equal(t, int64(3), filteredNodes[RegionName("us-west-2")][0].Id)
 }

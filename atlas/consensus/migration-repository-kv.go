@@ -44,7 +44,6 @@ func NewMigrationRepositoryKV(ctx context.Context, store kv.Store) MigrationRepo
 	}
 }
 
-
 func (m *MigrationRepositoryKV) GetNextVersion(table string) (int64, error) {
 	// Scan for the highest version number for this table
 	// Key pattern: meta:migration:{table}:version:{version}:node:{nodeId}
@@ -123,7 +122,6 @@ func (m *MigrationRepositoryKV) GetMigrationVersion(version *MigrationVersion) (
 
 	return []*Migration{batch.Migration}, nil
 }
-
 
 func (m *MigrationRepositoryKV) CommitAllMigrations(table string) error {
 	// Update all migrations for this table to committed=true

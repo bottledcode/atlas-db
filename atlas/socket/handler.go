@@ -231,9 +231,13 @@ ready:
 		case <-ctx.Done():
 			return
 		case err = <-errs:
-			options.Logger.Error("Error reading from connection", zap.Error(err))
-			continue
+			options.Logger.Error("Error reading from client connection", zap.Error(err))
+			return
 		case cmd := <-cmds:
+			if cmd == nil {
+				continue
+			}
+
 			if cmd.CheckMinLen(1) != nil {
 				err := s.writeError(Fatal, errors.New("invalid command"))
 				if err != nil {

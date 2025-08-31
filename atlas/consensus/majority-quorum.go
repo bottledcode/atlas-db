@@ -198,3 +198,11 @@ func (m *majorityQuorum) JoinCluster(ctx context.Context, in *Node, opts ...grpc
 func (m *majorityQuorum) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
 	return nil, errors.New("no quorum needed to ping")
 }
+
+func (m *majorityQuorum) ReadKey(ctx context.Context, in *ReadKeyRequest, opts ...grpc.CallOption) (*ReadKeyResponse, error) {
+	return nil, errors.New("no quorum needed to read key")
+}
+
+func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error) {
+	return nil, errors.New("no quorum needed to write key")
+}

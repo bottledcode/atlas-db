@@ -42,14 +42,14 @@ var (
 func CreatePool(dataPath, metaPath string) error {
 	poolMutex.Lock()
 	defer poolMutex.Unlock()
-	
+
 	// Close existing pool if it exists
 	if globalPool != nil {
 		if err := globalPool.Close(); err != nil {
 			return fmt.Errorf("failed to close existing pool: %w", err)
 		}
 	}
-	
+
 	// Create new pool
 	var err error
 	globalPool, err = NewPool(dataPath, metaPath)
@@ -57,7 +57,7 @@ func CreatePool(dataPath, metaPath string) error {
 		globalPool = nil
 		return err
 	}
-	
+
 	return nil
 }
 
@@ -185,7 +185,7 @@ func (p *Pool) Size() (dataSize, metaSize int64, err error) {
 func DrainPool() error {
 	poolMutex.Lock()
 	defer poolMutex.Unlock()
-	
+
 	if globalPool != nil {
 		err := globalPool.Close()
 		globalPool = nil

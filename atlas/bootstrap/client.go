@@ -217,6 +217,24 @@ func requestClusterMembership(ctx context.Context, nodeTable *consensus.Table, n
 	}
 
 	options.Logger.Info("Cluster membership request accepted", zap.Int64("assigned_node_id", result.GetNodeId()))
+
+	// Now that we're successfully part of the cluster, add ourselves to the active nodes list
+	// so that we can participate in quorum formation
+	connectionManager := consensus.GetNodeConnectionManager(ctx)
+	if connectionManager != nil {
+		quorumManager := consensus.GetDefaultQuorumManager(ctx)
+		if quorumManager != nil {
+			// Add the current node to the quorum manager and connection manager
+			err = quorumManager.AddNode(ctx, newNode)
+			if err != nil {
+				options.Logger.Warn("Failed to add self to quorum manager after successful join", zap.Error(err))
+				// Don't fail the entire join process for this
+			} else {
+				options.Logger.Info("Successfully added self to quorum and connection manager")
+			}
+		}
+	}
+
 	return nil
 }
 

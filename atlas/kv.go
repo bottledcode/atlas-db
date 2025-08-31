@@ -21,6 +21,7 @@ package atlas
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/bottledcode/atlas-db/atlas/consensus"
 	"github.com/bottledcode/atlas-db/atlas/kv"
@@ -39,25 +40,29 @@ func WriteKey(ctx context.Context, builder *kv.KeyBuilder, value []byte) error {
 	nr := consensus.NewNodeRepositoryKV(ctx, pool.MetaStore())
 
 	key := builder.Build()
+	keyString := string(key)
 
-	t, err := tr.GetTable(string(key))
+	// Get table information to determine current owner/leader
+	t, err := tr.GetTable(keyString)
 	if err != nil {
 		return err
 	}
 
-	n, err := nr.GetNodeById(options.CurrentOptions.ServerId)
+	// Check if we are the current node
+	currentNode, err := nr.GetNodeById(options.CurrentOptions.ServerId)
 	if err != nil {
 		return err
 	}
-	if n == nil {
+	if currentNode == nil {
 		return errors.New("node not yet part of cluster")
 	}
 
+	// Create table if it doesn't exist
 	if t == nil {
 		t = &consensus.Table{
-			Name:             string(key),
+			Name:             keyString,
 			ReplicationLevel: consensus.ReplicationLevel_global,
-			Owner:            n,
+			Owner:            currentNode,
 			CreatedAt:        timestamppb.Now(),
 			Version:          1,
 		}
@@ -67,13 +72,19 @@ func WriteKey(ctx context.Context, builder *kv.KeyBuilder, value []byte) error {
 		}
 	}
 
-	q, err := qm.GetQuorum(ctx, string(key))
+	// If we're already the owner, execute consensus locally
+	if t.Owner.Id == currentNode.Id {
+		return executeWriteConsensus(ctx, pool, qm, currentNode, t, keyString, key, value)
+	}
+
+	// We're not the owner, attempt to steal ownership as write intent
+	q, err := qm.GetQuorum(ctx, keyString)
 	if err != nil {
 		return err
 	}
 
 	tableOwnership, err := q.StealTableOwnership(ctx, &consensus.StealTableOwnershipRequest{
-		Sender: n,
+		Sender: currentNode,
 		Reason: consensus.StealReason_queryReason,
 		Table:  t,
 	})
@@ -82,23 +93,73 @@ func WriteKey(ctx context.Context, builder *kv.KeyBuilder, value []byte) error {
 	}
 
 	if tableOwnership.Promised {
-		// we own the table?
+		// We got ownership, execute consensus locally
+		return executeWriteConsensus(ctx, pool, qm, currentNode, t, keyString, key, value)
 	}
 
-	mr := consensus.NewMigrationRepositoryKV(ctx, pool.MetaStore())
-	v, err := mr.GetNextVersion(string(key))
+	// We didn't get ownership, need to forward to the current leader
+	// The response should contain the current leader's information
+	leader := tableOwnership.GetFailure().GetTable().GetOwner()
+	if leader == nil {
+		return errors.New("no leader information available")
+	}
+
+	// Forward write to the leader
+	connectionManager := consensus.GetNodeConnectionManager(ctx)
+	if connectionManager == nil {
+		return errors.New("connection manager not available")
+	}
+
+	err = connectionManager.ExecuteOnNode(leader.Id, func(client consensus.ConsensusClient) error {
+		writeReq := &consensus.WriteKeyRequest{
+			Sender: currentNode,
+			Key:    keyString,
+			Table:  keyString, // Using key as table name for KV operations
+			Value:  value,
+		}
+
+		response, err := client.WriteKey(ctx, writeReq)
+		if err != nil {
+			return err
+		}
+
+		if !response.Success {
+			return fmt.Errorf("remote write failed: %s", response.Error)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("remote write failed: %w", err)
+	}
+
+	return nil
+}
+
+// executeWriteConsensus performs the full consensus protocol for a write operation
+func executeWriteConsensus(ctx context.Context, pool *kv.Pool, qm consensus.QuorumManager, currentNode *consensus.Node, table *consensus.Table, tableName string, key []byte, value []byte) error {
+	q, err := qm.GetQuorum(ctx, tableName)
 	if err != nil {
 		return err
 	}
 
+	// Get next migration version
+	mr := consensus.NewMigrationRepositoryKV(ctx, pool.MetaStore())
+	version, err := mr.GetNextVersion(tableName)
+	if err != nil {
+		return err
+	}
+
+	// Create migration request
 	migration := &consensus.WriteMigrationRequest{
-		Sender: n,
+		Sender: currentNode,
 		Migration: &consensus.Migration{
 			Version: &consensus.MigrationVersion{
-				TableVersion:     t.GetVersion(),
-				MigrationVersion: v,
-				NodeId:           n.GetId(),
-				TableName:        string(key),
+				TableVersion:     table.GetVersion(),
+				MigrationVersion: version,
+				NodeId:           currentNode.GetId(),
+				TableName:        tableName,
 			},
 			Migration: &consensus.Migration_Data{
 				Data: &consensus.DataMigration{
@@ -117,15 +178,17 @@ func WriteKey(ctx context.Context, builder *kv.KeyBuilder, value []byte) error {
 		},
 	}
 
+	// Write migration phase
 	mres, err := q.WriteMigration(ctx, migration)
 	if err != nil {
 		return err
 	}
 
 	if !mres.GetSuccess() {
-		return errors.New("todo: migration failed due to outdated table")
+		return errors.New("migration failed due to outdated table")
 	}
 
+	// Accept migration phase
 	_, err = q.AcceptMigration(ctx, migration)
 	if err != nil {
 		return err
@@ -222,7 +285,36 @@ func GetKey(ctx context.Context, builder *kv.KeyBuilder) ([]byte, error) {
 		return nil, errors.New("no leader information available")
 	}
 
-	// TODO: Implement remote read from leader node
-	// For now, return an error indicating we need to implement remote reads
-	return nil, errors.New("remote reads from leader not yet implemented")
+	// Perform remote read from the leader
+	connectionManager := consensus.GetNodeConnectionManager(ctx)
+	if connectionManager == nil {
+		return nil, errors.New("connection manager not available")
+	}
+
+	var remoteValue []byte
+	err = connectionManager.ExecuteOnNode(leader.Id, func(client consensus.ConsensusClient) error {
+		readReq := &consensus.ReadKeyRequest{
+			Sender: currentNode,
+			Key:    string(key),
+			Table:  string(key), // Using key as table name for KV operations
+		}
+
+		response, err := client.ReadKey(ctx, readReq)
+		if err != nil {
+			return err
+		}
+
+		if !response.Success {
+			return errors.New(response.Error)
+		}
+
+		remoteValue = response.Value
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("remote read failed: %w", err)
+	}
+
+	return remoteValue, nil
 }

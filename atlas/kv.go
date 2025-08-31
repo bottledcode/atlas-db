@@ -133,3 +133,96 @@ func WriteKey(ctx context.Context, builder *kv.KeyBuilder, value []byte) error {
 
 	return nil
 }
+
+func GetKey(ctx context.Context, builder *kv.KeyBuilder) ([]byte, error) {
+	pool := kv.GetPool()
+	if pool == nil {
+		return nil, errors.New("pool is nil")
+	}
+
+	qm := consensus.GetDefaultQuorumManager(ctx)
+	tr := consensus.NewTableRepositoryKV(ctx, pool.MetaStore())
+	nr := consensus.NewNodeRepositoryKV(ctx, pool.MetaStore())
+
+	key := builder.Build()
+
+	// Get table information to determine current owner/leader
+	t, err := tr.GetTable(string(key))
+	if err != nil {
+		return nil, err
+	}
+
+	if t == nil {
+		// Table doesn't exist, key not found
+		return nil, nil
+	}
+
+	// Check if we are the current leader for this table
+	currentNode, err := nr.GetNodeById(options.CurrentOptions.ServerId)
+	if err != nil {
+		return nil, err
+	}
+	if currentNode == nil {
+		return nil, errors.New("node not yet part of cluster")
+	}
+
+	// If we're already the owner, read locally
+	if t.Owner.Id == currentNode.Id {
+		dataStore := pool.DataStore()
+		if dataStore == nil {
+			return nil, errors.New("data store not available")
+		}
+
+		value, err := dataStore.Get(ctx, key)
+		if err != nil {
+			if errors.Is(err, kv.ErrKeyNotFound) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		return value, nil
+	}
+
+	// We're not the owner, attempt to get read intent (steal ownership)
+	q, err := qm.GetQuorum(ctx, string(key))
+	if err != nil {
+		return nil, err
+	}
+
+	tableOwnership, err := q.StealTableOwnership(ctx, &consensus.StealTableOwnershipRequest{
+		Sender: currentNode,
+		Reason: consensus.StealReason_queryReason,
+		Table:  t,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if tableOwnership.Promised {
+		// We got ownership, read locally
+		dataStore := pool.DataStore()
+		if dataStore == nil {
+			return nil, errors.New("data store not available")
+		}
+
+		value, err := dataStore.Get(ctx, key)
+		if err != nil {
+			if errors.Is(err, kv.ErrKeyNotFound) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		return value, nil
+	}
+
+	// We didn't get ownership, need to read from the current leader
+	// The response should contain the current leader's information
+	leader := tableOwnership.GetFailure().GetTable().GetOwner()
+	if leader == nil {
+		return nil, errors.New("no leader information available")
+	}
+
+	// TODO: Implement remote read from leader node
+	// For now, return an error indicating we need to implement remote reads
+	return nil, errors.New("remote reads from leader not yet implemented")
+}

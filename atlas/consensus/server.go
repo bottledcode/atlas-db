@@ -33,6 +33,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const NodeTable = "atlas.nodes"
@@ -748,4 +749,13 @@ func (s *Server) Gossip(ctx context.Context, req *GossipMigration) (*emptypb.Emp
 	}
 
 	return &emptypb.Empty{}, nil
+}
+
+// Ping implements a simple health check endpoint
+func (s *Server) Ping(ctx context.Context, req *PingRequest) (*PingResponse, error) {
+	return &PingResponse{
+		Success:           true,
+		ResponderNodeId:   options.CurrentOptions.ServerId,
+		Timestamp:         timestamppb.Now(),
+	}, nil
 }

@@ -20,7 +20,6 @@ package bootstrap
 
 import (
 	"context"
-	"encoding/json"
 	"net"
 	"path/filepath"
 	"testing"
@@ -178,7 +177,7 @@ func TestBootstrapServer_GetBootstrapData(t *testing.T) {
 
 	// Parse the received data
 	var snapshot DatabaseSnapshot
-	err = json.Unmarshal(completeData, &snapshot)
+	err = proto.Unmarshal(completeData, &snapshot)
 	if err != nil {
 		t.Fatalf("Failed to unmarshal snapshot: %v", err)
 	}
@@ -368,7 +367,7 @@ func TestDoBootstrap_Integration(t *testing.T) {
 
 	// Parse snapshot
 	var snapshot DatabaseSnapshot
-	err = json.Unmarshal(completeData, &snapshot)
+	err = proto.Unmarshal(completeData, &snapshot)
 	if err != nil {
 		t.Fatalf("Failed to unmarshal snapshot: %v", err)
 	}
@@ -470,7 +469,7 @@ func TestKVChangeProtobuf(t *testing.T) {
 
 	originalSet := change.GetSet()
 	decodedSet := decoded.GetSet()
-	
+
 	if decodedSet == nil {
 		t.Errorf("Decoded operation is not a SET operation")
 	}

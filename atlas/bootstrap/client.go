@@ -22,9 +22,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
 	"io"
+
+	"google.golang.org/protobuf/proto"
 
 	"github.com/bottledcode/atlas-db/atlas/consensus"
 	"github.com/bottledcode/atlas-db/atlas/kv"
@@ -414,7 +415,7 @@ func DoBootstrap(ctx context.Context, url string, dataPath string, metaPath stri
 
 	// Parse the complete database snapshot
 	var snapshot DatabaseSnapshot
-	err = json.Unmarshal(completeData.Bytes(), &snapshot)
+	err = proto.Unmarshal(completeData.Bytes(), &snapshot)
 	if err != nil {
 		return fmt.Errorf("failed to unmarshal database snapshot: %w", err)
 	}
@@ -471,7 +472,7 @@ func DoBootstrap(ctx context.Context, url string, dataPath string, metaPath stri
 }
 
 // applySnapshotEntries applies KV entries to a store
-func applySnapshotEntries(ctx context.Context, store kv.Store, entries []KVEntry, storeType string) error {
+func applySnapshotEntries(ctx context.Context, store kv.Store, entries []*KVEntry, storeType string) error {
 	options.Logger.Info("Applying snapshot entries",
 		zap.String("store_type", storeType),
 		zap.Int("entry_count", len(entries)))

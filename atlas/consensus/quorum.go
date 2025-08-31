@@ -45,7 +45,8 @@ var managerOnce sync.Once
 func GetDefaultQuorumManager(ctx context.Context) QuorumManager {
 	managerOnce.Do(func() {
 		manager = &defaultQuorumManager{
-			nodes: make(map[RegionName][]*QuorumNode),
+			nodes:             make(map[RegionName][]*QuorumNode),
+			connectionManager: GetNodeConnectionManager(ctx),
 		}
 	})
 
@@ -55,8 +56,9 @@ func GetDefaultQuorumManager(ctx context.Context) QuorumManager {
 type RegionName string
 
 type defaultQuorumManager struct {
-	mu    sync.RWMutex
-	nodes map[RegionName][]*QuorumNode
+	mu                sync.RWMutex
+	nodes             map[RegionName][]*QuorumNode
+	connectionManager *NodeConnectionManager
 }
 
 func (q *defaultQuorumManager) AddNode(ctx context.Context, node *Node) error {
@@ -75,6 +77,11 @@ func (q *defaultQuorumManager) AddNode(ctx context.Context, node *Node) error {
 	_, err := qn.JoinCluster(ctx, node)
 	if err == nil {
 		q.nodes[RegionName(node.GetRegion().GetName())] = append(q.nodes[RegionName(node.GetRegion().GetName())], qn)
+	}
+
+	// Also add to the connection manager for health monitoring
+	if q.connectionManager != nil {
+		q.connectionManager.AddNode(ctx, node)
 	}
 
 	return nil
@@ -143,6 +150,17 @@ func (q *QuorumNode) Gossip(ctx context.Context, in *GossipMigration, opts ...gr
 		}
 	}
 	return q.client.Gossip(ctx, in, opts...)
+}
+
+func (q *QuorumNode) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
+	var err error
+	if q.client == nil {
+		q.client, err, q.closer = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return q.client.Ping(ctx, in, opts...)
 }
 
 func (q *QuorumNode) Close() {
@@ -294,6 +312,11 @@ func (q *defaultQuorumManager) GetQuorum(ctx context.Context, table string) (Quo
 		}
 	}
 
+	// Filter nodes to only include healthy ones from connection manager
+	if q.connectionManager != nil {
+		nodes = q.filterHealthyNodes(nodes)
+	}
+
 recalculate:
 
 	// before we can calculate the quorum, we need to validate the quorum is possible
@@ -404,4 +427,38 @@ recalculate:
 		q1: q1,
 		q2: q2,
 	}, nil
+}
+
+// filterHealthyNodes removes nodes that are not currently healthy according to the connection manager
+func (q *defaultQuorumManager) filterHealthyNodes(nodes map[RegionName][]*QuorumNode) map[RegionName][]*QuorumNode {
+	activeNodes := q.connectionManager.GetAllActiveNodes()
+	filteredNodes := make(map[RegionName][]*QuorumNode)
+	
+	for region, quorumNodes := range nodes {
+		activeInRegion, hasActiveNodes := activeNodes[string(region)]
+		if !hasActiveNodes {
+			// No active nodes in this region
+			continue
+		}
+		
+		// Create a map of active node IDs for quick lookup
+		activeNodeIDs := make(map[int64]bool)
+		for _, activeNode := range activeInRegion {
+			activeNodeIDs[activeNode.Id] = true
+		}
+		
+		// Filter quorum nodes to only include active ones
+		var healthyNodes []*QuorumNode
+		for _, qn := range quorumNodes {
+			if activeNodeIDs[qn.Id] {
+				healthyNodes = append(healthyNodes, qn)
+			}
+		}
+		
+		if len(healthyNodes) > 0 {
+			filteredNodes[region] = healthyNodes
+		}
+	}
+	
+	return filteredNodes
 }

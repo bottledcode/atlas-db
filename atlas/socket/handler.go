@@ -287,35 +287,9 @@ ready:
 
 				key := cmd.SelectCommand(1)
 
-				// Ensure node is properly configured for consensus
-				if options.CurrentOptions.ServerId == 0 {
-					err := s.writeError(Fatal, errors.New("node not properly initialized - missing server ID"))
-					if err != nil {
-						options.Logger.Error("Error writing error message", zap.Error(err))
-						return
-					}
-					continue
-				}
-
-				// Create properly initialized consensus server and adapter
-				server := &consensus.Server{}
-				dataStore := pool.DataStore()
-				if dataStore == nil {
-					err := s.writeError(Fatal, errors.New("data store not available"))
-					if err != nil {
-						options.Logger.Error("Error writing error message", zap.Error(err))
-						return
-					}
-					continue
-				}
-
-				// Initialize adapter - it will use options.CurrentOptions internally
-				adapter := consensus.NewKVConsensusAdapter(server, dataStore)
-
-				// Perform consensus-aware GET operation
-				value, err := adapter.GetKey(ctx, key)
+				value, err := atlas.GetKey(ctx, kv.NewKeyBuilder().Table(key))
 				if err != nil {
-					options.Logger.Error("GET operation failed", zap.String("key", key), zap.Error(err))
+					options.Logger.Error("Error reading key", zap.Error(err))
 					err := s.writeError(Fatal, fmt.Errorf("GET failed: %w", err))
 					if err != nil {
 						options.Logger.Error("Error writing error message", zap.Error(err))
@@ -327,16 +301,20 @@ ready:
 				// Send value response
 				if value == nil {
 					// Key not found
-					err = s.writeMessage("NOT_FOUND" + EOL)
+					err = s.writeMessage("NOT_FOUND")
 				} else {
 					// Key found, return value
-					err = s.writeMessage("VALUE: " + string(value) + EOL)
+					err = s.writeMessage("VALUE " + string(value))
 				}
 				if err != nil {
 					options.Logger.Error("Error writing GET response", zap.Error(err))
 					return
 				}
-				s.writeOk(OK)
+				err = s.writeOk(OK)
+				if err != nil {
+					options.Logger.Error("Error writing OK response", zap.Error(err))
+					return
+				}
 			case "DELETE":
 			}
 		}

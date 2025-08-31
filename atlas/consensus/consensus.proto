@@ -31,6 +31,7 @@ service Consensus {
   rpc AcceptMigration(WriteMigrationRequest) returns (google.protobuf.Empty) {}
   rpc JoinCluster(Node) returns (JoinClusterResponse) {}
   rpc Gossip(GossipMigration) returns (google.protobuf.Empty) {}
+  rpc Ping(PingRequest) returns (PingResponse) {}
 }
 
 message MigrationVersion {
@@ -192,4 +193,16 @@ message StoredMigrationBatch {
   Migration migration = 1; // The complete migration
   bool committed = 2; // Whether this migration batch is committed
   bool gossip = 3; // Whether this migration batch came from gossip
+}
+
+// Ping messages for health checks
+message PingRequest {
+  int64 sender_node_id = 1; // The ID of the node sending the ping
+  google.protobuf.Timestamp timestamp = 2; // Timestamp of the ping
+}
+
+message PingResponse {
+  bool success = 1; // Whether the ping was successful
+  int64 responder_node_id = 2; // The ID of the node responding
+  google.protobuf.Timestamp timestamp = 3; // Timestamp of the response
 }

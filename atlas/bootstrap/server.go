@@ -19,23 +19,12 @@
 package bootstrap
 
 import (
-	"encoding/json"
 	"fmt"
+
+	"google.golang.org/protobuf/proto"
 
 	"github.com/bottledcode/atlas-db/atlas/kv"
 )
-
-// DatabaseSnapshot represents a complete database state for bootstrapping
-type DatabaseSnapshot struct {
-	MetaEntries []KVEntry `json:"meta_entries"`
-	DataEntries []KVEntry `json:"data_entries"`
-}
-
-// KVEntry represents a key-value pair in the snapshot
-type KVEntry struct {
-	Key   []byte `json:"key"`
-	Value []byte `json:"value"`
-}
 
 type Server struct {
 	UnimplementedBootstrapServer
@@ -60,8 +49,8 @@ func (b *Server) GetBootstrapData(request *BootstrapRequest, stream Bootstrap_Ge
 
 	// Create database snapshot containing both metadata and data
 	snapshot := &DatabaseSnapshot{
-		MetaEntries: make([]KVEntry, 0),
-		DataEntries: make([]KVEntry, 0),
+		MetaEntries: make([]*KVEntry, 0),
+		DataEntries: make([]*KVEntry, 0),
 	}
 
 	// Capture metadata store state (consensus tables, nodes, migrations, etc.)
@@ -83,15 +72,16 @@ func (b *Server) GetBootstrapData(request *BootstrapRequest, stream Bootstrap_Ge
 	}
 
 	// Stream the snapshot in chunks to the joining node
-	snapshotData, err := json.Marshal(snapshot)
+	snapshotData, err := proto.Marshal(snapshot)
 	if err != nil {
 		return fmt.Errorf("failed to marshal database snapshot: %w", err)
 	}
 
-	// Stream data in 64KB chunks to avoid overwhelming the network
-	const chunkSize = 64 * 1024
+	// Stream data in chunks to avoid overwhelming the network
+	// The given size should avoid packet fragmentation in most networks.
+	const chunkSize = 1400
 	totalSize := len(snapshotData)
-	
+
 	for offset := 0; offset < totalSize; offset += chunkSize {
 		end := offset + chunkSize
 		if end > totalSize {
@@ -126,7 +116,7 @@ func (b *Server) GetBootstrapData(request *BootstrapRequest, stream Bootstrap_Ge
 }
 
 // captureStoreSnapshot captures all key-value pairs from a store
-func (b *Server) captureStoreSnapshot(store kv.Store, entries *[]KVEntry) error {
+func (b *Server) captureStoreSnapshot(store kv.Store, entries *[]*KVEntry) error {
 	// Create iterator to scan all keys
 	iter := store.NewIterator(kv.IteratorOptions{
 		PrefetchValues: true,
@@ -137,7 +127,7 @@ func (b *Server) captureStoreSnapshot(store kv.Store, entries *[]KVEntry) error 
 	// Iterate through all key-value pairs
 	for iter.Rewind(); iter.Valid(); iter.Next() {
 		item := iter.Item()
-		
+
 		// Get key and value
 		key := item.KeyCopy()
 		value, err := item.ValueCopy()
@@ -146,7 +136,7 @@ func (b *Server) captureStoreSnapshot(store kv.Store, entries *[]KVEntry) error 
 		}
 
 		// Add to entries
-		*entries = append(*entries, KVEntry{
+		*entries = append(*entries, &KVEntry{
 			Key:   key,
 			Value: value,
 		})

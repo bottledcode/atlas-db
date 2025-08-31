@@ -194,3 +194,7 @@ func (m *majorityQuorum) AcceptMigration(ctx context.Context, in *WriteMigration
 func (m *majorityQuorum) JoinCluster(ctx context.Context, in *Node, opts ...grpc.CallOption) (*JoinClusterResponse, error) {
 	return nil, errors.New("no quorum needed to join a cluster")
 }
+
+func (m *majorityQuorum) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
+	return nil, errors.New("no quorum needed to ping")
+}

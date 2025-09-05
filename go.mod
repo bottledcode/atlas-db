@@ -141,6 +141,7 @@ require (
 	go.uber.org/mock v0.6.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap/exp v0.3.0 // indirect
+	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/crypto v0.41.0 // indirect
 	golang.org/x/crypto/x509roots/fallback v0.0.0-20250904143959-9d779377cff7 // indirect
 	golang.org/x/exp v0.0.0-20250819193227-8b4c13bb791b // indirect

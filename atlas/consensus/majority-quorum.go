@@ -312,7 +312,7 @@ func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts
 			ReplicationLevel:  ReplicationLevel_global,
 			Owner:             currentNode,
 			CreatedAt:         timestamppb.Now(),
-			Version:           1,
+			Version:           0,
 			AllowedRegions:    []string{},
 			RestrictedRegions: []string{},
 			Group:             "",

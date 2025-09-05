@@ -152,6 +152,11 @@ func (m *MigrationRepositoryKV) CommitAllMigrations(table string) error {
 			continue
 		}
 
+		// Only process uncommitted, non-gossip migrations
+		if storedBatch.Committed || storedBatch.Gossip {
+			continue
+		}
+
 		// Mark as committed
 		storedBatch.Committed = true
 
@@ -163,6 +168,19 @@ func (m *MigrationRepositoryKV) CommitAllMigrations(table string) error {
 		if err := batch.Set(item.KeyCopy(), updatedData); err != nil {
 			_ = iterator.Close()
 			return fmt.Errorf("failed to add to batch: %w", err)
+		}
+
+		// Remove from uncommitted index
+		version := storedBatch.Migration.GetVersion()
+		uncommittedIndexKey := kv.NewKeyBuilder().Meta().Append("index").Append("migration").
+			Append("uncommitted").Append(version.GetTableName()).
+			Append(fmt.Sprintf("%d", version.GetMigrationVersion())).
+			Append(fmt.Sprintf("%d", version.GetNodeId())).
+			Build()
+
+		if err := batch.Delete(uncommittedIndexKey); err != nil {
+			_ = iterator.Close()
+			return fmt.Errorf("failed to delete uncommitted index entry: %w", err)
 		}
 	}
 
@@ -204,6 +222,11 @@ func (m *MigrationRepositoryKV) CommitMigrationExact(version *MigrationVersion) 
 		return fmt.Errorf("failed to unmarshal migration batch: %w", err)
 	}
 
+	// Only proceed if migration is not already committed and not gossip
+	if storedBatch.Committed {
+		return nil
+	}
+
 	storedBatch.Committed = true
 
 	updatedData, err := proto.Marshal(&storedBatch)
@@ -213,6 +236,19 @@ func (m *MigrationRepositoryKV) CommitMigrationExact(version *MigrationVersion) 
 
 	if err := txn.Put(m.ctx, key, updatedData); err != nil {
 		return fmt.Errorf("failed to update migration: %w", err)
+	}
+
+	// Remove from uncommitted index if it was previously uncommitted and not gossip
+	if !storedBatch.Gossip {
+		uncommittedIndexKey := kv.NewKeyBuilder().Meta().Append("index").Append("migration").
+			Append("uncommitted").Append(version.GetTableName()).
+			Append(fmt.Sprintf("%d", version.GetMigrationVersion())).
+			Append(fmt.Sprintf("%d", version.GetNodeId())).
+			Build()
+
+		if err := txn.Delete(m.ctx, uncommittedIndexKey); err != nil {
+			return fmt.Errorf("failed to delete uncommitted index entry: %w", err)
+		}
 	}
 
 	return txn.Commit()

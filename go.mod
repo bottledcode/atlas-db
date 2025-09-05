@@ -2,11 +2,10 @@ module github.com/bottledcode/atlas-db
 
 go 1.25
 
-toolchain go1.25.0
-
 require (
 	github.com/caddyserver/caddy/v2 v2.10.2
 	github.com/chzyer/readline v1.5.1
+	github.com/dgraph-io/badger/v2 v2.2007.4
 	github.com/spf13/cobra v1.10.1
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/zap v1.27.0
@@ -44,7 +43,6 @@ require (
 	github.com/cpuguy83/go-md2man/v2 v2.0.7 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dgraph-io/badger v1.6.2 // indirect
-	github.com/dgraph-io/badger/v2 v2.2007.4 // indirect
 	github.com/dgraph-io/ristretto v0.2.0 // indirect
 	github.com/dgryski/go-farm v0.0.0-20240924180020-3414d57e47da // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect

@@ -22,9 +22,16 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"github.com/bottledcode/atlas-db/atlas"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+
 	"github.com/bottledcode/atlas-db/atlas/bootstrap"
 	"github.com/bottledcode/atlas-db/atlas/consensus"
+	"github.com/bottledcode/atlas-db/atlas/kv"
+	"github.com/bottledcode/atlas-db/atlas/options"
 	"github.com/bottledcode/atlas-db/atlas/socket"
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
@@ -35,10 +42,6 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"net"
-	"net/http"
-	"os"
-	"strings"
 )
 
 type Module struct {
@@ -65,42 +68,57 @@ func (m *Module) CaddyModule() caddy.ModuleInfo {
 }
 
 func (m *Module) Provision(ctx caddy.Context) (err error) {
-	atlas.Logger = caddy.Log()
+	options.Logger = caddy.Log()
 
-	if atlas.CurrentOptions.BootstrapConnect != "" {
-		atlas.Logger.Info("🚀 Bootstrapping Atlas...")
-		err = bootstrap.DoBootstrap(ctx, atlas.CurrentOptions.BootstrapConnect, atlas.CurrentOptions.MetaFilename)
+	// Ensure directory structure exists
+	_ = os.MkdirAll(filepath.Dir(options.CurrentOptions.DbFilename), 0755)
+	_ = os.MkdirAll(filepath.Dir(options.CurrentOptions.MetaFilename), 0755)
+
+	if options.CurrentOptions.BootstrapConnect != "" {
+		options.Logger.Info("🚀 Starting Atlas bootstrap process...")
+
+		// Complete bootstrap: download cluster state and join as new node
+		err = bootstrap.BootstrapAndJoin(ctx,
+			options.CurrentOptions.BootstrapConnect,
+			options.CurrentOptions.DbFilename,
+			options.CurrentOptions.MetaFilename)
 		if err != nil {
-			return
-		}
-		atlas.Logger.Info("🚀 Bootstrapping Complete")
-		atlas.Logger.Info("☄️ Joining Atlas Cluster...")
-		atlas.CreatePool(atlas.CurrentOptions)
-		err = bootstrap.JoinCluster(ctx)
-		if err != nil {
-			return
+			return fmt.Errorf("bootstrap and cluster join failed: %w", err)
 		}
 
-		atlas.Logger.Info("☄️ Atlas Cluster Joined", zap.Int64("NodeID", atlas.CurrentOptions.ServerId))
+		options.Logger.Info("☄️ Atlas bootstrap completed successfully",
+			zap.Int64("NodeID", options.CurrentOptions.ServerId))
 	} else {
-		atlas.CreatePool(atlas.CurrentOptions)
+		options.Logger.Info("🌱 Initializing new Atlas cluster...")
+
+		// Initialize KV stores for new cluster
+		err = kv.CreatePool(options.CurrentOptions.DbFilename, options.CurrentOptions.MetaFilename)
+		if err != nil {
+			return fmt.Errorf("failed to create KV pool: %w", err)
+		}
+
+		// Initialize as first node in cluster if database is empty
 		err = bootstrap.InitializeMaybe(ctx)
 		if err != nil {
-			return
+			return fmt.Errorf("cluster initialization failed: %w", err)
 		}
+
+		options.Logger.Info("🌱 New Atlas cluster initialized",
+			zap.Int64("NodeID", options.CurrentOptions.ServerId))
 	}
 
+	// Start gRPC servers for bootstrap and consensus
 	m.bootstrapServer = grpc.NewServer()
 	bootstrap.RegisterBootstrapServer(m.bootstrapServer, &bootstrap.Server{})
 	consensus.RegisterConsensusServer(m.bootstrapServer, &consensus.Server{})
 
+	// Start socket interface
 	m.destroySocket, err = socket.ServeSocket(ctx)
 	if err != nil {
-		return
+		return fmt.Errorf("failed to start socket interface: %w", err)
 	}
 
-	atlas.Logger.Info("🌐 Atlas Started")
-
+	options.Logger.Info("🌐 Atlas started successfully")
 	return nil
 }
 
@@ -109,7 +127,7 @@ func (m *Module) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhtt
 	if r.ProtoMajor == 2 && r.Header.Get("content-type") == "application/grpc" {
 		// check authorization
 		authHeader := r.Header.Get("Authorization")
-		if authHeader != "Bearer "+atlas.CurrentOptions.ApiKey {
+		if authHeader != "Bearer "+options.CurrentOptions.ApiKey {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return nil
 		}
@@ -136,13 +154,13 @@ func (m *Module) UnmarshalCaddyfile(d *caddyfile.Dispenser) (err error) {
 				if !d.Args(&url) {
 					return d.ArgErr()
 				}
-				atlas.CurrentOptions.BootstrapConnect = url
+				options.CurrentOptions.BootstrapConnect = url
 			case "credentials":
 				var key string
 				if !d.Args(&key) {
 					return d.ArgErr()
 				}
-				atlas.CurrentOptions.ApiKey = key
+				options.CurrentOptions.ApiKey = key
 			case "db_path":
 				var path string
 				if !d.Args(&path) {
@@ -155,14 +173,14 @@ func (m *Module) UnmarshalCaddyfile(d *caddyfile.Dispenser) (err error) {
 					err = nil
 				}
 
-				atlas.CurrentOptions.DbFilename = path + atlas.CurrentOptions.DbFilename
-				atlas.CurrentOptions.MetaFilename = path + atlas.CurrentOptions.MetaFilename
+				options.CurrentOptions.DbFilename = path + options.CurrentOptions.DbFilename
+				options.CurrentOptions.MetaFilename = path + options.CurrentOptions.MetaFilename
 			case "region":
 				var region string
 				if !d.Args(&region) {
 					return d.ArgErr()
 				}
-				atlas.CurrentOptions.Region = region
+				options.CurrentOptions.Region = region
 			case "advertise":
 				var address string
 				if !d.Args(&address) {
@@ -172,14 +190,27 @@ func (m *Module) UnmarshalCaddyfile(d *caddyfile.Dispenser) (err error) {
 				if err != nil {
 					return d.Errf("advertise: %v", err)
 				}
-				atlas.CurrentOptions.AdvertiseAddress = parts.Host
-				atlas.CurrentOptions.AdvertisePort = parts.StartPort
+				options.CurrentOptions.AdvertiseAddress = parts.Host
+				options.CurrentOptions.AdvertisePort = parts.StartPort
 			case "socket":
 				var path string
 				if !d.Args(&path) {
 					return d.ArgErr()
 				}
-				atlas.CurrentOptions.SocketPath = path
+				options.CurrentOptions.SocketPath = path
+			case "development_mode":
+				var mode string
+				if !d.Args(&mode) {
+					return d.ArgErr()
+				}
+				switch mode {
+				case "true", "on", "yes":
+					options.CurrentOptions.DevelopmentMode = true
+				case "false", "off", "no":
+					options.CurrentOptions.DevelopmentMode = false
+				default:
+					return d.Errf("development_mode must be true/false, on/off, or yes/no, got: %s", mode)
+				}
 			default:
 				return d.Errf("unknown option: %s", d.Val())
 			}
@@ -207,7 +238,7 @@ func init() {
 		CobraFunc: func(command *cobra.Command) {
 			command.Args = cobra.ExactArgs(1)
 			command.RunE = caddycmd.WrapCommandFuncForCobra(func(flags caddycmd.Flags) (int, error) {
-				atlas.Logger = caddy.Log()
+				options.Logger = caddy.Log()
 
 				socketPath := flags.Arg(0)
 				conn, err := net.Dial("unix", socketPath)
@@ -216,7 +247,7 @@ func init() {
 				if err != nil {
 					return 1, err
 				}
-				defer conn.Close()
+				defer func() { _ = conn.Close() }()
 
 				// perform handshake
 				handshakePart := 0
@@ -242,13 +273,13 @@ func init() {
 
 			ready:
 
-				atlas.Logger.Info("🌐 Atlas Client Started")
+				options.Logger.Info("🌐 Atlas Client Started")
 
 				rl, err := readline.New("> ")
 				if err != nil {
 					return 1, err
 				}
-				defer rl.Close()
+				defer func() { _ = rl.Close() }()
 
 				for {
 					line, err := rl.Readline()

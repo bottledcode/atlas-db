@@ -21,136 +21,279 @@ package bootstrap
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"fmt"
-	"github.com/bottledcode/atlas-db/atlas"
+	"io"
+
+	"google.golang.org/protobuf/proto"
+
 	"github.com/bottledcode/atlas-db/atlas/consensus"
+	"github.com/bottledcode/atlas-db/atlas/kv"
+	"github.com/bottledcode/atlas-db/atlas/options"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"io"
-	"os"
-	"strconv"
-	"zombiezen.com/go/sqlite"
 )
 
 func JoinCluster(ctx context.Context) error {
-	tlsConfig := &tls.Config{
-		InsecureSkipVerify: true,
-	}
+	options.Logger.Info("Starting cluster join process")
 
-	creds := credentials.NewTLS(tlsConfig)
-
-	conn, err := atlas.MigrationsPool.Take(ctx)
-	if err != nil {
-		return err
-	}
-	defer atlas.MigrationsPool.Put(conn)
-	_, err = atlas.ExecuteSQL(ctx, "BEGIN", conn, false)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			_, _ = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
+	// Check if we already have KV stores initialized and contain node information
+	kvPool := kv.GetPool()
+	if kvPool != nil {
+		// Check if we're already registered in the cluster
+		existing, err := checkExistingNodeRegistration(ctx)
+		if err == nil && existing != nil {
+			options.Logger.Info("Node already registered in cluster", zap.Int64("node_id", existing.GetId()))
+			options.CurrentOptions.ServerId = existing.GetId()
+			// Load all nodes into quorum manager
+			return loadNodesIntoQuorumManager(ctx)
 		}
-	}()
-
-	nodeRepo := consensus.GetDefaultNodeRepository(ctx, conn)
-
-	self, err := nodeRepo.GetNodeByAddress(atlas.CurrentOptions.AdvertiseAddress, uint(atlas.CurrentOptions.AdvertisePort))
-	if err != nil {
-		return err
 	}
-	if self != nil {
-		// go ahead and add nodes to the internal cache
-		atlas.CurrentOptions.ServerId = self.GetId()
-		err = nodeRepo.Iterate(func(node *consensus.Node) error {
-			consensus.GetDefaultQuorumManager(ctx).AddNode(node)
-			return nil
-		})
+
+	// We need to bootstrap - get the cluster state first
+	kvPool = kv.GetPool()
+	if kvPool == nil {
+		return fmt.Errorf("KV pool not available - bootstrap database first")
+	}
+
+	metaStore := kvPool.MetaStore()
+	if metaStore == nil {
+		return fmt.Errorf("metadata store not available")
+	}
+
+	// Find the node table to get the current owner (for cluster contact)
+	tableRepo := consensus.NewTableRepositoryKV(ctx, metaStore)
+	nodeTable, err := tableRepo.GetTable(consensus.NodeTable)
+	if err != nil {
+		return fmt.Errorf("failed to get node table: %w", err)
+	}
+	if nodeTable == nil {
+		return fmt.Errorf("no node table found - cannot join cluster")
+	}
+
+	// Find the next available node ID
+	nodeRepo := consensus.NewNodeRepositoryKV(ctx, metaStore)
+	nextID, err := getNextNodeID(nodeRepo)
+	if err != nil {
+		return fmt.Errorf("failed to get next node ID: %w", err)
+	}
+
+	options.Logger.Info("Requesting to join cluster",
+		zap.Int64("next_node_id", nextID),
+		zap.String("owner_address", nodeTable.GetOwner().GetAddress()))
+
+	options.CurrentOptions.ServerId = nextID
+
+	// Contact the cluster to request membership
+	err = requestClusterMembership(ctx, nodeTable, nextID)
+	if err != nil {
+		return fmt.Errorf("failed to request cluster membership: %w", err)
+	}
+
+	// Load all nodes into quorum manager for future consensus operations
+	err = loadNodesIntoQuorumManager(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load nodes into quorum manager: %w", err)
+	}
+
+	options.Logger.Info("Successfully joined cluster", zap.Int64("node_id", nextID))
+	return nil
+}
+
+// checkExistingNodeRegistration checks if this node is already registered
+func checkExistingNodeRegistration(ctx context.Context) (*consensus.Node, error) {
+	kvPool := kv.GetPool()
+	if kvPool == nil {
+		return nil, fmt.Errorf("KV pool not available")
+	}
+
+	metaStore := kvPool.MetaStore()
+	if metaStore == nil {
+		return nil, fmt.Errorf("metadata store not available")
+	}
+
+	nodeRepo := consensus.NewNodeRepositoryKV(ctx, metaStore)
+	return nodeRepo.GetNodeByAddress(
+		options.CurrentOptions.AdvertiseAddress,
+		uint(options.CurrentOptions.AdvertisePort),
+	)
+}
+
+// loadNodesIntoQuorumManager loads all known nodes into the quorum manager cache
+func loadNodesIntoQuorumManager(ctx context.Context) error {
+	kvPool := kv.GetPool()
+	if kvPool == nil {
+		return fmt.Errorf("KV pool not available")
+	}
+
+	metaStore := kvPool.MetaStore()
+	if metaStore == nil {
+		return fmt.Errorf("metadata store not available")
+	}
+
+	nodeRepo := consensus.NewNodeRepositoryKV(ctx, metaStore)
+	qm := consensus.GetDefaultQuorumManager(ctx)
+
+	return nodeRepo.Iterate(func(node *consensus.Node) error {
+		err := qm.AddNode(ctx, node)
+		if err != nil {
+			return fmt.Errorf("failed to add node to quorum manager: %w", err)
+		}
+		options.Logger.Debug("Added node to quorum manager",
+			zap.Int64("node_id", node.GetId()),
+			zap.String("address", node.GetAddress()))
 		return nil
-	}
+	})
+}
 
-	tableRepo := consensus.GetDefaultTableRepository(ctx, conn)
-	nodeEntry, err := tableRepo.GetTable(consensus.NodeTable)
-	if err != nil {
-		return err
-	}
-	if nodeEntry == nil {
-		return fmt.Errorf("no node table found, cannot join cluster")
-	}
+// getNextNodeID finds the next available node ID
+func getNextNodeID(nodeRepo consensus.NodeRepository) (int64, error) {
+	maxID := int64(0)
 
-	nextIds, err := atlas.ExecuteSQL(ctx, "select max(id) + 1 as id from nodes", conn, false)
-	if err != nil {
-		return err
-	}
-
-	_, err = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
-	if err != nil {
-		return err
-	}
-
-	url := nodeEntry.GetOwner().GetAddress() + ":" + strconv.Itoa(int(nodeEntry.GetOwner().GetPort()))
-
-	c, err := grpc.NewClient(url, grpc.WithTransportCredentials(creds), grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-		ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", "Bearer "+atlas.CurrentOptions.ApiKey)
-		ctx = metadata.AppendToOutgoingContext(ctx, "Atlas-Service", "Bootstrap")
-		return invoker(ctx, method, req, reply, cc, opts...)
-	}), grpc.WithStreamInterceptor(func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
-		ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", "Bearer "+atlas.CurrentOptions.ApiKey)
-		ctx = metadata.AppendToOutgoingContext(ctx, "Atlas-Service", "Bootstrap")
-		return streamer(ctx, desc, cc, method, opts...)
-	}))
-	if err != nil {
-		return err
-	}
-	defer c.Close()
-
-	client := consensus.NewConsensusClient(c)
-	result, err := client.JoinCluster(ctx, &consensus.Node{
-		Id:      nextIds.GetIndex(0).GetColumn("id").GetInt(),
-		Address: atlas.CurrentOptions.AdvertiseAddress,
-		Port:    int64(atlas.CurrentOptions.AdvertisePort),
-		Region:  &consensus.Region{Name: atlas.CurrentOptions.Region},
-		Active:  true,
-		Rtt:     durationpb.New(0),
+	err := nodeRepo.Iterate(func(node *consensus.Node) error {
+		if node.GetId() > maxID {
+			maxID = node.GetId()
+		}
+		return nil
 	})
 
 	if err != nil {
-		return err
+		return 0, err
+	}
+
+	return maxID + 1, nil
+}
+
+// requestClusterMembership contacts the cluster to request membership
+func requestClusterMembership(ctx context.Context, nodeTable *consensus.Table, nodeID int64) error {
+	owner := nodeTable.GetOwner()
+	url := fmt.Sprintf("%s:%d", owner.GetAddress(), owner.GetPort())
+
+	options.Logger.Info("Contacting cluster owner for membership", zap.String("url", url))
+
+	tlsConfig, err := options.GetTLSConfig("https://" + url)
+	if err != nil {
+		return fmt.Errorf("failed to create TLS config: %w", err)
+	}
+	creds := credentials.NewTLS(tlsConfig)
+
+	conn, err := grpc.NewClient(url, grpc.WithTransportCredentials(creds),
+		grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+			ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", "Bearer "+options.CurrentOptions.ApiKey)
+			ctx = metadata.AppendToOutgoingContext(ctx, "Atlas-Service", "Consensus")
+			return invoker(ctx, method, req, reply, cc, opts...)
+		}))
+	if err != nil {
+		return fmt.Errorf("failed to connect to cluster owner: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	client := consensus.NewConsensusClient(conn)
+
+	// Build our node registration request
+	newNode := &consensus.Node{
+		Id:      nodeID,
+		Address: options.CurrentOptions.AdvertiseAddress,
+		Port:    int64(options.CurrentOptions.AdvertisePort),
+		Region:  &consensus.Region{Name: options.CurrentOptions.Region},
+		Active:  true,
+		Rtt:     durationpb.New(0),
+	}
+
+	result, err := client.JoinCluster(ctx, newNode)
+	if err != nil {
+		return fmt.Errorf("cluster join request failed: %w", err)
 	}
 
 	if !result.GetSuccess() {
-		return fmt.Errorf("could not join a cluster")
+		if result.GetTable() != nil {
+			return fmt.Errorf("join request rejected - not the current owner (table version: %d)",
+				result.GetTable().GetVersion())
+		}
+		return fmt.Errorf("join request rejected")
 	}
 
-	atlas.CurrentOptions.ServerId = result.NodeId
+	options.Logger.Info("Cluster membership request accepted", zap.Int64("assigned_node_id", result.GetNodeId()))
 
+	// Update the node with the server-assigned ID
+	newNode.Id = result.GetNodeId()
+
+	// Update CurrentOptions with the server-assigned node ID
+	options.CurrentOptions.ServerId = result.GetNodeId()
+
+	// Now that we're successfully part of the cluster, add ourselves to our local repository
+	// so that we can participate in consensus and KV operations
+	kvPool := kv.GetPool()
+	if kvPool != nil {
+		metaStore := kvPool.MetaStore()
+		if metaStore != nil {
+			nodeRepo := consensus.NewNodeRepositoryKV(ctx, metaStore)
+			if kvRepo, ok := nodeRepo.(*consensus.NodeRepositoryKV); ok {
+				err = kvRepo.AddNode(newNode)
+				if err != nil {
+					options.Logger.Warn("Failed to add self to local node repository after successful join", zap.Error(err))
+					// Don't fail the entire join process for this
+				} else {
+					options.Logger.Info("Successfully added self to local node repository")
+				}
+			}
+		}
+	}
+
+	// Add ourselves to quorum manager and connection manager for immediate participation
+	connectionManager := consensus.GetNodeConnectionManager(ctx)
+	if connectionManager != nil {
+		quorumManager := consensus.GetDefaultQuorumManager(ctx)
+		if quorumManager != nil {
+			// Add the current node to the quorum manager and connection manager
+			err = quorumManager.AddNode(ctx, newNode)
+			if err != nil {
+				options.Logger.Warn("Failed to add self to quorum manager after successful join", zap.Error(err))
+				// Don't fail the entire join process for this
+			} else {
+				options.Logger.Info("Successfully added self to quorum and connection manager")
+			}
+		}
+	}
+
+	return nil
+}
+
+// BootstrapAndJoin performs a complete bootstrap: downloads cluster state and registers as new node
+func BootstrapAndJoin(ctx context.Context, bootstrapURL string, dataPath string, metaPath string) error {
+	options.Logger.Info("Starting complete bootstrap process",
+		zap.String("bootstrap_url", bootstrapURL),
+		zap.String("data_path", dataPath),
+		zap.String("meta_path", metaPath))
+
+	// Step 1: Download database state from bootstrap server
+	options.Logger.Info("Phase 1: Downloading cluster state")
+	err := DoBootstrap(ctx, bootstrapURL, dataPath, metaPath)
+	if err != nil {
+		return fmt.Errorf("failed to bootstrap database state: %w", err)
+	}
+
+	// Step 2: Join the cluster as a new node
+	options.Logger.Info("Phase 2: Registering as new node in cluster")
+	err = JoinCluster(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to join cluster: %w", err)
+	}
+
+	options.Logger.Info("Bootstrap process completed successfully - node is now part of the cluster")
 	return nil
 }
 
 // InitializeMaybe checks if the database is empty and initializes it if it is
 func InitializeMaybe(ctx context.Context) error {
-	conn, err := atlas.MigrationsPool.Take(ctx)
-	if err != nil {
-		return err
+	pool := kv.GetPool()
+	if pool == nil {
+		return fmt.Errorf("KV pool not available")
 	}
-	defer atlas.MigrationsPool.Put(conn)
-	_, err = atlas.ExecuteSQL(ctx, "BEGIN", conn, false)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			_, _ = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
-		}
-	}()
-
-	nodeRepo := consensus.GetDefaultNodeRepository(ctx, conn)
+	nodeRepo := consensus.NewNodeRepositoryKV(ctx, pool.MetaStore())
 
 	count, err := nodeRepo.TotalCount()
 	if err != nil {
@@ -159,23 +302,22 @@ func InitializeMaybe(ctx context.Context) error {
 	qm := consensus.GetDefaultQuorumManager(ctx)
 
 	if count > int64(0) {
-		atlas.Logger.Info("Atlas database is not empty; skipping initialization and continuing normal operations")
+		options.Logger.Info("Atlas database is not empty; skipping initialization and continuing normal operations")
 
-		self, err := nodeRepo.GetNodeByAddress(atlas.CurrentOptions.AdvertiseAddress, uint(atlas.CurrentOptions.AdvertisePort))
+		self, err := nodeRepo.GetNodeByAddress(options.CurrentOptions.AdvertiseAddress, uint(options.CurrentOptions.AdvertisePort))
 		if err != nil {
 			return err
 		}
 
 		if self == nil {
-			atlas.Logger.Fatal("Could not find the current node in the database, but a node currently exists; please connect to the cluster.")
+			options.Logger.Fatal("Could not find the current node in the database, but a node currently exists; please connect to the cluster.")
 		}
 
-		atlas.CurrentOptions.ServerId = self.GetId()
+		options.CurrentOptions.ServerId = self.GetId()
 
 		// add all known nodes to the internal cache
 		err = nodeRepo.Iterate(func(node *consensus.Node) error {
-			qm.AddNode(node)
-			return nil
+			return qm.AddNode(ctx, node)
 		})
 		if err != nil {
 			return err
@@ -184,32 +326,31 @@ func InitializeMaybe(ctx context.Context) error {
 		return nil
 	}
 
-	if atlas.CurrentOptions.Region == "" {
-		atlas.CurrentOptions.Region = "default"
-		atlas.Logger.Warn("No region specified, using default region", zap.String("region", atlas.CurrentOptions.Region))
+	if options.CurrentOptions.Region == "" {
+		options.CurrentOptions.Region = "default"
+		options.Logger.Warn("No region specified, using default region", zap.String("region", options.CurrentOptions.Region))
 	}
 
-	region := atlas.CurrentOptions.Region
+	region := options.CurrentOptions.Region
 
-	if atlas.CurrentOptions.AdvertisePort == 0 {
-		atlas.CurrentOptions.AdvertisePort = 8080
-		atlas.Logger.Warn("No port specified, using the default port", zap.Uint("port", atlas.CurrentOptions.AdvertisePort))
+	if options.CurrentOptions.AdvertisePort == 0 {
+		options.CurrentOptions.AdvertisePort = 8080
+		options.Logger.Warn("No port specified, using the default port", zap.Uint("port", options.CurrentOptions.AdvertisePort))
 	}
 
-	if atlas.CurrentOptions.AdvertiseAddress == "" {
-		atlas.CurrentOptions.AdvertiseAddress = "localhost"
-		atlas.Logger.Warn("No address specified, using the default address", zap.String("address", atlas.CurrentOptions.AdvertiseAddress))
+	if options.CurrentOptions.AdvertiseAddress == "" {
+		options.CurrentOptions.AdvertiseAddress = "localhost"
+		options.Logger.Warn("No address specified, using the default address", zap.String("address", options.CurrentOptions.AdvertiseAddress))
 	}
 
 	// no nodes exist in the database, so we need to configure things here
-	server := consensus.Server{}
 
 	// define the new node:
 	node := &consensus.Node{
 		Id:      1,
-		Address: atlas.CurrentOptions.AdvertiseAddress,
+		Address: options.CurrentOptions.AdvertiseAddress,
 		Region:  &consensus.Region{Name: region},
-		Port:    int64(atlas.CurrentOptions.AdvertisePort),
+		Port:    int64(options.CurrentOptions.AdvertisePort),
 		Active:  true,
 		Rtt:     durationpb.New(0),
 	}
@@ -224,168 +365,60 @@ func InitializeMaybe(ctx context.Context) error {
 		RestrictedRegions: []string{},
 	}
 
-	var steal *consensus.StealTableOwnershipResponse
-	steal, err = server.StealTableOwnership(ctx, &consensus.StealTableOwnershipRequest{
-		Sender: node,
-		Reason: consensus.StealReason_queryReason,
-		Table:  table,
-	})
+	// For the bootstrap node, directly insert into KV stores without consensus
+	options.Logger.Info("Initializing first node directly into KV stores", zap.Int64("node_id", node.Id))
+
+	// Initialize repositories for direct data insertion
+	tableRepo := consensus.NewTableRepositoryKV(ctx, pool.MetaStore())
+	nodeRepoKV := consensus.NewNodeRepositoryKV(ctx, pool.MetaStore())
+
+	// Insert the node table directly (since we're the first node, we own it) -- however, it may already exist
+	_ = tableRepo.InsertTable(table)
+
+	// For the node insertion, we need to use the KV repository directly
+	// since the interface doesn't include AddNode (it's handled via consensus in normal operations)
+	err = nodeRepoKV.(*consensus.NodeRepositoryKV).AddNode(node)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to insert bootstrap node: %w", err)
 	}
 
-	if !steal.GetPromised() {
-		return fmt.Errorf("could not steal table ownership")
-	}
+	// Set our server ID
+	options.CurrentOptions.ServerId = node.Id
 
-	_, err = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
+	// Add the node to the quorum manager
+	err = qm.AddNode(ctx, node)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to add bootstrap node to quorum manager: %w", err)
 	}
 
-	var sess *sqlite.Session
-	sess, err = conn.CreateSession("")
-	if err != nil {
-		return err
-	}
-	err = sess.Attach("nodes")
-	if err != nil {
-		return err
-	}
-
-	_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", conn, false)
-	if err != nil {
-		return err
-	}
-
-	nextVersion := int64(1)
-
-	for _, missing := range steal.GetSuccess().GetMissingMigrations() {
-		nextVersion = missing.GetVersion().GetMigrationVersion() + 1
-		switch missing.GetMigration().(type) {
-		case *consensus.Migration_Data:
-			for _, data := range missing.GetData().GetSession() {
-				reader := bytes.NewReader(data)
-				err = conn.ApplyChangeset(reader, nil, func(conflictType sqlite.ConflictType, iterator *sqlite.ChangesetIterator) sqlite.ConflictAction {
-					return sqlite.ChangesetReplace
-				})
-				if err != nil {
-					return err
-				}
-			}
-		case *consensus.Migration_Schema:
-			for _, command := range missing.GetSchema().GetCommands() {
-				var stmt *sqlite.Stmt
-				stmt, _, err = conn.PrepareTransient(command)
-				if err != nil {
-					return err
-				}
-				_, err = stmt.Step()
-				if err != nil {
-					return err
-				}
-				err = stmt.Finalize()
-				if err != nil {
-					return err
-				}
-			}
-		}
-	}
-
-	_, err = atlas.ExecuteSQL(ctx, `
-insert into nodes (id, address, port, region, active, created_at, rtt)
-values (:id, :address, :port, :region, 1, current_timestamp, 0) on conflict do UPDATE
-SET address = :address, port = :port, region = :region, active = 1
-`, conn, false, atlas.Param{
-		Name:  "id",
-		Value: node.Id,
-	}, atlas.Param{
-		Name:  "address",
-		Value: node.Address,
-	}, atlas.Param{
-		Name:  "port",
-		Value: node.Port,
-	}, atlas.Param{
-		Name:  "region",
-		Value: region,
-	})
-	if err != nil {
-		return err
-	}
-
-	var sessData bytes.Buffer
-	err = sess.WritePatchset(&sessData)
-
-	_, err = atlas.ExecuteSQL(ctx, "rollback", conn, false)
-	if err != nil {
-		return err
-	}
-	sess.Delete()
-
-	// we are not outside the transaction and we can commit the migration
-
-	// now we exclusively own the table in our single node cluster...
-	migration := &consensus.WriteMigrationRequest{
-		Sender: node,
-		Migration: &consensus.Migration{
-			Version: &consensus.MigrationVersion{
-				TableVersion:     1,
-				MigrationVersion: nextVersion,
-				NodeId:           node.Id,
-				TableName:        consensus.NodeTable,
-			},
-			Migration: &consensus.Migration_Data{
-				Data: &consensus.DataMigration{
-					Session: [][]byte{sessData.Bytes()},
-				},
-			},
-		},
-	}
-
-	// err intentionally shadowed here to prevent a rollback outside the transaction
-	writeMigrationResponse, err := server.WriteMigration(ctx, migration)
-	if err != nil {
-		return err
-	}
-
-	if !writeMigrationResponse.GetSuccess() {
-		return fmt.Errorf("could not write migration")
-	}
-
-	_, err = server.AcceptMigration(ctx, migration)
-	if err != nil {
-		return err
-	}
-
-	atlas.CurrentOptions.ServerId = node.Id
-
-	return err
+	options.Logger.Info("Successfully initialized first node", zap.Int64("node_id", node.Id))
+	return nil
 }
 
-// DoBootstrap connects to the bootstrap server and writes the data to the meta file
-func DoBootstrap(ctx context.Context, url string, metaFilename string) error {
+// DoBootstrap connects to the bootstrap server and receives the complete database state
+func DoBootstrap(ctx context.Context, url string, dataPath string, metaPath string) error {
+	options.Logger.Info("Connecting to bootstrap server for database state transfer", zap.String("url", url))
 
-	atlas.Logger.Info("Connecting to bootstrap server", zap.String("url", url))
-
-	tlsConfig := &tls.Config{
-		InsecureSkipVerify: true,
+	tlsConfig, err := options.GetTLSConfig("https://" + url)
+	if err != nil {
+		return fmt.Errorf("failed to create TLS config: %w", err)
 	}
 
 	creds := credentials.NewTLS(tlsConfig)
 
 	conn, err := grpc.NewClient(url, grpc.WithTransportCredentials(creds), grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-		ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", "Bearer "+atlas.CurrentOptions.ApiKey)
+		ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", "Bearer "+options.CurrentOptions.ApiKey)
 		ctx = metadata.AppendToOutgoingContext(ctx, "Atlas-Service", "Bootstrap")
 		return invoker(ctx, method, req, reply, cc, opts...)
 	}), grpc.WithStreamInterceptor(func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
-		ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", "Bearer "+atlas.CurrentOptions.ApiKey)
+		ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", "Bearer "+options.CurrentOptions.ApiKey)
 		ctx = metadata.AppendToOutgoingContext(ctx, "Atlas-Service", "Bootstrap")
 		return streamer(ctx, desc, cc, method, opts...)
 	}))
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	client := NewBootstrapClient(conn)
 	resp, err := client.GetBootstrapData(ctx, &BootstrapRequest{
@@ -395,16 +428,8 @@ func DoBootstrap(ctx context.Context, url string, metaFilename string) error {
 		return err
 	}
 
-	// delete the wal and shm files
-	os.Remove(metaFilename + "-wal")
-	os.Remove(metaFilename + "-shm")
-
-	// write the data to the meta file
-	f, err := os.Create(metaFilename)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
+	// Collect all chunks into a buffer
+	var completeData bytes.Buffer
 
 	for {
 		chunk, err := resp.Recv()
@@ -412,7 +437,7 @@ func DoBootstrap(ctx context.Context, url string, metaFilename string) error {
 			break
 		}
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to receive bootstrap chunk: %w", err)
 		}
 
 		if chunk.GetIncompatibleVersion() != nil {
@@ -421,26 +446,115 @@ func DoBootstrap(ctx context.Context, url string, metaFilename string) error {
 
 		data := chunk.GetBootstrapData().GetData()
 		if len(data) == 0 {
+			// Empty chunk signals end of stream
 			break
 		}
-	writeRest:
-		n, err := f.Write(data)
+
+		_, err = completeData.Write(data)
 		if err != nil {
-			return err
-		}
-		if n != len(data) {
-			data = data[n:]
-			goto writeRest
+			return fmt.Errorf("failed to buffer bootstrap data: %w", err)
 		}
 	}
 
-	// we are now ready to connect to the database
-	atlas.CreatePool(atlas.CurrentOptions)
-	m, err := atlas.MigrationsPool.Take(ctx)
+	// Parse the complete database snapshot
+	var snapshot DatabaseSnapshot
+	err = proto.Unmarshal(completeData.Bytes(), &snapshot)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to unmarshal database snapshot: %w", err)
 	}
-	defer atlas.MigrationsPool.Put(m)
+
+	options.Logger.Info("Received database snapshot",
+		zap.Int("meta_entries", len(snapshot.MetaEntries)),
+		zap.Int("data_entries", len(snapshot.DataEntries)))
+
+	// Initialize the KV pool with clean stores
+	err = kv.CreatePool(dataPath, metaPath)
+	if err != nil {
+		return fmt.Errorf("failed to create KV pool: %w", err)
+	}
+
+	kvPool := kv.GetPool()
+	if kvPool == nil {
+		return fmt.Errorf("KV pool not initialized after creation")
+	}
+
+	// Apply metadata entries to metadata store
+	if len(snapshot.MetaEntries) > 0 {
+		metaStore := kvPool.MetaStore()
+		if metaStore == nil {
+			return fmt.Errorf("metadata store not available")
+		}
+
+		err = applySnapshotEntries(ctx, metaStore, snapshot.MetaEntries, "metadata")
+		if err != nil {
+			return fmt.Errorf("failed to apply metadata entries: %w", err)
+		}
+	}
+
+	// Apply data entries to data store
+	if len(snapshot.DataEntries) > 0 {
+		dataStore := kvPool.DataStore()
+		if dataStore == nil {
+			return fmt.Errorf("data store not available")
+		}
+
+		err = applySnapshotEntries(ctx, dataStore, snapshot.DataEntries, "data")
+		if err != nil {
+			return fmt.Errorf("failed to apply data entries: %w", err)
+		}
+	}
+
+	// Sync stores to ensure persistence
+	err = kvPool.Sync()
+	if err != nil {
+		return fmt.Errorf("failed to sync KV stores: %w", err)
+	}
+
+	options.Logger.Info("Bootstrap completed successfully - database state transferred and applied")
+	return nil
+}
+
+// applySnapshotEntries applies KV entries to a store
+func applySnapshotEntries(ctx context.Context, store kv.Store, entries []*KVEntry, storeType string) error {
+	options.Logger.Info("Applying snapshot entries",
+		zap.String("store_type", storeType),
+		zap.Int("entry_count", len(entries)))
+
+	// Use batch operations for better performance
+	batch := store.NewBatch()
+	defer batch.Reset()
+
+	batchSize := 0
+	const maxBatchSize = 1000
+
+	for i, entry := range entries {
+		err := batch.Set(entry.Key, entry.Value)
+		if err != nil {
+			return fmt.Errorf("failed to set key %s in batch: %w", string(entry.Key), err)
+		}
+
+		batchSize++
+
+		// Flush batch periodically to avoid memory issues
+		if batchSize >= maxBatchSize || i == len(entries)-1 {
+			err = batch.Flush()
+			if err != nil {
+				return fmt.Errorf("failed to flush %s batch: %w", storeType, err)
+			}
+
+			batch.Reset()
+			batchSize = 0
+
+			options.Logger.Debug("Applied batch of entries",
+				zap.String("store_type", storeType),
+				zap.Int("entries_applied", i+1),
+				zap.Int("total_entries", len(entries)))
+		}
+	}
+
+	options.Logger.Info("Successfully applied all snapshot entries",
+		zap.String("store_type", storeType),
+		zap.Int("total_entries", len(entries)))
 
 	return nil
 }

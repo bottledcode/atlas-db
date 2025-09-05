@@ -13,14 +13,17 @@
  *
  * You should have received a copy of the GNU Affero General Public License
  * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
+ *
  */
 
 package bootstrap
 
 import (
-	"github.com/bottledcode/atlas-db/atlas"
-	"io"
-	"os"
+	"fmt"
+
+	"google.golang.org/protobuf/proto"
+
+	"github.com/bottledcode/atlas-db/atlas/kv"
 )
 
 type Server struct {
@@ -38,55 +41,105 @@ func (b *Server) GetBootstrapData(request *BootstrapRequest, stream Bootstrap_Ge
 		})
 	}
 
-	atlas.CreatePool(atlas.CurrentOptions)
-
-	ctx := stream.Context()
-
-	conn, err := atlas.MigrationsPool.Take(ctx)
-	if err != nil {
-		return err
-	}
-	defer atlas.MigrationsPool.Put(conn)
-
-	// create a temporary file to store the data
-	f, err := os.CreateTemp("", "atlas-*.db")
-	if err != nil {
-		return err
-	}
-	f.Close()
-	defer os.Remove(f.Name())
-
-	_, err = atlas.ExecuteSQL(ctx, "VACUUM INTO '"+f.Name()+"'", conn, false)
-	if err != nil {
-		return
+	// Get KV store pools
+	kvPool := kv.GetPool()
+	if kvPool == nil {
+		return fmt.Errorf("KV pool not initialized")
 	}
 
-	// stream the data to the client
-	file, err := os.Open(f.Name())
-	if err != nil {
-		return err
+	// Create database snapshot containing both metadata and data
+	snapshot := &DatabaseSnapshot{
+		MetaEntries: make([]*KVEntry, 0),
+		DataEntries: make([]*KVEntry, 0),
 	}
-	defer file.Close()
 
-	buf := make([]byte, 1024*1024)
-	for {
-		n, err := file.Read(buf)
-		if err != nil && err != io.EOF {
-			return err
+	// Capture metadata store state (consensus tables, nodes, migrations, etc.)
+	metaStore := kvPool.MetaStore()
+	if metaStore != nil {
+		err = b.captureStoreSnapshot(metaStore, &snapshot.MetaEntries)
+		if err != nil {
+			return fmt.Errorf("failed to capture metadata snapshot: %w", err)
 		}
-		if n == 0 {
-			break
+	}
+
+	// Capture data store state (user data)
+	dataStore := kvPool.DataStore()
+	if dataStore != nil {
+		err = b.captureStoreSnapshot(dataStore, &snapshot.DataEntries)
+		if err != nil {
+			return fmt.Errorf("failed to capture data snapshot: %w", err)
+		}
+	}
+
+	// Stream the snapshot in chunks to the joining node
+	snapshotData, err := proto.Marshal(snapshot)
+	if err != nil {
+		return fmt.Errorf("failed to marshal database snapshot: %w", err)
+	}
+
+	// Stream data in chunks to avoid overwhelming the network
+	// The given size should avoid packet fragmentation in most networks.
+	const chunkSize = 1400
+	totalSize := len(snapshotData)
+
+	for offset := 0; offset < totalSize; offset += chunkSize {
+		end := offset + chunkSize
+		if end > totalSize {
+			end = totalSize
 		}
 
-		if err := stream.Send(&BootstrapResponse{
+		chunk := snapshotData[offset:end]
+		response := &BootstrapResponse{
 			Response: &BootstrapResponse_BootstrapData{
 				BootstrapData: &BootstrapData{
-					Data: buf[:n],
+					Version: 1,
+					Data:    chunk,
 				},
 			},
-		}); err != nil {
-			return err
 		}
+
+		err = stream.Send(response)
+		if err != nil {
+			return fmt.Errorf("failed to send bootstrap chunk: %w", err)
+		}
+	}
+
+	// Send empty chunk to signal end of stream
+	return stream.Send(&BootstrapResponse{
+		Response: &BootstrapResponse_BootstrapData{
+			BootstrapData: &BootstrapData{
+				Version: 1,
+				Data:    []byte{},
+			},
+		},
+	})
+}
+
+// captureStoreSnapshot captures all key-value pairs from a store
+func (b *Server) captureStoreSnapshot(store kv.Store, entries *[]*KVEntry) error {
+	// Create iterator to scan all keys
+	iter := store.NewIterator(kv.IteratorOptions{
+		PrefetchValues: true,
+		PrefetchSize:   100,
+	})
+	defer func() { _ = iter.Close() }()
+
+	// Iterate through all key-value pairs
+	for iter.Rewind(); iter.Valid(); iter.Next() {
+		item := iter.Item()
+
+		// Get key and value
+		key := item.KeyCopy()
+		value, err := item.ValueCopy()
+		if err != nil {
+			return fmt.Errorf("failed to read value for key %s: %w", string(key), err)
+		}
+
+		// Add to entries
+		*entries = append(*entries, &KVEntry{
+			Key:   key,
+			Value: value,
+		})
 	}
 
 	return nil

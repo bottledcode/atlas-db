@@ -31,6 +31,9 @@ service Consensus {
   rpc AcceptMigration(WriteMigrationRequest) returns (google.protobuf.Empty) {}
   rpc JoinCluster(Node) returns (JoinClusterResponse) {}
   rpc Gossip(GossipMigration) returns (google.protobuf.Empty) {}
+  rpc Ping(PingRequest) returns (PingResponse) {}
+  rpc ReadKey(ReadKeyRequest) returns (ReadKeyResponse) {}
+  rpc WriteKey(WriteKeyRequest) returns (WriteKeyResponse) {}
 }
 
 message MigrationVersion {
@@ -58,15 +61,42 @@ message SchemaMigration {
   repeated string commands = 1; // The commands to be executed
 }
 
-message DataMigration {
-  repeated bytes session = 1; // The data to be written
+message RawData {
+  bytes data = 1;
 }
+
+message SetChange {
+  bytes key = 1;
+  bytes value = 2;
+}
+
+message DelChange {
+  bytes key = 1;
+}
+
+message KVChange {
+  oneof operation {
+    SetChange set = 1;
+    DelChange del = 2;
+  }
+}
+
+message DataMigration {
+  google.protobuf.Timestamp time = 3;
+  oneof session {
+    RawData rawData = 1;
+    KVChange change = 2;
+  }
+}
+
+message NilMigration {}
 
 message Migration {
   MigrationVersion version = 1; // The version of the migration
   oneof migration {
     SchemaMigration schema = 2; // The schema migration
     DataMigration data = 3; // The data migration
+    NilMigration none = 4; // Represents a read
   }
 }
 
@@ -133,8 +163,8 @@ message StealTableOwnershipSuccess {
 }
 
 enum StealReason {
-  queryReason = 0; // The table was stolen due to a query
-  schemaReason = 1; // The table was stolen due to a schema change
+  queryReason = 0; // The table was stolen due to a readonly
+  writeReason = 1; // The table was stolen due to a write
 }
 
 message StealTableOwnershipRequest {
@@ -162,4 +192,48 @@ message Node {
 
 message Region {
   string name = 1; // The region name
+}
+
+// Storage message for efficient migration persistence
+message StoredMigrationBatch {
+  Migration migration = 1; // The complete migration
+  bool committed = 2; // Whether this migration batch is committed
+  bool gossip = 3; // Whether this migration batch came from gossip
+}
+
+// Ping messages for health checks
+message PingRequest {
+  int64 sender_node_id = 1; // The ID of the node sending the ping
+  google.protobuf.Timestamp timestamp = 2; // Timestamp of the ping
+}
+
+message PingResponse {
+  bool success = 1; // Whether the ping was successful
+  int64 responder_node_id = 2; // The ID of the node responding
+  google.protobuf.Timestamp timestamp = 3; // Timestamp of the response
+}
+
+// Remote read messages for leader-based reads
+message ReadKeyRequest {
+  Node sender = 1; // The node requesting the read
+  string key = 2; // The key to read
+  string table = 3; // The table the key belongs to
+}
+
+message ReadKeyResponse {
+  bool success = 1; // Whether the read was successful
+  bytes value = 2; // The value if found, empty if not found
+  string error = 3; // Error message if not successful
+}
+
+message WriteKeyRequest {
+  Node sender = 1; // The node requesting the write
+  string key = 2; // The key to write
+  string table = 3; // The table the key belongs to
+  bytes value = 4; // The value to write
+}
+
+message WriteKeyResponse {
+  bool success = 1; // Whether the write was successful
+  string error = 2; // Error message if not successful
 }

@@ -21,19 +21,25 @@ package consensus
 import (
 	"context"
 	"errors"
-	"github.com/bottledcode/atlas-db/atlas"
-	"google.golang.org/grpc"
-	"google.golang.org/protobuf/types/known/emptypb"
+	"fmt"
 	"slices"
 	"sort"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/bottledcode/atlas-db/atlas/kv"
+	"github.com/bottledcode/atlas-db/atlas/options"
+	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 type QuorumManager interface {
 	GetQuorum(ctx context.Context, table string) (Quorum, error)
-	AddNode(node *Node)
+	AddNode(ctx context.Context, node *Node) error
+	RemoveNode(nodeID int64) error
+	Send(node *Node, do func(quorumNode *QuorumNode) (interface{}, error)) (interface{}, error)
 }
 
 var manager *defaultQuorumManager
@@ -42,7 +48,8 @@ var managerOnce sync.Once
 func GetDefaultQuorumManager(ctx context.Context) QuorumManager {
 	managerOnce.Do(func() {
 		manager = &defaultQuorumManager{
-			nodes: make(map[RegionName][]*QuorumNode),
+			nodes:             make(map[RegionName][]*QuorumNode),
+			connectionManager: GetNodeConnectionManager(ctx),
 		}
 	})
 
@@ -52,11 +59,25 @@ func GetDefaultQuorumManager(ctx context.Context) QuorumManager {
 type RegionName string
 
 type defaultQuorumManager struct {
-	mu    sync.RWMutex
-	nodes map[RegionName][]*QuorumNode
+	mu                sync.RWMutex
+	nodes             map[RegionName][]*QuorumNode
+	connectionManager *NodeConnectionManager
 }
 
-func (q *defaultQuorumManager) AddNode(node *Node) {
+func (q *defaultQuorumManager) Send(node *Node, do func(quorumNode *QuorumNode) (interface{}, error)) (interface{}, error) {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+
+	for _, n := range q.nodes[RegionName(node.GetRegion().GetName())] {
+		if n.GetId() == node.GetId() {
+			return do(n)
+		}
+	}
+
+	return nil, nil
+}
+
+func (q *defaultQuorumManager) AddNode(ctx context.Context, node *Node) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -64,15 +85,75 @@ func (q *defaultQuorumManager) AddNode(node *Node) {
 		q.nodes[RegionName(node.GetRegion().GetName())] = make([]*QuorumNode, 0)
 	}
 
-	q.nodes[RegionName(node.GetRegion().GetName())] = append(q.nodes[RegionName(node.GetRegion().GetName())], &QuorumNode{
+	qn := &QuorumNode{
 		Node:   node,
 		closer: nil,
 		client: nil,
-	})
+	}
+
+	// prevent duplication
+	for _, n := range q.nodes[RegionName(node.GetRegion().GetName())] {
+		if n.GetId() == node.GetId() {
+			return nil
+		}
+	}
+
+	// special handling for self
+	if node.GetId() == options.CurrentOptions.ServerId {
+		q.nodes[RegionName(node.GetRegion().GetName())] = append(q.nodes[RegionName(node.GetRegion().GetName())], qn)
+		return nil
+	}
+
+	_, _ = qn.JoinCluster(ctx, node)
+	q.nodes[RegionName(node.GetRegion().GetName())] = append(q.nodes[RegionName(node.GetRegion().GetName())], qn)
+
+	// Also add to the connection manager for health monitoring
+	if q.connectionManager != nil {
+		_ = q.connectionManager.AddNode(ctx, node)
+	}
+
+	return nil
+}
+
+func (q *defaultQuorumManager) RemoveNode(nodeID int64) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	// Find and remove the node from all regions
+	for region, nodes := range q.nodes {
+		for i, node := range nodes {
+			if node.Id == nodeID {
+				// Close the connection if it exists
+				node.Close()
+
+				// Remove the node from the slice
+				q.nodes[region] = append(nodes[:i], nodes[i+1:]...)
+
+				// If region has no nodes left, remove the region
+				if len(q.nodes[region]) == 0 {
+					delete(q.nodes, region)
+				}
+
+				options.Logger.Info("Removed node from quorum manager",
+					zap.Int64("node_id", nodeID),
+					zap.String("region", string(region)))
+
+				return nil
+			}
+		}
+	}
+
+	// Node not found - this is not necessarily an error
+	options.Logger.Debug("Node not found in quorum manager for removal",
+		zap.Int64("node_id", nodeID))
+
+	return nil
 }
 
 type Quorum interface {
 	ConsensusClient
+	CurrentNodeInReplicationQuorum() bool
+	CurrentNodeInMigrationQuorum() bool
 }
 
 type QuorumNode struct {
@@ -84,7 +165,7 @@ type QuorumNode struct {
 func (q *QuorumNode) StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipResponse, error) {
 	var err error
 	if q.client == nil {
-		q.client, err, q.closer = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
 		if err != nil {
 			return nil, err
 		}
@@ -95,7 +176,7 @@ func (q *QuorumNode) StealTableOwnership(ctx context.Context, in *StealTableOwne
 func (q *QuorumNode) WriteMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*WriteMigrationResponse, error) {
 	var err error
 	if q.client == nil {
-		q.client, err, q.closer = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
 		if err != nil {
 			return nil, err
 		}
@@ -106,7 +187,7 @@ func (q *QuorumNode) WriteMigration(ctx context.Context, in *WriteMigrationReque
 func (q *QuorumNode) AcceptMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	var err error
 	if q.client == nil {
-		q.client, err, q.closer = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
 		if err != nil {
 			return nil, err
 		}
@@ -117,7 +198,7 @@ func (q *QuorumNode) AcceptMigration(ctx context.Context, in *WriteMigrationRequ
 func (q *QuorumNode) JoinCluster(ctx context.Context, in *Node, opts ...grpc.CallOption) (*JoinClusterResponse, error) {
 	var err error
 	if q.client == nil {
-		q.client, err, q.closer = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
 		if err != nil {
 			return nil, err
 		}
@@ -128,12 +209,45 @@ func (q *QuorumNode) JoinCluster(ctx context.Context, in *Node, opts ...grpc.Cal
 func (q *QuorumNode) Gossip(ctx context.Context, in *GossipMigration, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	var err error
 	if q.client == nil {
-		q.client, err, q.closer = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
 		if err != nil {
 			return nil, err
 		}
 	}
 	return q.client.Gossip(ctx, in, opts...)
+}
+
+func (q *QuorumNode) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
+	var err error
+	if q.client == nil {
+		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return q.client.Ping(ctx, in, opts...)
+}
+
+func (q *QuorumNode) ReadKey(ctx context.Context, in *ReadKeyRequest, opts ...grpc.CallOption) (*ReadKeyResponse, error) {
+	var err error
+	if q.client == nil {
+		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return q.client.ReadKey(ctx, in, opts...)
+}
+
+func (q *QuorumNode) WriteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error) {
+	var err error
+	if q.client == nil {
+		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return q.client.WriteKey(ctx, in, opts...)
 }
 
 func (q *QuorumNode) Close() {
@@ -241,44 +355,57 @@ func (q *defaultQuorumManager) GetQuorum(ctx context.Context, table string) (Quo
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
-	Fz := atlas.CurrentOptions.GetFz()
-	Fn := atlas.CurrentOptions.GetFn()
+	Fz := options.CurrentOptions.GetFz()
+	Fn := options.CurrentOptions.GetFn()
 
-	conn, err := atlas.MigrationsPool.Take(ctx)
-	if err != nil {
-		return nil, err
+	kvPool := kv.GetPool()
+	if kvPool == nil {
+		return nil, fmt.Errorf("KV pool not initialized")
 	}
-	defer atlas.MigrationsPool.Put(conn)
 
-	tableRepo := GetDefaultTableRepository(ctx, conn)
+	metaStore := kvPool.MetaStore()
+	if metaStore == nil {
+		return nil, fmt.Errorf("metaStore is closed")
+	}
+
+	tableRepo := NewTableRepositoryKV(ctx, metaStore)
 	tableConfig, err := tableRepo.GetTable(table)
 	if err != nil {
 		return nil, err
 	}
-	if tableConfig == nil {
-		return nil, errors.New("table not found")
+	// Create a shallow copy of q.nodes to avoid mutating the original map
+	nodes := make(map[RegionName][]*QuorumNode)
+	for region, nodeSlice := range q.nodes {
+		nodes[region] = nodeSlice
 	}
 
-	// allow regions allowed by the table config
-	nodes := make(map[RegionName][]*QuorumNode)
-	if len(tableConfig.GetAllowedRegions()) > 0 {
-		for _, region := range tableConfig.GetAllowedRegions() {
-			if _, ok := q.nodes[RegionName(region)]; ok {
-				nodes[RegionName(region)] = q.nodes[RegionName(region)]
+	if tableConfig != nil {
+		// allow regions allowed by the table config
+		if len(tableConfig.GetAllowedRegions()) > 0 {
+			filteredNodes := make(map[RegionName][]*QuorumNode)
+			for _, region := range tableConfig.GetAllowedRegions() {
+				if nodeSlice, ok := nodes[RegionName(region)]; ok {
+					filteredNodes[RegionName(region)] = nodeSlice
+				}
 			}
-		}
-	} else {
-		nodes = q.nodes
-		if len(tableConfig.GetRestrictedRegions()) > 0 {
-			// restrict regions allowed by the table config
-			for region := range q.nodes {
-				for _, restricted := range tableConfig.GetRestrictedRegions() {
-					if string(region) == restricted {
-						delete(nodes, region)
+			nodes = filteredNodes
+		} else {
+			if len(tableConfig.GetRestrictedRegions()) > 0 {
+				// restrict regions allowed by the table config
+				for region := range nodes {
+					for _, restricted := range tableConfig.GetRestrictedRegions() {
+						if string(region) == restricted {
+							delete(nodes, region)
+						}
 					}
 				}
 			}
 		}
+	}
+
+	// Filter nodes to only include healthy ones from connection manager
+	if q.connectionManager != nil {
+		nodes = q.filterHealthyNodes(nodes)
 	}
 
 recalculate:
@@ -391,4 +518,37 @@ recalculate:
 		q1: q1,
 		q2: q2,
 	}, nil
+}
+
+// filterHealthyNodes removes nodes that are not currently healthy according to the connection manager
+func (q *defaultQuorumManager) filterHealthyNodes(nodes map[RegionName][]*QuorumNode) map[RegionName][]*QuorumNode {
+	activeNodes := q.connectionManager.GetAllActiveNodes()
+	filteredNodes := make(map[RegionName][]*QuorumNode)
+
+	for region, quorumNodes := range nodes {
+		activeInRegion, hasActiveNodes := activeNodes[string(region)]
+
+		// Create a map of active node IDs for quick lookup
+		activeNodeIDs := make(map[int64]bool)
+		if hasActiveNodes {
+			for _, activeNode := range activeInRegion {
+				activeNodeIDs[activeNode.Id] = true
+			}
+		}
+
+		// Filter quorum nodes to only include active ones or the current node
+		var healthyNodes []*QuorumNode
+		for _, qn := range quorumNodes {
+			if activeNodeIDs[qn.Id] || qn.Id == options.CurrentOptions.ServerId {
+				healthyNodes = append(healthyNodes, qn)
+			}
+		}
+
+		// Always include regions that have the current node, even if no other nodes are active
+		if len(healthyNodes) > 0 {
+			filteredNodes[region] = healthyNodes
+		}
+	}
+
+	return filteredNodes
 }

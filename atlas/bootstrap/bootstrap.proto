@@ -44,3 +44,13 @@ message BootstrapResponse {
     BootstrapData bootstrapData = 2;
   }
 }
+
+message DatabaseSnapshot {
+  repeated KVEntry MetaEntries = 1;
+  repeated KVEntry DataEntries = 2;
+}
+
+message KVEntry {
+  bytes key = 1;
+  bytes value = 2;
+}

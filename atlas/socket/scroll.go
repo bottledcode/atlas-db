@@ -22,9 +22,10 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/bottledcode/atlas-db/atlas/commands"
 	"slices"
 	"strconv"
+
+	"github.com/bottledcode/atlas-db/atlas/commands"
 	"zombiezen.com/go/sqlite"
 )
 

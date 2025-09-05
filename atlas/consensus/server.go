@@ -19,19 +19,22 @@
 package consensus
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/bottledcode/atlas-db/atlas"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/bottledcode/atlas-db/atlas/kv"
+	"github.com/bottledcode/atlas-db/atlas/options"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/emptypb"
-	"strings"
-	"sync"
-	"zombiezen.com/go/sqlite"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const NodeTable = "atlas.nodes"
@@ -41,25 +44,33 @@ type Server struct {
 }
 
 func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnershipRequest) (*StealTableOwnershipResponse, error) {
-	conn, err := atlas.MigrationsPool.Take(ctx)
-	if err != nil {
-		return nil, err
+	// Get KV store for metadata operations
+	kvPool := kv.GetPool()
+	if kvPool == nil {
+		return nil, fmt.Errorf("KV pool not initialized")
 	}
-	defer func() {
-		if err != nil {
-			_, _ = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
-		}
-		atlas.MigrationsPool.Put(conn)
-	}()
 
-	_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", conn, false)
+	metaStore := kvPool.MetaStore()
+	if metaStore == nil {
+		return nil, fmt.Errorf("metadata store not available")
+	}
 
-	tr := GetDefaultTableRepository(ctx, conn)
+	tr := NewTableRepositoryKV(ctx, metaStore)
 	existingTable, err := tr.GetTable(req.GetTable().GetName())
 	if err != nil {
 		return nil, err
 	}
 
+	if existingTable == nil && req.GetReason() == StealReason_queryReason {
+		return &StealTableOwnershipResponse{
+			Promised: false,
+			Response: &StealTableOwnershipResponse_Failure{
+				Failure: &StealTableOwnershipFailure{
+					Table: req.Table,
+				},
+			},
+		}, nil
+	}
 	if existingTable == nil {
 		// this is a new table...
 		err = tr.InsertTable(req.GetTable())
@@ -82,11 +93,6 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 			}
 		}
 
-		_, err = atlas.ExecuteSQL(ctx, "COMMIT", conn, false)
-		if err != nil {
-			return nil, err
-		}
-
 		return &StealTableOwnershipResponse{
 			Promised: true,
 			Response: &StealTableOwnershipResponse_Success{
@@ -98,18 +104,24 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 		}, nil
 	}
 
+	if req.GetReason() == StealReason_queryReason {
+		return &StealTableOwnershipResponse{
+			Promised: false,
+			Response: &StealTableOwnershipResponse_Failure{
+				Failure: &StealTableOwnershipFailure{
+					Table: existingTable,
+				},
+			},
+		}, nil
+	}
+
 	if existingTable.GetVersion() > req.GetTable().GetVersion() {
-		atlas.Logger.Info(
+		options.Logger.Info(
 			"the existing table version is higher than the requested version",
 			zap.String("table", existingTable.GetName()),
 			zap.Int64("existing_version", existingTable.GetVersion()),
 			zap.Int64("requested_version", req.GetTable().GetVersion()),
 		)
-
-		_, err = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
-		if err != nil {
-			return nil, err
-		}
 
 		// the ballot number is lower, so reject the steal
 		return &StealTableOwnershipResponse{
@@ -126,11 +138,6 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 		// the ballot number is the same, so compare the node ids of the current stealers and the existing owner
 		if existingTable.GetOwner() != nil && req.GetTable().GetOwner() != nil {
 			if existingTable.GetOwner().GetId() > req.GetTable().GetOwner().GetId() {
-				_, err = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
-				if err != nil {
-					return nil, err
-				}
-
 				return &StealTableOwnershipResponse{
 					Promised: false,
 					Response: &StealTableOwnershipResponse_Failure{
@@ -149,8 +156,8 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 
 	// if this table is a group, all tables in the group must be stolen
 	var missing []*Migration
+	mr := NewMigrationRepositoryKV(ctx, metaStore)
 	if existingTable.GetType() == TableType_group {
-		mr := GetDefaultMigrationRepository(ctx, conn)
 
 		// first we update the table to the new owner
 		err = tr.UpdateTable(req.GetTable())
@@ -175,15 +182,10 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 			missing = append(missing, m...)
 		}
 	} else {
-		missing, err = s.stealTableOperation(tr, GetDefaultMigrationRepository(ctx, conn), req.GetTable())
+		missing, err = s.stealTableOperation(tr, mr, req.GetTable())
 		if err != nil {
 			return nil, err
 		}
-	}
-
-	_, err = atlas.ExecuteSQL(ctx, "COMMIT", conn, false)
-	if err != nil {
-		return nil, err
 	}
 
 	return &StealTableOwnershipResponse{
@@ -198,7 +200,6 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 }
 
 func (s *Server) stealTableOperation(tr TableRepository, mr MigrationRepository, table *Table) ([]*Migration, error) {
-	atlas.Ownership.Remove(table.GetName())
 	err := tr.UpdateTable(table)
 	if err != nil {
 		return nil, err
@@ -213,34 +214,25 @@ func (s *Server) stealTableOperation(tr TableRepository, mr MigrationRepository,
 }
 
 func (s *Server) WriteMigration(ctx context.Context, req *WriteMigrationRequest) (*WriteMigrationResponse, error) {
-	conn, err := atlas.MigrationsPool.Take(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err != nil {
-			_, _ = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
-		}
-		atlas.MigrationsPool.Put(conn)
-	}()
-
-	_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", conn, false)
-	if err != nil {
-		return nil, err
+	// Get KV store for metadata operations
+	kvPool := kv.GetPool()
+	if kvPool == nil {
+		return nil, fmt.Errorf("KV pool not initialized")
 	}
 
-	tableRepo := GetDefaultTableRepository(ctx, conn)
+	metaStore := kvPool.MetaStore()
+	if metaStore == nil {
+		return nil, fmt.Errorf("metadata store not available")
+	}
+
+	tableRepo := NewTableRepositoryKV(ctx, metaStore)
 	existingTable, err := tableRepo.GetTable(req.GetMigration().GetVersion().GetTableName())
 	if err != nil {
 		return nil, err
 	}
 
 	if existingTable == nil {
-		atlas.Logger.Warn("table not found, but expected", zap.String("table", req.GetMigration().GetVersion().GetTableName()))
-		_, err = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
-		if err != nil {
-			return nil, err
-		}
+		options.Logger.Warn("table not found, but expected", zap.String("table", req.GetMigration().GetVersion().GetTableName()))
 
 		return &WriteMigrationResponse{
 			Success: false,
@@ -250,22 +242,12 @@ func (s *Server) WriteMigration(ctx context.Context, req *WriteMigrationRequest)
 
 	if existingTable.GetVersion() > req.GetMigration().GetVersion().GetTableVersion() {
 		// the table version is higher than the requested version, so reject the migration since it isn't the owner
-		_, err = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
-		if err != nil {
-			return nil, err
-		}
-
 		return &WriteMigrationResponse{
 			Success: false,
 			Table:   existingTable,
 		}, nil
 	} else if existingTable.GetOwner() != nil && existingTable.GetVersion() == req.GetMigration().GetVersion().GetTableVersion() && existingTable.GetOwner().GetId() != req.GetSender().GetId() {
 		// the table version is the same, but the owner is different, so reject the migration
-		_, err = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
-		if err != nil {
-			return nil, err
-		}
-
 		return &WriteMigrationResponse{
 			Success: false,
 			Table:   existingTable,
@@ -273,13 +255,8 @@ func (s *Server) WriteMigration(ctx context.Context, req *WriteMigrationRequest)
 	}
 
 	// insert the migration
-	migrationRepo := GetDefaultMigrationRepository(ctx, conn)
+	migrationRepo := NewMigrationRepositoryKV(ctx, metaStore)
 	err = migrationRepo.AddMigration(req.GetMigration())
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = atlas.ExecuteSQL(ctx, "COMMIT", conn, false)
 	if err != nil {
 		return nil, err
 	}
@@ -291,43 +268,37 @@ func (s *Server) WriteMigration(ctx context.Context, req *WriteMigrationRequest)
 }
 
 func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest) (*emptypb.Empty, error) {
-	conn, err := atlas.MigrationsPool.Take(ctx)
-	if err != nil {
-		return nil, err
+	// Get the appropriate KV store for the migration
+	var kvStore kv.Store
+	kvPool := kv.GetPool()
+	if kvPool == nil {
+		return nil, fmt.Errorf("KV pool not initialized")
 	}
-	defer func() {
-		if err != nil {
-			_, _ = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
+
+	// Use metadata store for consensus operations
+	metaStore := kvPool.MetaStore()
+	if metaStore == nil {
+		return nil, fmt.Errorf("metadata store not available")
+	}
+
+	if strings.HasPrefix(req.GetMigration().GetVersion().GetTableName(), "atlas.") {
+		// Use metadata store for atlas tables
+		kvStore = metaStore
+	} else {
+		// Use data store for user tables
+		kvStore = kvPool.DataStore()
+		if kvStore == nil {
+			return nil, fmt.Errorf("data store not available")
 		}
-		atlas.MigrationsPool.Put(conn)
-	}()
-
-	commitConn := conn
-	if !strings.HasPrefix(req.GetMigration().GetVersion().GetTableName(), "atlas.") {
-		commitConn, err = atlas.Pool.Take(ctx)
-		if err != nil {
-			return nil, err
-		}
-		defer func() {
-			if err != nil {
-				_, _ = atlas.ExecuteSQL(ctx, "ROLLBACK", commitConn, false)
-			}
-			atlas.Pool.Put(commitConn)
-		}()
 	}
 
-	_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", conn, false)
-	if err != nil {
-		return nil, err
-	}
-
-	mr := GetDefaultMigrationRepository(ctx, conn)
+	mr := NewMigrationRepositoryKV(ctx, metaStore)
 	migrations, err := mr.GetMigrationVersion(req.GetMigration().GetVersion())
 	if err != nil {
 		return nil, err
 	}
 
-	err = s.applyMigration(migrations, commitConn)
+	err = s.applyMigration(migrations, kvStore)
 	if err != nil {
 		return nil, err
 	}
@@ -337,64 +308,154 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 		return nil, err
 	}
 
-	if commitConn != conn {
-		_, err = atlas.ExecuteSQL(ctx, "COMMIT", commitConn, false)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	_, err = atlas.ExecuteSQL(ctx, "COMMIT", conn, false)
-	if err != nil {
-		return nil, err
-	}
-
-	atlas.Ownership.Commit(req.GetMigration().GetVersion().GetTableName(), req.GetMigration().GetVersion().GetTableVersion())
-
 	return &emptypb.Empty{}, nil
 }
 
-func (s *Server) applyMigration(migrations []*Migration, commitConn *sqlite.Conn) error {
+func (s *Server) applyMigration(migrations []*Migration, kvStore kv.Store) error {
 	for _, migration := range migrations {
 		switch migration.GetMigration().(type) {
 		case *Migration_Schema:
-			for _, command := range migration.GetSchema().GetCommands() {
-				stmt, _, err := commitConn.PrepareTransient(command)
-				if err != nil {
-					return err
-				}
-				_, err = stmt.Step()
-				if err != nil {
-					return err
-				}
-				err = stmt.Finalize()
-				if err != nil {
-					return err
-				}
-			}
+			// Schema migrations are not supported in KV mode
+			// Skip silently for backward compatibility during transition
+			options.Logger.Warn("Schema migration ignored in KV mode",
+				zap.String("table", migration.GetVersion().GetTableName()))
+			continue
 		case *Migration_Data:
-			for _, data := range migration.GetData().GetSession() {
-				reader := bytes.NewReader(data)
-				err := commitConn.ApplyChangeset(reader, nil, func(conflictType sqlite.ConflictType, iterator *sqlite.ChangesetIterator) sqlite.ConflictAction {
-					// todo: handle conflicts
-					return sqlite.ChangesetReplace
-				})
-				if err != nil {
-					return err
-				}
+			err := s.applyKVDataMigration(migration.GetData(), kvStore)
+			if err != nil {
+				return fmt.Errorf("failed to apply KV data migration: %w", err)
 			}
 		}
 	}
 	return nil
 }
 
+func (s *Server) applyKVDataMigration(dataMigration *DataMigration, kvStore kv.Store) error {
+	ctx := context.Background()
+
+	switch migrationType := dataMigration.GetSession().(type) {
+	case *DataMigration_Change:
+		switch op := migrationType.Change.GetOperation().(type) {
+		case *KVChange_Set:
+			err := kvStore.Put(ctx, op.Set.Key, op.Set.Value)
+			if err != nil {
+				return fmt.Errorf("failed to SET key %s: %w", op.Set.Key, err)
+			}
+			options.Logger.Info("Applied KV SET migration",
+				zap.String("key", string(op.Set.Key)),
+				zap.Int("value_size", len(op.Set.Value)))
+		case *KVChange_Del:
+			err := kvStore.Delete(ctx, op.Del.Key)
+			if err != nil {
+				return fmt.Errorf("failed to DELETE key %s: %w", op.Del.Key, err)
+			}
+			options.Logger.Info("Applied KV DELETE migration", zap.String("key", string(op.Del.Key)))
+		default:
+			return fmt.Errorf("unknown KV operation: %s", op)
+		}
+	case *DataMigration_RawData:
+		sessionData := migrationType.RawData.GetData()
+		var operationCheck map[string]interface{}
+		err := json.Unmarshal(sessionData, &operationCheck)
+		if err != nil {
+			return fmt.Errorf("failed to unmarshal operation data: %w", err)
+		}
+		operation, ok := operationCheck["operation"].(string)
+		if !ok {
+			return fmt.Errorf("missing or invalid operation field")
+		}
+		switch operation {
+		case "ADD_NODE":
+			// Parse as node data structure
+			err := s.applyAddNodeOperation(ctx, sessionData, kvStore)
+			if err != nil {
+				return fmt.Errorf("failed to apply ADD_NODE operation: %w", err)
+			}
+
+		default:
+			return fmt.Errorf("unknown KV raw operation: %s", operation)
+		}
+	}
+
+	return nil
+}
+
+// applyAddNodeOperation handles the ADD_NODE operation by properly adding the node using NodeRepositoryKV
+func (s *Server) applyAddNodeOperation(ctx context.Context, sessionData []byte, kvStore kv.Store) error {
+	// Parse the node data from the ADD_NODE operation
+	var nodeData map[string]interface{}
+	err := json.Unmarshal(sessionData, &nodeData)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal ADD_NODE data: %w", err)
+	}
+
+	// Extract node information from the operation data
+	id, ok := nodeData["id"].(float64) // JSON unmarshals numbers as float64
+	if !ok {
+		return fmt.Errorf("missing or invalid node ID")
+	}
+
+	address, ok := nodeData["address"].(string)
+	if !ok {
+		return fmt.Errorf("missing or invalid node address")
+	}
+
+	port, ok := nodeData["port"].(float64)
+	if !ok {
+		return fmt.Errorf("missing or invalid node port")
+	}
+
+	region, ok := nodeData["region"].(string)
+	if !ok {
+		return fmt.Errorf("missing or invalid node region")
+	}
+
+	active, ok := nodeData["active"].(bool)
+	if !ok {
+		return fmt.Errorf("missing or invalid node active status")
+	}
+
+	// Construct the node object
+	node := &Node{
+		Id:      int64(id),
+		Address: address,
+		Port:    int64(port),
+		Region:  &Region{Name: region},
+		Active:  active,
+		Rtt:     durationpb.New(0), // Default RTT for new nodes
+	}
+
+	// Use NodeRepositoryKV to properly add the node with indexing
+	nodeRepo := NewNodeRepositoryKV(ctx, kvStore)
+	if kvRepo, ok := nodeRepo.(*NodeRepositoryKV); ok {
+		err = kvRepo.AddNode(node)
+		if err != nil {
+			return fmt.Errorf("failed to add node via repository: %w", err)
+		}
+		qm := GetDefaultQuorumManager(ctx)
+		err = qm.AddNode(ctx, node)
+		if err != nil {
+			return fmt.Errorf("failed to add node to quorum: %w", err)
+		}
+
+		options.Logger.Info("Applied ADD_NODE migration",
+			zap.Int64("node_id", node.Id),
+			zap.String("address", node.Address),
+			zap.String("region", node.Region.Name))
+	} else {
+		return fmt.Errorf("failed to cast to NodeRepositoryKV")
+	}
+
+	return nil
+}
+
 func constructCurrentNode() *Node {
 	return &Node{
-		Id:      atlas.CurrentOptions.ServerId,
-		Address: atlas.CurrentOptions.AdvertiseAddress,
-		Port:    int64(atlas.CurrentOptions.AdvertisePort),
+		Id:      options.CurrentOptions.ServerId,
+		Address: options.CurrentOptions.AdvertiseAddress,
+		Port:    int64(options.CurrentOptions.AdvertisePort),
 		Region: &Region{
-			Name: atlas.CurrentOptions.Region,
+			Name: options.CurrentOptions.Region,
 		},
 		Active: true,
 		Rtt:    durationpb.New(0),
@@ -403,24 +464,19 @@ func constructCurrentNode() *Node {
 
 // JoinCluster adds a node to the cluster on behalf of the node.
 func (s *Server) JoinCluster(ctx context.Context, req *Node) (*JoinClusterResponse, error) {
-	conn, err := atlas.MigrationsPool.Take(ctx)
-	if err != nil {
-		return nil, err
+	// Get KV store for metadata operations
+	kvPool := kv.GetPool()
+	if kvPool == nil {
+		return nil, fmt.Errorf("KV pool not initialized")
 	}
-	defer func() {
-		if err != nil {
-			_, _ = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
-		}
-		atlas.MigrationsPool.Put(conn)
-	}()
 
-	_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", conn, false)
-	if err != nil {
-		return nil, err
+	metaStore := kvPool.MetaStore()
+	if metaStore == nil {
+		return nil, fmt.Errorf("metaStore is closed")
 	}
 
 	// check if we currently are the owner for node configuration
-	tableRepo := GetDefaultTableRepository(ctx, conn)
+	tableRepo := NewTableRepositoryKV(ctx, metaStore)
 	table, err := tableRepo.GetTable(NodeTable)
 	if err != nil {
 		return nil, err
@@ -430,7 +486,7 @@ func (s *Server) JoinCluster(ctx context.Context, req *Node) (*JoinClusterRespon
 		return nil, status.Errorf(codes.Internal, "node table not found")
 	}
 
-	if table.GetOwner().GetId() != atlas.CurrentOptions.ServerId {
+	if table.GetOwner().GetId() != options.CurrentOptions.ServerId {
 		return &JoinClusterResponse{
 			Success: false,
 			Table:   table,
@@ -443,72 +499,42 @@ func (s *Server) JoinCluster(ctx context.Context, req *Node) (*JoinClusterRespon
 		return nil, err
 	}
 
-	// add the node to the cluster as a migration to be replicated
-	sess, err := conn.CreateSession("")
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if sess != nil {
-			sess.Delete()
-		}
-	}()
-	err = sess.Attach("nodes")
-	if err != nil {
-		return nil, err
+	// Create KV change for adding the node
+	nodeChange := map[string]interface{}{
+		"operation": "ADD_NODE",
+		"id":        req.GetId(),
+		"address":   req.GetAddress(),
+		"port":      req.GetPort(),
+		"region":    req.GetRegion().GetName(),
+		"active":    true,
 	}
 
-	_, err = atlas.ExecuteSQL(ctx, `
-insert into nodes (id, address, port, region, active, created_at, rtt)
-VALUES (:id, :address, :port, :region, 1, current_timestamp, 0)`, conn, false, atlas.Param{
-		Name:  "id",
-		Value: req.GetId(),
-	}, atlas.Param{
-		Name:  "address",
-		Value: req.GetAddress(),
-	}, atlas.Param{
-		Name:  "port",
-		Value: req.GetPort(),
-	}, atlas.Param{
-		Name:  "region",
-		Value: req.GetRegion().GetName(),
-	})
+	migrationData, err := json.Marshal(nodeChange)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to marshal node change: %w", err)
 	}
 
-	migrationData := bytes.Buffer{}
-	err = sess.WritePatchset(&migrationData)
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
-	if err != nil {
-		return nil, err
-	}
-
-	tr := GetDefaultTableRepository(ctx, conn)
-	nodeTable, err := tr.GetTable(NodeTable)
-	if err != nil {
-		return nil, err
-	}
-
-	mr := GetDefaultMigrationRepository(ctx, conn)
+	nodeTable := table
+	mr := NewMigrationRepositoryKV(ctx, metaStore)
 	nextVersion, err := mr.GetNextVersion(NodeTable)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get next migration version: %w", err)
+	}
 
 	// create a new migration
 	migration := &Migration{
 		Version: &MigrationVersion{
 			TableVersion:     nodeTable.GetVersion(),
 			MigrationVersion: nextVersion,
-			NodeId:           atlas.CurrentOptions.ServerId,
+			NodeId:           options.CurrentOptions.ServerId,
 			TableName:        NodeTable,
 		},
 		Migration: &Migration_Data{
 			Data: &DataMigration{
-				Session: [][]byte{
-					migrationData.Bytes(),
+				Session: &DataMigration_RawData{
+					RawData: &RawData{
+						Data: migrationData,
+					},
 				},
 			},
 		},
@@ -561,8 +587,19 @@ func createGossipKey(version *MigrationVersion) gossipKey {
 }
 
 // applyGossipMigration applies a gossip migration to the database.
-func (s *Server) applyGossipMigration(ctx context.Context, req *GossipMigration, conn *sqlite.Conn, commitConn *sqlite.Conn) error {
-	mr := GetDefaultMigrationRepository(ctx, conn)
+func (s *Server) applyGossipMigration(ctx context.Context, req *GossipMigration) error {
+	// Get KV store for metadata operations
+	kvPool := kv.GetPool()
+	if kvPool == nil {
+		return fmt.Errorf("KV pool not initialized")
+	}
+
+	metaStore := kvPool.MetaStore()
+	if metaStore == nil {
+		return fmt.Errorf("metaStore is closed")
+	}
+
+	mr := NewMigrationRepositoryKV(ctx, metaStore)
 
 	// check to see if we have the previous migration already
 	prev, err := mr.GetMigrationVersion(req.GetPreviousMigration())
@@ -575,7 +612,7 @@ func (s *Server) applyGossipMigration(ctx context.Context, req *GossipMigration,
 		// see if we have it in the gossip queue
 		if prev, ok := gossipQueue.LoadAndDelete(gk); ok {
 			// we already have it, so now apply it
-			err = s.applyGossipMigration(ctx, prev.(*GossipMigration), conn, commitConn)
+			err = s.applyGossipMigration(ctx, prev.(*GossipMigration))
 			if err != nil {
 				// put the failed migration back in the queue
 				gossipQueue.Store(gk, prev)
@@ -596,8 +633,26 @@ func (s *Server) applyGossipMigration(ctx context.Context, req *GossipMigration,
 		return err
 	}
 
+	// Get the appropriate KV store for the migration
+	var kvStore kv.Store
+	if kvPool == nil {
+		return fmt.Errorf("KV pool not initialized")
+	}
+
+	if strings.HasPrefix(req.GetMigrationRequest().GetVersion().GetTableName(), "atlas.") {
+		// Use metadata store for atlas tables
+		kvStore = kvPool.MetaStore()
+	} else {
+		// Use data store for user tables
+		kvStore = kvPool.DataStore()
+	}
+
+	if kvStore == nil {
+		return fmt.Errorf("KV store not available")
+	}
+
 	// we have a previous migration, so apply this one
-	err = s.applyMigration([]*Migration{req.GetMigrationRequest()}, commitConn)
+	err = s.applyMigration([]*Migration{req.GetMigrationRequest()}, kvStore)
 	if err != nil {
 		return err
 	}
@@ -611,17 +666,17 @@ func (s *Server) applyGossipMigration(ctx context.Context, req *GossipMigration,
 	return nil
 }
 
-func SendGossip(ctx context.Context, req *GossipMigration, conn *sqlite.Conn) error {
+func SendGossip(ctx context.Context, req *GossipMigration, kvStore kv.Store) error {
 	// now we see if there is still a ttl remaining
 	if req.GetTtl() <= 0 {
 		return nil
 	}
 
 	// pick 5 random nodes to gossip to, excluding the sender, owner, and myself
-	nr := GetDefaultNodeRepository(ctx, conn)
+	nr := NewNodeRepositoryKV(ctx, kvStore)
 	nodes, err := nr.GetRandomNodes(5,
 		req.GetMigrationRequest().GetVersion().GetNodeId(),
-		atlas.CurrentOptions.ServerId,
+		options.CurrentOptions.ServerId,
 		req.GetSender().GetId(),
 	)
 	if err != nil {
@@ -646,7 +701,7 @@ func SendGossip(ctx context.Context, req *GossipMigration, conn *sqlite.Conn) er
 		go func(i int) {
 			defer wg.Done()
 
-			client, err, closer := getNewClient(fmt.Sprintf("%s:%d", node.GetAddress(), node.GetPort()))
+			client, closer, err := getNewClient(fmt.Sprintf("%s:%d", node.GetAddress(), node.GetPort()))
 			if err != nil {
 				errs[i] = err
 			}
@@ -662,7 +717,7 @@ func SendGossip(ctx context.Context, req *GossipMigration, conn *sqlite.Conn) er
 	// wait for gossip to complete
 	wg.Wait()
 
-	atlas.Logger.Info("gossip complete", zap.String("table", req.GetTable().GetName()), zap.Int64("version", req.GetTable().GetVersion()))
+	options.Logger.Info("gossip complete", zap.String("table", req.GetTable().GetName()), zap.Int64("version", req.GetTable().GetVersion()))
 
 	return errors.Join(errs...)
 }
@@ -670,46 +725,18 @@ func SendGossip(ctx context.Context, req *GossipMigration, conn *sqlite.Conn) er
 // Gossip is a method that randomly disseminates information to other nodes in the cluster.
 // A leader disseminates this to every node in the cluster after a commit.
 func (s *Server) Gossip(ctx context.Context, req *GossipMigration) (*emptypb.Empty, error) {
-	// determine if we have already applied this data or not
-	conn, err := atlas.MigrationsPool.Take(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer atlas.MigrationsPool.Put(conn)
-
-	// rollback on err
-	defer func() {
-		if err != nil {
-			_, _ = atlas.ExecuteSQL(ctx, "ROLLBACK", conn, false)
-		}
-	}()
-
-	commitConn := conn
-	if strings.HasPrefix(req.GetTable().GetName(), "atlas.") {
-		commitConn, err = atlas.Pool.Take(ctx)
-		if err != nil {
-			return nil, err
-		}
-		defer atlas.Pool.Put(commitConn)
-
-		_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", commitConn, false)
-		if err != nil {
-			return nil, err
-		}
-
-		defer func() {
-			if err != nil {
-				_, _ = atlas.ExecuteSQL(ctx, "ROLLBACK", commitConn, false)
-			}
-		}()
+	// Get KV store for metadata operations
+	kvPool := kv.GetPool()
+	if kvPool == nil {
+		return nil, fmt.Errorf("KV pool not initialized")
 	}
 
-	_, err = atlas.ExecuteSQL(ctx, "BEGIN IMMEDIATE", conn, false)
-	if err != nil {
-		return nil, err
+	metaStore := kvPool.MetaStore()
+	if metaStore == nil {
+		return nil, fmt.Errorf("metaStore is closed")
 	}
 
-	tr := GetDefaultTableRepository(ctx, conn)
+	tr := NewTableRepositoryKV(ctx, metaStore)
 
 	// update the local table cache if the version is newer than the current version
 	tb, err := tr.GetTable(req.GetTable().GetName())
@@ -729,28 +756,310 @@ func (s *Server) Gossip(ctx context.Context, req *GossipMigration) (*emptypb.Emp
 	}
 
 	// apply the current migration if we can do so
-	err = s.applyGossipMigration(ctx, req, conn, commitConn)
-	if err != nil {
-		return nil, err
-	}
-
-	if commitConn != conn {
-		_, err = atlas.ExecuteSQL(ctx, "COMMIT", commitConn, false)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	_, err = atlas.ExecuteSQL(ctx, "COMMIT", conn, false)
+	err = s.applyGossipMigration(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 
 	// gossip to other nodes
-	err = SendGossip(ctx, req, conn)
+	err = SendGossip(ctx, req, metaStore)
 	if err != nil {
 		return nil, err
 	}
 
 	return &emptypb.Empty{}, nil
+}
+
+// Ping implements a simple health check endpoint
+func (s *Server) Ping(ctx context.Context, req *PingRequest) (*PingResponse, error) {
+	// Add mutual node discovery - when we receive a ping, add the sender to our node list
+	connectionManager := GetNodeConnectionManager(ctx)
+	if connectionManager != nil {
+		// Try to find existing node first
+		connectionManager.mu.RLock()
+		existingNode, exists := connectionManager.nodes[req.SenderNodeId]
+		connectionManager.mu.RUnlock()
+
+		if !exists {
+			// Node doesn't exist, we need to discover it from the node repository
+			nodeRepo := connectionManager.storage
+			if nodeRepo != nil {
+				var discoveredNode *Node
+				_ = nodeRepo.Iterate(func(node *Node) error {
+					if node.Id == req.SenderNodeId {
+						discoveredNode = node
+						return nil // found it, stop iterating
+					}
+					return nil // continue searching
+				})
+
+				if discoveredNode != nil {
+					options.Logger.Info("Discovered node through ping, adding to connection manager",
+						zap.Int64("sender_node_id", req.SenderNodeId),
+						zap.String("address", discoveredNode.GetAddress()))
+
+					// Add the discovered node to our connection manager
+					err := connectionManager.AddNode(ctx, discoveredNode)
+					if err != nil {
+						options.Logger.Warn("Failed to add discovered node to connection manager",
+							zap.Int64("sender_node_id", req.SenderNodeId),
+							zap.Error(err))
+					}
+				} else {
+					options.Logger.Debug("Received ping from unknown node not in repository",
+						zap.Int64("sender_node_id", req.SenderNodeId))
+				}
+			}
+		} else {
+			// Node exists, update its last seen time to prevent health checks
+			existingNode.mu.Lock()
+			existingNode.lastSeen = time.Now()
+			existingNode.mu.Unlock()
+
+			// Also ensure it's marked as active if it was previously failed
+			if existingNode.GetStatus() != NodeStatusActive {
+				existingNode.UpdateStatus(NodeStatusActive)
+				connectionManager.addToActiveNodes(existingNode)
+
+				options.Logger.Info("Node recovered through ping",
+					zap.Int64("sender_node_id", req.SenderNodeId),
+					zap.String("address", existingNode.GetAddress()))
+			}
+		}
+	}
+
+	return &PingResponse{
+		Success:         true,
+		ResponderNodeId: options.CurrentOptions.ServerId,
+		Timestamp:       timestamppb.Now(),
+	}, nil
+}
+
+func (s *Server) ReadKey(ctx context.Context, req *ReadKeyRequest) (*ReadKeyResponse, error) {
+	// Verify we're the leader for this table
+	kvPool := kv.GetPool()
+	if kvPool == nil {
+		return &ReadKeyResponse{
+			Success: false,
+			Error:   "KV pool not initialized",
+		}, nil
+	}
+
+	metaStore := kvPool.MetaStore()
+	if metaStore == nil {
+		return &ReadKeyResponse{
+			Success: false,
+			Error:   "metaStore is closed",
+		}, nil
+	}
+
+	// Check if we're actually the leader for this table
+	tr := NewTableRepositoryKV(ctx, metaStore)
+	table, err := tr.GetTable(req.GetTable())
+	if err != nil {
+		return &ReadKeyResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get table info: %v", err),
+		}, nil
+	}
+
+	if table == nil {
+		return &ReadKeyResponse{
+			Success: false,
+			Error:   "table not found",
+		}, nil
+	}
+
+	// Verify we're the owner of this table
+	if table.Owner.Id != options.CurrentOptions.ServerId {
+		return &ReadKeyResponse{
+			Success: false,
+			Error:   "not the leader for this table",
+		}, nil
+	}
+
+	// Read the key from local store
+	dataStore := kvPool.DataStore()
+	if dataStore == nil {
+		return &ReadKeyResponse{
+			Success: false,
+			Error:   "data store not available",
+		}, nil
+	}
+
+	keyBytes := []byte(req.GetKey())
+	value, err := dataStore.Get(ctx, keyBytes)
+	if err != nil {
+		if errors.Is(err, kv.ErrKeyNotFound) {
+			// Key not found, but this is a successful read
+			return &ReadKeyResponse{
+				Success: true,
+				Value:   nil, // nil value indicates key not found
+			}, nil
+		}
+		return &ReadKeyResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to read key: %v", err),
+		}, nil
+	}
+
+	return &ReadKeyResponse{
+		Success: true,
+		Value:   value,
+	}, nil
+}
+
+func (s *Server) WriteKey(ctx context.Context, req *WriteKeyRequest) (*WriteKeyResponse, error) {
+	// Verify we're the leader for this table
+	kvPool := kv.GetPool()
+	if kvPool == nil {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   "KV pool not initialized",
+		}, nil
+	}
+
+	metaStore := kvPool.MetaStore()
+	if metaStore == nil {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   "metaStore is closed",
+		}, nil
+	}
+
+	// Check if we're actually the leader for this table
+	tr := NewTableRepositoryKV(ctx, metaStore)
+	table, err := tr.GetTable(req.GetTable())
+	if err != nil {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get table info: %v", err),
+		}, nil
+	}
+
+	if table == nil {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   "table not found",
+		}, nil
+	}
+
+	// Verify we're the owner of this table
+	if table.Owner.Id != options.CurrentOptions.ServerId {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   "not the leader for this table",
+		}, nil
+	}
+
+	// We are the leader - execute the full consensus protocol
+	qm := GetDefaultQuorumManager(ctx)
+	nr := NewNodeRepositoryKV(ctx, metaStore)
+
+	currentNode, err := nr.GetNodeById(options.CurrentOptions.ServerId)
+	if err != nil {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get current node: %v", err),
+		}, nil
+	}
+	if currentNode == nil {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   "node not yet part of cluster",
+		}, nil
+	}
+
+	quorum, err := qm.GetQuorum(ctx, req.GetTable())
+	if err != nil {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get quorum: %v", err),
+		}, nil
+	}
+
+	// Attempt to steal table ownership to confirm leadership
+	tableOwnership, err := quorum.StealTableOwnership(ctx, &StealTableOwnershipRequest{
+		Sender: currentNode,
+		Reason: StealReason_writeReason,
+		Table:  table,
+	})
+	if err != nil {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to steal ownership: %v", err),
+		}, nil
+	}
+
+	if !tableOwnership.Promised {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   "leadership could not be confirmed",
+		}, nil
+	}
+
+	// Execute the migration
+	mr := NewMigrationRepositoryKV(ctx, metaStore)
+	version, err := mr.GetNextVersion(req.GetTable())
+	if err != nil {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get next version: %v", err),
+		}, nil
+	}
+
+	migration := &WriteMigrationRequest{
+		Sender: currentNode,
+		Migration: &Migration{
+			Version: &MigrationVersion{
+				TableVersion:     table.GetVersion(),
+				MigrationVersion: version,
+				NodeId:           currentNode.GetId(),
+				TableName:        req.GetTable(),
+			},
+			Migration: &Migration_Data{
+				Data: &DataMigration{
+					Session: &DataMigration_Change{
+						Change: &KVChange{
+							Operation: &KVChange_Set{
+								Set: &SetChange{
+									Key:   []byte(req.GetKey()),
+									Value: req.GetValue(),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Write migration phase
+	migrationResult, err := quorum.WriteMigration(ctx, migration)
+	if err != nil {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to write migration: %v", err),
+		}, nil
+	}
+
+	if !migrationResult.GetSuccess() {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   "migration failed due to outdated table",
+		}, nil
+	}
+
+	// Accept migration phase
+	_, err = quorum.AcceptMigration(ctx, migration)
+	if err != nil {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to accept migration: %v", err),
+		}, nil
+	}
+
+	return &WriteKeyResponse{
+		Success: true,
+	}, nil
 }

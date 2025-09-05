@@ -41,7 +41,7 @@ func GetTLSConfig(targetURL string) (*tls.Config, error) {
 	parsedURL, err := url.Parse(targetURL)
 	if err != nil {
 		// If we can't parse the URL, fall back to standard verification
-		Logger.Warn("Failed to parse URL for TLS config, falling back to standard verification", 
+		Logger.Warn("Failed to parse URL for TLS config, falling back to standard verification",
 			zap.String("url", targetURL), zap.Error(err))
 		return &tls.Config{}, nil
 	}
@@ -64,7 +64,7 @@ func GetTLSConfig(targetURL string) (*tls.Config, error) {
 			}
 
 			cert := cs.PeerCertificates[0]
-			
+
 			// Verify the certificate is for the expected hostname
 			if err := cert.VerifyHostname(hostname); err != nil {
 				// For localhost, also accept if the certificate has localhost in SAN or CN
@@ -91,8 +91,8 @@ func isValidLocalhostCert(cert *x509.Certificate, hostname string) bool {
 
 	// Check SAN entries
 	for _, san := range cert.DNSNames {
-		if strings.EqualFold(san, hostname) || 
-		   strings.EqualFold(san, "localhost") {
+		if strings.EqualFold(san, hostname) ||
+			strings.EqualFold(san, "localhost") {
 			return true
 		}
 	}

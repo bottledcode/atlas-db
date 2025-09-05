@@ -39,7 +39,7 @@ type QuorumManager interface {
 	GetQuorum(ctx context.Context, table string) (Quorum, error)
 	AddNode(ctx context.Context, node *Node) error
 	RemoveNode(nodeID int64) error
-	Send(node *Node, do func(quorumNode *QuorumNode) (interface{}, error)) (interface{},error)
+	Send(node *Node, do func(quorumNode *QuorumNode) (interface{}, error)) (interface{}, error)
 }
 
 var manager *defaultQuorumManager
@@ -64,7 +64,7 @@ type defaultQuorumManager struct {
 	connectionManager *NodeConnectionManager
 }
 
-func (q *defaultQuorumManager) Send(node *Node, do func(quorumNode *QuorumNode) (interface{}, error)) (interface{},error) {
+func (q *defaultQuorumManager) Send(node *Node, do func(quorumNode *QuorumNode) (interface{}, error)) (interface{}, error) {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 

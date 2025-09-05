@@ -220,7 +220,7 @@ func requestClusterMembership(ctx context.Context, nodeTable *consensus.Table, n
 
 	// Update the node with the server-assigned ID
 	newNode.Id = result.GetNodeId()
-	
+
 	// Update CurrentOptions with the server-assigned node ID
 	options.CurrentOptions.ServerId = result.GetNodeId()
 

@@ -196,7 +196,7 @@ func TestTableRepositoryKV_UpdateTable_StaleIndexes(t *testing.T) {
 	// but it will due to stale index entries
 	regionalTablesAfterUpdate, err := repo.GetTablesByReplicationLevel(ReplicationLevel_regional)
 	assert.NoError(t, err)
-	
+
 	// This assertion will FAIL because of stale indexes - the table will still appear
 	// in regional queries even though it's now global
 	assert.Len(t, regionalTablesAfterUpdate, 0, "Table should not appear in regional queries after being updated to global")

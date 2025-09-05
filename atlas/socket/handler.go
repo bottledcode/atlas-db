@@ -38,14 +38,14 @@ import (
 )
 
 type Socket struct {
-	writer        *bufio.ReadWriter
-	conn          net.Conn
-	sql           *sqlite.Conn
-	session       *sqlite.Session
-	activeStmts   map[string]*Query
-	streams       []*sqlite.Stmt
-	principals    []*consensus.Principal
-	timeout       time.Duration
+	writer      *bufio.ReadWriter
+	conn        net.Conn
+	sql         *sqlite.Conn
+	session     *sqlite.Session
+	activeStmts map[string]*Query
+	streams     []*sqlite.Stmt
+	principals  []*consensus.Principal
+	timeout     time.Duration
 }
 
 func (s *Socket) Cleanup() {
@@ -116,7 +116,6 @@ func (s *Socket) outputTrailerHeaders() (err error) {
 	}
 	return
 }
-
 
 const ProtoVersion = "1.0"
 

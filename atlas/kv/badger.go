@@ -84,8 +84,8 @@ func (s *BadgerStore) Delete(ctx context.Context, key []byte) error {
 
 func (s *BadgerStore) NewBatch() Batch {
 	return &BadgerBatch{
-		db:      s.db,
-		entries: make([]*badger.Entry, 0),
+		db:         s.db,
+		operations: make([]batchOperation, 0),
 	}
 }
 
@@ -200,47 +200,98 @@ func (t *BadgerTransaction) Discard() {
 	t.txn.Discard()
 }
 
+// batchOperation represents a single operation in a batch
+type batchOperation struct {
+	opType opType
+	key    []byte
+	value  []byte // nil only for delete operations
+}
+
+type opType int
+
+const (
+	opSet opType = iota
+	opDelete
+)
+
 // BadgerBatch implements atomic batch operations
 type BadgerBatch struct {
-	db      *badger.DB
-	entries []*badger.Entry
+	db         *badger.DB
+	operations []batchOperation
 }
 
 func (b *BadgerBatch) Set(key, value []byte) error {
-	b.entries = append(b.entries, &badger.Entry{
-		Key:   key,
-		Value: value,
+	// Copy caller slices to prevent mutations
+	keyCopy := make([]byte, len(key))
+	copy(keyCopy, key)
+	valueCopy := make([]byte, len(value))
+	copy(valueCopy, value)
+
+	b.operations = append(b.operations, batchOperation{
+		opType: opSet,
+		key:    keyCopy,
+		value:  valueCopy,
 	})
 	return nil
 }
 
 func (b *BadgerBatch) Delete(key []byte) error {
-	b.entries = append(b.entries, &badger.Entry{
-		Key: key,
-		// No value means delete
+	// Copy caller slice to prevent mutations
+	keyCopy := make([]byte, len(key))
+	copy(keyCopy, key)
+
+	b.operations = append(b.operations, batchOperation{
+		opType: opDelete,
+		key:    keyCopy,
+		value:  nil, // Explicit nil for delete operations
 	})
 	return nil
 }
 
 func (b *BadgerBatch) Flush() error {
-	return b.db.Update(func(txn *badger.Txn) error {
-		for _, entry := range b.entries {
-			if entry.Value == nil {
-				if err := txn.Delete(entry.Key); err != nil {
+	if len(b.operations) == 0 {
+		return nil
+	}
+
+	// Use WriteBatch for better performance and to avoid ErrTxnTooBig
+	// Split operations into chunks to prevent hitting transaction size limits
+	const maxOpsPerBatch = 1000 // Conservative limit to avoid ErrTxnTooBig
+
+	for i := 0; i < len(b.operations); i += maxOpsPerBatch {
+		end := i + maxOpsPerBatch
+		if end > len(b.operations) {
+			end = len(b.operations)
+		}
+
+		wb := b.db.NewWriteBatch()
+		defer wb.Cancel() // Ensure cleanup even if error occurs
+
+		// Apply operations to this batch chunk
+		for j := i; j < end; j++ {
+			op := b.operations[j]
+			switch op.opType {
+			case opSet:
+				if err := wb.Set(op.key, op.value); err != nil {
 					return err
 				}
-			} else {
-				if err := txn.Set(entry.Key, entry.Value); err != nil {
+			case opDelete:
+				if err := wb.Delete(op.key); err != nil {
 					return err
 				}
 			}
 		}
-		return nil
-	})
+
+		// Flush this chunk
+		if err := wb.Flush(); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (b *BadgerBatch) Reset() {
-	b.entries = b.entries[:0]
+	b.operations = b.operations[:0]
 }
 
 // BadgerTxnBatch implements batch operations within a transaction

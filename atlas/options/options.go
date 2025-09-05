@@ -72,7 +72,7 @@ var CurrentOptions *Options
 
 func init() {
 	developmentMode := os.Getenv("ATLAS_DEVELOPMENT_MODE") == "true"
-	
+
 	CurrentOptions = &Options{
 		DbFilename:                   "atlas.db",
 		MetaFilename:                 "atlas.meta",

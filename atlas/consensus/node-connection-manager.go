@@ -288,6 +288,9 @@ func (ncm *NodeConnectionManager) pingNode(ctx context.Context, node *ManagedNod
 		zap.Int64("node_id", node.Id),
 		zap.String("address", node.GetAddress()))
 
+	// Measure RTT by capturing start time
+	start := time.Now()
+
 	// Send ping request
 	pingReq := &PingRequest{
 		SenderNodeId: options.CurrentOptions.ServerId,
@@ -295,6 +298,8 @@ func (ncm *NodeConnectionManager) pingNode(ctx context.Context, node *ManagedNod
 	}
 
 	response, err := client.Ping(ctx, pingReq)
+	rtt := time.Since(start)
+
 	if err != nil {
 		options.Logger.Debug("Ping failed",
 			zap.Int64("node_id", node.Id),
@@ -307,7 +312,16 @@ func (ncm *NodeConnectionManager) pingNode(ctx context.Context, node *ManagedNod
 		zap.Int64("node_id", node.Id),
 		zap.String("address", node.GetAddress()),
 		zap.Bool("success", response.Success),
-		zap.Int64("responder_id", response.ResponderNodeId))
+		zap.Int64("responder_id", response.ResponderNodeId),
+		zap.Duration("rtt", rtt))
+
+	// Record RTT measurement on successful ping
+	node.AddRTTMeasurement(rtt)
+
+	// Update lastSeen time on successful ping
+	node.mu.Lock()
+	node.lastSeen = time.Now()
+	node.mu.Unlock()
 
 	return nil
 }

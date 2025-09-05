@@ -373,20 +373,26 @@ func (q *defaultQuorumManager) GetQuorum(ctx context.Context, table string) (Quo
 	if err != nil {
 		return nil, err
 	}
-	nodes := q.nodes
+	// Create a shallow copy of q.nodes to avoid mutating the original map
+	nodes := make(map[RegionName][]*QuorumNode)
+	for region, nodeSlice := range q.nodes {
+		nodes[region] = nodeSlice
+	}
+
 	if tableConfig != nil {
 		// allow regions allowed by the table config
 		if len(tableConfig.GetAllowedRegions()) > 0 {
-			nodes = make(map[RegionName][]*QuorumNode)
+			filteredNodes := make(map[RegionName][]*QuorumNode)
 			for _, region := range tableConfig.GetAllowedRegions() {
-				if _, ok := q.nodes[RegionName(region)]; ok {
-					nodes[RegionName(region)] = q.nodes[RegionName(region)]
+				if nodeSlice, ok := nodes[RegionName(region)]; ok {
+					filteredNodes[RegionName(region)] = nodeSlice
 				}
 			}
+			nodes = filteredNodes
 		} else {
 			if len(tableConfig.GetRestrictedRegions()) > 0 {
 				// restrict regions allowed by the table config
-				for region := range q.nodes {
+				for region := range nodes {
 					for _, restricted := range tableConfig.GetRestrictedRegions() {
 						if string(region) == restricted {
 							delete(nodes, region)

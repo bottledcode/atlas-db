@@ -252,37 +252,13 @@ func (ncm *NodeConnectionManager) connectToNode(ctx context.Context, node *Manag
 		zap.String("address", address),
 		zap.Bool("client_nil", client == nil))
 
-	// Test the connection with a ping
-	start := time.Now()
-	if err := ncm.pingNode(ctx, node); err != nil {
-		options.Logger.Info("Ping failed, cleaning up connection",
-			zap.Int64("node_id", node.Id),
-			zap.String("address", address),
-			zap.Error(err))
-
-		node.mu.Lock()
-		if node.closer != nil {
-			node.closer()
-			node.closer = nil
-			node.client = nil
-		}
-		node.mu.Unlock()
-		node.UpdateStatus(NodeStatusFailed)
-		return
-	}
-
-	// Record RTT and mark as active
-	rtt := time.Since(start)
-	node.AddRTTMeasurement(rtt)
+	// Mark as active immediately without testing - health checker will validate later
 	node.UpdateStatus(NodeStatusActive)
-
-	// Add to active nodes list
 	ncm.addToActiveNodes(node)
 
 	options.Logger.Info("Successfully connected to node",
 		zap.Int64("node_id", node.Id),
-		zap.String("address", address),
-		zap.Duration("rtt", rtt))
+		zap.String("address", address))
 }
 
 func (ncm *NodeConnectionManager) pingNode(ctx context.Context, node *ManagedNode) error {

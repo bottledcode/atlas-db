@@ -21,12 +21,13 @@ package consensus
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 
 	"github.com/bottledcode/atlas-db/atlas/kv"
+	"github.com/bottledcode/atlas-db/atlas/options"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type majorityQuorum struct {
@@ -34,16 +35,46 @@ type majorityQuorum struct {
 	q2 []*QuorumNode
 }
 
+func (m *majorityQuorum) CurrentNodeInReplicationQuorum() bool {
+	for _, node := range m.q2 {
+		if node.Id == options.CurrentOptions.ServerId {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *majorityQuorum) CurrentNodeInMigrationQuorum() bool {
+	for _, node := range m.q1 {
+		if node.Id == options.CurrentOptions.ServerId {
+			return true
+		}
+	}
+	return false
+}
+
+var ErrKVPoolNotInitialized = errors.New("KV pool not initialized")
+var ErrMetadataStoreClosed = errors.New("metadata store closed")
+var ErrCannotStealGroupOwnership = errors.New("cannot steal ownership of a table in a group")
+
+type ErrStealTableOwnershipFailed struct {
+	Table *Table
+}
+
+func (e ErrStealTableOwnershipFailed) Error() string {
+	return "failed to steal ownership of table " + e.Table.String()
+}
+
 func (m *majorityQuorum) Gossip(ctx context.Context, in *GossipMigration, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	// Get KV store for metadata operations
 	kvPool := kv.GetPool()
 	if kvPool == nil {
-		return nil, fmt.Errorf("KV pool not initialized")
+		return nil, ErrKVPoolNotInitialized
 	}
 
 	metaStore := kvPool.MetaStore()
 	if metaStore == nil {
-		return nil, fmt.Errorf("metaStore is closed")
+		return nil, ErrMetadataStoreClosed
 	}
 
 	err := SendGossip(ctx, in, metaStore)
@@ -54,58 +85,77 @@ func (m *majorityQuorum) Gossip(ctx context.Context, in *GossipMigration, opts .
 	return &emptypb.Empty{}, nil
 }
 
-func (m *majorityQuorum) StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipResponse, error) {
-	if in.GetTable().GetGroup() != "" {
-		return nil, errors.New("cannot steal ownership of a table in a group")
-	}
-
-	// phase 1a
-	results := make([]*StealTableOwnershipResponse, len(m.q1))
-	errs := make([]error, len(m.q1))
-
+func broadcast[T interface{}, U interface{}](nodes []*QuorumNode, send func(node *QuorumNode) (T, error), coalesce func(T, U) (U, error)) (U, error) {
 	wg := sync.WaitGroup{}
-	wg.Add(len(m.q1))
+	wg.Add(len(nodes))
+	results := make([]T, len(nodes))
+	errs := make([]error, len(nodes))
+	var nextResult U
 
-	for i, node := range m.q1 {
-		go func() {
-			results[i], errs[i] = node.StealTableOwnership(ctx, in)
+	for i, node := range nodes {
+		go func(i int, node *QuorumNode) {
+			results[i], errs[i] = send(node)
 			wg.Done()
-		}()
+		}(i, node)
 	}
 
 	wg.Wait()
-
 	err := joinErrs(errs...)
+	if err != nil {
+		return nextResult, err
+	}
+
+	for _, result := range results {
+		nextResult, err = coalesce(result, nextResult)
+		if err != nil {
+			return nextResult, err
+		}
+	}
+
+	return nextResult, nil
+}
+
+func (m *majorityQuorum) StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipResponse, error) {
+	if in.GetTable().GetGroup() != "" {
+		return nil, ErrCannotStealGroupOwnership
+	}
+
+	missingMigrations := make([]*Migration, 0)
+	highestBallot, err := broadcast(m.q1, func(node *QuorumNode) (*StealTableOwnershipResponse, error) {
+		// phase 1a
+		return node.StealTableOwnership(ctx, in, opts...)
+	}, func(a, b *StealTableOwnershipResponse) (*StealTableOwnershipResponse, error) {
+		// phase 1b
+		if a.Promised {
+			missingMigrations = append(missingMigrations, a.GetSuccess().MissingMigrations...)
+			return b, nil
+		}
+
+		if a.GetFailure().GetTable().GetVersion() >= in.GetTable().GetVersion() {
+			if b != nil && b.GetFailure().GetTable().GetVersion() >= a.GetFailure().GetTable().GetVersion() {
+				return b, nil
+			}
+
+			return a, nil
+		}
+
+		return b, nil
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	// phase 1b
-	missingMigrations := make([]*Migration, 0)
-	highestBallot := in.GetTable()
-	for _, result := range results {
-		if result != nil && result.Promised {
-			missingMigrations = append(missingMigrations, result.GetSuccess().MissingMigrations...)
-		}
-		// if there is a failure, it is due to a low ballot, so we need to increase the ballot and try again
-		if result != nil && !result.Promised {
-			if result.GetFailure().GetTable().GetVersion() >= highestBallot.GetVersion() {
-				highestBallot = result.GetFailure().GetTable()
-			}
-		}
-	}
-	if highestBallot != in.GetTable() {
+	if highestBallot != nil {
 		return &StealTableOwnershipResponse{
 			Promised: false,
 			Response: &StealTableOwnershipResponse_Failure{
 				Failure: &StealTableOwnershipFailure{
-					Table: highestBallot,
+					Table: highestBallot.GetFailure().GetTable(),
 				},
 			},
 		}, nil
 	}
 
-	// we have a majority, so we are the leader
 	return &StealTableOwnershipResponse{
 		Promised: true,
 		Response: &StealTableOwnershipResponse_Success{
@@ -132,63 +182,33 @@ func joinErrs(e ...error) error {
 }
 
 func (m *majorityQuorum) WriteMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*WriteMigrationResponse, error) {
-	// phase 2a
-	results := make([]*WriteMigrationResponse, len(m.q2))
-	errs := make([]error, len(m.q2))
-	wg := sync.WaitGroup{}
-	wg.Add(len(m.q2))
-	for i, node := range m.q2 {
-		go func() {
-			results[i], errs[i] = node.WriteMigration(ctx, in)
-			wg.Done()
-		}()
-	}
+	failed, err := broadcast(m.q2, func(node *QuorumNode) (*WriteMigrationResponse, error) {
+		// phase 2a
+		return node.WriteMigration(ctx, in, opts...)
+	}, func(a *WriteMigrationResponse, b bool) (bool, error) {
+		// phase 2b
+		if a.GetSuccess() {
+			return b, nil
+		}
 
-	wg.Wait()
-
-	err := joinErrs(errs...)
+		return true, nil
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	// phase 2b
-	for _, result := range results {
-		if result != nil && !result.GetSuccess() {
-			return result, nil
-		}
-	}
-
-	Ownership.Add(in.GetMigration().GetVersion().GetTableName(), in.GetMigration().GetVersion().GetTableVersion())
-
 	return &WriteMigrationResponse{
-		Success: true,
+		Success: !failed,
 	}, nil
 }
 
 func (m *majorityQuorum) AcceptMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	// phase 3
-	errs := make([]error, len(m.q2))
-
-	wg := sync.WaitGroup{}
-	wg.Add(len(m.q2))
-
-	for i, node := range m.q2 {
-		go func() {
-			_, errs[i] = node.AcceptMigration(ctx, in)
-			wg.Done()
-		}()
-	}
-
-	wg.Wait()
-
-	err := joinErrs(errs...)
-	if err != nil {
-		return nil, err
-	}
-
-	Ownership.Commit(in.GetMigration().GetVersion().GetTableName(), in.GetMigration().GetVersion().GetTableVersion())
-
-	return &emptypb.Empty{}, nil
+	return broadcast(m.q2, func(node *QuorumNode) (*emptypb.Empty, error) {
+		// phase 3
+		return node.AcceptMigration(ctx, in, opts...)
+	}, func(a *emptypb.Empty, b *emptypb.Empty) (*emptypb.Empty, error) {
+		return a, nil
+	})
 }
 
 func (m *majorityQuorum) JoinCluster(ctx context.Context, in *Node, opts ...grpc.CallOption) (*JoinClusterResponse, error) {
@@ -200,9 +220,192 @@ func (m *majorityQuorum) Ping(ctx context.Context, in *PingRequest, opts ...grpc
 }
 
 func (m *majorityQuorum) ReadKey(ctx context.Context, in *ReadKeyRequest, opts ...grpc.CallOption) (*ReadKeyResponse, error) {
-	return nil, errors.New("no quorum needed to read key")
+	tr := NewTableRepositoryKV(ctx, kv.GetPool().MetaStore())
+	nr := NewNodeRepositoryKV(ctx, kv.GetPool().MetaStore())
+
+	currentNode, err := nr.GetNodeById(options.CurrentOptions.ServerId)
+	if err != nil {
+		return nil, err
+	}
+
+	table, err := tr.GetTable(in.GetTable())
+	if err != nil {
+		return nil, err
+	}
+
+	if table != nil && table.Owner.GetId() == currentNode.GetId() {
+		// we are the owner
+		s := Server{}
+		return s.ReadKey(ctx, in)
+	}
+
+	if table == nil {
+		table = &Table{
+			Name:              in.Table,
+			ReplicationLevel:  ReplicationLevel_global,
+			Owner:             currentNode,
+			CreatedAt:         timestamppb.Now(),
+			Version:           -1,
+			AllowedRegions:    []string{},
+			RestrictedRegions: []string{},
+			Group:             "",
+			Type:              TableType_table,
+		}
+	}
+
+	p1r := &StealTableOwnershipRequest{
+		Sender: currentNode,
+		Reason: StealReason_queryReason,
+		Table:  table,
+	}
+
+	phase1, err := m.StealTableOwnership(ctx, p1r, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if phase1.Promised {
+		return nil, ErrStealTableOwnershipFailed{Table: phase1.GetSuccess().GetTable()}
+	}
+
+	owner := phase1.GetFailure().GetTable().GetOwner()
+	qm := GetDefaultQuorumManager(ctx)
+	resp, err := qm.Send(owner, func(node *QuorumNode) (interface{}, error) {
+		return node.ReadKey(ctx, in, opts...)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resp != nil {
+		return resp.(*ReadKeyResponse), nil
+	}
+
+	return nil, errors.New("no owner found")
+}
+
+func upsertTable(ctx context.Context, tr TableRepository, table *Table) error {
+	err := tr.InsertTable(table)
+	if err != nil {
+		err = tr.UpdateTable(table)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error) {
-	return nil, errors.New("no quorum needed to write key")
+	tr := NewTableRepositoryKV(ctx, kv.GetPool().MetaStore())
+	nr := NewNodeRepositoryKV(ctx, kv.GetPool().MetaStore())
+
+	currentNode, err := nr.GetNodeById(options.CurrentOptions.ServerId)
+	if err != nil {
+		return nil, err
+	}
+
+	table, err := tr.GetTable(in.GetTable())
+	if err != nil {
+		return nil, err
+	}
+	if table == nil {
+		table = &Table{
+			Name:              in.Table,
+			ReplicationLevel:  ReplicationLevel_global,
+			Owner:             currentNode,
+			CreatedAt:         timestamppb.Now(),
+			Version:           1,
+			AllowedRegions:    []string{},
+			RestrictedRegions: []string{},
+			Group:             "",
+			Type:              TableType_table,
+			ShardPrincipals:   []string{},
+		}
+	}
+
+	table.Owner = currentNode
+	table.Version++
+
+	p1r := &StealTableOwnershipRequest{
+		Sender: currentNode,
+		Reason: StealReason_writeReason,
+		Table:  table,
+	}
+
+	phase1, err := m.StealTableOwnership(ctx, p1r, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if !phase1.Promised {
+		table = phase1.GetFailure().GetTable()
+		// we are not the leader, so update our tr with the new table information
+		err = upsertTable(ctx, tr, table)
+		if err != nil {
+			return nil, err
+		}
+		return nil, ErrStealTableOwnershipFailed{Table: table}
+	}
+
+	// we are promised the table, but we may be missing migrations
+	err = upsertTable(ctx, tr, table)
+	if err != nil {
+		return nil, err
+	}
+
+	s := Server{}
+	for _, migration := range phase1.GetSuccess().GetMissingMigrations() {
+		_, err = s.AcceptMigration(ctx, &WriteMigrationRequest{
+			Sender:    currentNode,
+			Migration: migration,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	mr := NewMigrationRepositoryKV(ctx, kv.GetPool().MetaStore())
+	version, err := mr.GetNextVersion(in.Key)
+	if err != nil {
+		return nil, err
+	}
+
+	// we have completed phase 1, now we move on to phase 2
+	p2r := &WriteMigrationRequest{
+		Sender: currentNode,
+		Migration: &Migration{
+			Version: &MigrationVersion{
+				TableVersion:     table.GetVersion(),
+				MigrationVersion: version,
+				NodeId:           currentNode.GetId(),
+				TableName:        in.Key,
+			},
+			Migration: &Migration_Data{
+				Data: &DataMigration{
+					Time: timestamppb.Now(),
+					Session: &DataMigration_Change{
+						Change: &KVChange{
+							Operation: &KVChange_Set{
+								Set: &SetChange{
+									Key:   []byte(in.Key),
+									Value: in.Value,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	p2, err := m.WriteMigration(ctx, p2r, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if !p2.Success {
+		return nil, ErrStealTableOwnershipFailed{Table: p2.GetTable()}
+	}
+
+	_, err = m.AcceptMigration(ctx, p2r, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	return &WriteKeyResponse{Success: true}, nil
 }

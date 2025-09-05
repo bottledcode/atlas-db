@@ -82,17 +82,21 @@ message KVChange {
 }
 
 message DataMigration {
+  google.protobuf.Timestamp time = 3;
   oneof session {
     RawData rawData = 1;
     KVChange change = 2;
   }
 }
 
+message NilMigration {}
+
 message Migration {
   MigrationVersion version = 1; // The version of the migration
   oneof migration {
     SchemaMigration schema = 2; // The schema migration
     DataMigration data = 3; // The data migration
+    NilMigration none = 4; // Represents a read
   }
 }
 
@@ -159,8 +163,8 @@ message StealTableOwnershipSuccess {
 }
 
 enum StealReason {
-  queryReason = 0; // The table was stolen due to a query
-  schemaReason = 1; // The table was stolen due to a schema change
+  queryReason = 0; // The table was stolen due to a readonly
+  writeReason = 1; // The table was stolen due to a write
 }
 
 message StealTableOwnershipRequest {

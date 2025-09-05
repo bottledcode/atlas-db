@@ -382,7 +382,7 @@ func TestHealthChecker_NodeFailureHandling(t *testing.T) {
 	assert.Len(t, activeNodes, 0)
 
 	// Simulate recovery
-	healthChecker.handleNodeSuccess(managedNode, 15*time.Millisecond)
+	healthChecker.handleNodeSuccess(ctx, managedNode, 15*time.Millisecond)
 	assert.Equal(t, NodeStatusActive, managedNode.GetStatus())
 
 	// Verify node added back to active list

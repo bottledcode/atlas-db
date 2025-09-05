@@ -61,6 +61,16 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 		return nil, err
 	}
 
+	if existingTable == nil && req.GetReason() == StealReason_queryReason {
+		return &StealTableOwnershipResponse{
+			Promised: false,
+			Response: &StealTableOwnershipResponse_Failure{
+				Failure: &StealTableOwnershipFailure{
+					Table: req.Table,
+				},
+			},
+		}, nil
+	}
 	if existingTable == nil {
 		// this is a new table...
 		err = tr.InsertTable(req.GetTable())
@@ -89,6 +99,17 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 				Success: &StealTableOwnershipSuccess{
 					Table:             req.Table,
 					MissingMigrations: make([]*Migration, 0),
+				},
+			},
+		}, nil
+	}
+
+	if req.GetReason() == StealReason_queryReason {
+		return &StealTableOwnershipResponse{
+			Promised: false,
+			Response: &StealTableOwnershipResponse_Failure{
+				Failure: &StealTableOwnershipFailure{
+					Table: existingTable,
 				},
 			},
 		}, nil
@@ -179,7 +200,6 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 }
 
 func (s *Server) stealTableOperation(tr TableRepository, mr MigrationRepository, table *Table) ([]*Migration, error) {
-	Ownership.Remove(table.GetName())
 	err := tr.UpdateTable(table)
 	if err != nil {
 		return nil, err
@@ -287,8 +307,6 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 	if err != nil {
 		return nil, err
 	}
-
-	Ownership.Commit(req.GetMigration().GetVersion().GetTableName(), req.GetMigration().GetVersion().GetTableVersion())
 
 	return &emptypb.Empty{}, nil
 }
@@ -963,7 +981,7 @@ func (s *Server) WriteKey(ctx context.Context, req *WriteKeyRequest) (*WriteKeyR
 	// Attempt to steal table ownership to confirm leadership
 	tableOwnership, err := quorum.StealTableOwnership(ctx, &StealTableOwnershipRequest{
 		Sender: currentNode,
-		Reason: StealReason_queryReason,
+		Reason: StealReason_writeReason,
 		Table:  table,
 	})
 	if err != nil {

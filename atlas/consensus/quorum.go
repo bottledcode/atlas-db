@@ -39,6 +39,7 @@ type QuorumManager interface {
 	GetQuorum(ctx context.Context, table string) (Quorum, error)
 	AddNode(ctx context.Context, node *Node) error
 	RemoveNode(nodeID int64) error
+	Send(node *Node, do func(quorumNode *QuorumNode) (interface{}, error)) (interface{},error)
 }
 
 var manager *defaultQuorumManager
@@ -63,6 +64,19 @@ type defaultQuorumManager struct {
 	connectionManager *NodeConnectionManager
 }
 
+func (q *defaultQuorumManager) Send(node *Node, do func(quorumNode *QuorumNode) (interface{}, error)) (interface{},error) {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+
+	for _, n := range q.nodes[RegionName(node.GetRegion().GetName())] {
+		if n.GetId() == node.GetId() {
+			return do(n)
+		}
+	}
+
+	return nil, nil
+}
+
 func (q *defaultQuorumManager) AddNode(ctx context.Context, node *Node) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -77,16 +91,21 @@ func (q *defaultQuorumManager) AddNode(ctx context.Context, node *Node) error {
 		client: nil,
 	}
 
+	// prevent duplication
+	for _, n := range q.nodes[RegionName(node.GetRegion().GetName())] {
+		if n.GetId() == node.GetId() {
+			return nil
+		}
+	}
+
 	// special handling for self
 	if node.GetId() == options.CurrentOptions.ServerId {
 		q.nodes[RegionName(node.GetRegion().GetName())] = append(q.nodes[RegionName(node.GetRegion().GetName())], qn)
 		return nil
 	}
 
-	_, err := qn.JoinCluster(ctx, node)
-	if err == nil {
-		q.nodes[RegionName(node.GetRegion().GetName())] = append(q.nodes[RegionName(node.GetRegion().GetName())], qn)
-	}
+	_, _ = qn.JoinCluster(ctx, node)
+	q.nodes[RegionName(node.GetRegion().GetName())] = append(q.nodes[RegionName(node.GetRegion().GetName())], qn)
 
 	// Also add to the connection manager for health monitoring
 	if q.connectionManager != nil {
@@ -133,6 +152,8 @@ func (q *defaultQuorumManager) RemoveNode(nodeID int64) error {
 
 type Quorum interface {
 	ConsensusClient
+	CurrentNodeInReplicationQuorum() bool
+	CurrentNodeInMigrationQuorum() bool
 }
 
 type QuorumNode struct {
@@ -352,26 +373,24 @@ func (q *defaultQuorumManager) GetQuorum(ctx context.Context, table string) (Quo
 	if err != nil {
 		return nil, err
 	}
-	if tableConfig == nil {
-		return nil, errors.New("table not found")
-	}
-
-	// allow regions allowed by the table config
-	nodes := make(map[RegionName][]*QuorumNode)
-	if len(tableConfig.GetAllowedRegions()) > 0 {
-		for _, region := range tableConfig.GetAllowedRegions() {
-			if _, ok := q.nodes[RegionName(region)]; ok {
-				nodes[RegionName(region)] = q.nodes[RegionName(region)]
+	nodes := q.nodes
+	if tableConfig != nil {
+		// allow regions allowed by the table config
+		if len(tableConfig.GetAllowedRegions()) > 0 {
+			nodes = make(map[RegionName][]*QuorumNode)
+			for _, region := range tableConfig.GetAllowedRegions() {
+				if _, ok := q.nodes[RegionName(region)]; ok {
+					nodes[RegionName(region)] = q.nodes[RegionName(region)]
+				}
 			}
-		}
-	} else {
-		nodes = q.nodes
-		if len(tableConfig.GetRestrictedRegions()) > 0 {
-			// restrict regions allowed by the table config
-			for region := range q.nodes {
-				for _, restricted := range tableConfig.GetRestrictedRegions() {
-					if string(region) == restricted {
-						delete(nodes, region)
+		} else {
+			if len(tableConfig.GetRestrictedRegions()) > 0 {
+				// restrict regions allowed by the table config
+				for region := range q.nodes {
+					for _, restricted := range tableConfig.GetRestrictedRegions() {
+						if string(region) == restricted {
+							delete(nodes, region)
+						}
 					}
 				}
 			}
@@ -502,18 +521,16 @@ func (q *defaultQuorumManager) filterHealthyNodes(nodes map[RegionName][]*Quorum
 
 	for region, quorumNodes := range nodes {
 		activeInRegion, hasActiveNodes := activeNodes[string(region)]
-		if !hasActiveNodes {
-			// No active nodes in this region
-			continue
-		}
 
 		// Create a map of active node IDs for quick lookup
 		activeNodeIDs := make(map[int64]bool)
-		for _, activeNode := range activeInRegion {
-			activeNodeIDs[activeNode.Id] = true
+		if hasActiveNodes {
+			for _, activeNode := range activeInRegion {
+				activeNodeIDs[activeNode.Id] = true
+			}
 		}
 
-		// Filter quorum nodes to only include active ones
+		// Filter quorum nodes to only include active ones or the current node
 		var healthyNodes []*QuorumNode
 		for _, qn := range quorumNodes {
 			if activeNodeIDs[qn.Id] || qn.Id == options.CurrentOptions.ServerId {
@@ -521,6 +538,7 @@ func (q *defaultQuorumManager) filterHealthyNodes(nodes map[RegionName][]*Quorum
 			}
 		}
 
+		// Always include regions that have the current node, even if no other nodes are active
 		if len(healthyNodes) > 0 {
 			filteredNodes[region] = healthyNodes
 		}

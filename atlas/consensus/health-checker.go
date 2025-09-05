@@ -168,7 +168,7 @@ func (hc *HealthChecker) checkNode(ctx context.Context, node *ManagedNode) {
 			zap.Int64("node_id", node.Id),
 			zap.String("address", node.GetAddress()),
 			zap.Duration("rtt", rtt))
-		hc.handleNodeSuccess(node, rtt)
+		hc.handleNodeSuccess(ctx, node, rtt)
 	}
 }
 
@@ -215,7 +215,7 @@ func (hc *HealthChecker) handleNodeFailure(ctx context.Context, node *ManagedNod
 	}
 }
 
-func (hc *HealthChecker) handleNodeSuccess(node *ManagedNode, rtt time.Duration) {
+func (hc *HealthChecker) handleNodeSuccess(ctx context.Context, node *ManagedNode, rtt time.Duration) {
 	currentStatus := node.GetStatus()
 
 	// Record RTT measurement
@@ -234,6 +234,21 @@ func (hc *HealthChecker) handleNodeSuccess(node *ManagedNode, rtt time.Duration)
 
 		node.UpdateStatus(NodeStatusActive)
 		hc.manager.addToActiveNodes(node)
+
+		// Re-add the node to quorum manager if it was previously removed due to failures
+		quorumManager := GetDefaultQuorumManager(ctx)
+		if quorumManager != nil {
+			err := quorumManager.AddNode(ctx, node.Node)
+			if err != nil {
+				options.Logger.Warn("Failed to re-add recovered node to quorum manager",
+					zap.Int64("node_id", node.Id),
+					zap.Error(err))
+			} else {
+				options.Logger.Info("Successfully re-added recovered node to quorum manager",
+					zap.Int64("node_id", node.Id),
+					zap.String("address", node.GetAddress()))
+			}
+		}
 	}
 }
 

@@ -86,13 +86,13 @@ func JoinCluster(ctx context.Context) error {
 		zap.Int64("next_node_id", nextID),
 		zap.String("owner_address", nodeTable.GetOwner().GetAddress()))
 
+	options.CurrentOptions.ServerId = nextID
+
 	// Contact the cluster to request membership
 	err = requestClusterMembership(ctx, nodeTable, nextID)
 	if err != nil {
 		return fmt.Errorf("failed to request cluster membership: %w", err)
 	}
-
-	options.CurrentOptions.ServerId = nextID
 
 	// Load all nodes into quorum manager for future consensus operations
 	err = loadNodesIntoQuorumManager(ctx)
@@ -218,8 +218,26 @@ func requestClusterMembership(ctx context.Context, nodeTable *consensus.Table, n
 
 	options.Logger.Info("Cluster membership request accepted", zap.Int64("assigned_node_id", result.GetNodeId()))
 
-	// Now that we're successfully part of the cluster, add ourselves to the active nodes list
-	// so that we can participate in quorum formation
+	// Now that we're successfully part of the cluster, add ourselves to our local repository
+	// so that we can participate in consensus and KV operations
+	kvPool := kv.GetPool()
+	if kvPool != nil {
+		metaStore := kvPool.MetaStore()
+		if metaStore != nil {
+			nodeRepo := consensus.NewNodeRepositoryKV(ctx, metaStore)
+			if kvRepo, ok := nodeRepo.(*consensus.NodeRepositoryKV); ok {
+				err = kvRepo.AddNode(newNode)
+				if err != nil {
+					options.Logger.Warn("Failed to add self to local node repository after successful join", zap.Error(err))
+					// Don't fail the entire join process for this
+				} else {
+					options.Logger.Info("Successfully added self to local node repository")
+				}
+			}
+		}
+	}
+
+	// Add ourselves to quorum manager and connection manager for immediate participation
 	connectionManager := consensus.GetNodeConnectionManager(ctx)
 	if connectionManager != nil {
 		quorumManager := consensus.GetDefaultQuorumManager(ctx)

@@ -20,7 +20,6 @@ package consensus
 
 import (
 	"context"
-	"crypto/tls"
 
 	"github.com/bottledcode/atlas-db/atlas/options"
 	"google.golang.org/grpc"
@@ -29,8 +28,9 @@ import (
 )
 
 func getNewClient(url string) (ConsensusClient, func(), error) {
-	tlsConfig := &tls.Config{
-		InsecureSkipVerify: true,
+	tlsConfig, err := options.GetTLSConfig("https://" + url)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	creds := credentials.NewTLS(tlsConfig)

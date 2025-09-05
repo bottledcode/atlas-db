@@ -21,7 +21,6 @@ package bootstrap
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
 
@@ -175,8 +174,9 @@ func requestClusterMembership(ctx context.Context, nodeTable *consensus.Table, n
 
 	options.Logger.Info("Contacting cluster owner for membership", zap.String("url", url))
 
-	tlsConfig := &tls.Config{
-		InsecureSkipVerify: true,
+	tlsConfig, err := options.GetTLSConfig("https://" + url)
+	if err != nil {
+		return fmt.Errorf("failed to create TLS config: %w", err)
 	}
 	creds := credentials.NewTLS(tlsConfig)
 
@@ -393,8 +393,9 @@ func InitializeMaybe(ctx context.Context) error {
 func DoBootstrap(ctx context.Context, url string, dataPath string, metaPath string) error {
 	options.Logger.Info("Connecting to bootstrap server for database state transfer", zap.String("url", url))
 
-	tlsConfig := &tls.Config{
-		InsecureSkipVerify: true,
+	tlsConfig, err := options.GetTLSConfig("https://" + url)
+	if err != nil {
+		return fmt.Errorf("failed to create TLS config: %w", err)
 	}
 
 	creds := credentials.NewTLS(tlsConfig)

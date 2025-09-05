@@ -198,6 +198,19 @@ func (m *Module) UnmarshalCaddyfile(d *caddyfile.Dispenser) (err error) {
 					return d.ArgErr()
 				}
 				options.CurrentOptions.SocketPath = path
+			case "development_mode":
+				var mode string
+				if !d.Args(&mode) {
+					return d.ArgErr()
+				}
+				switch mode {
+				case "true", "on", "yes":
+					options.CurrentOptions.DevelopmentMode = true
+				case "false", "off", "no":
+					options.CurrentOptions.DevelopmentMode = false
+				default:
+					return d.Errf("development_mode must be true/false, on/off, or yes/no, got: %s", mode)
+				}
 			default:
 				return d.Errf("unknown option: %s", d.Val())
 			}

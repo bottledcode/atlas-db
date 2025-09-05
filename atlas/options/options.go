@@ -19,6 +19,7 @@
 package options
 
 import (
+	"os"
 	"sync"
 
 	"go.uber.org/zap"
@@ -37,6 +38,7 @@ type Options struct {
 	AdvertisePort                uint
 	ApiKey                       string
 	SocketPath                   string
+	DevelopmentMode              bool
 	toleratedZoneFailures        int64
 	toleratedNodePerZoneFailures int64
 	mu                           sync.RWMutex
@@ -69,6 +71,8 @@ func (o *Options) SetFz(fz int64) {
 var CurrentOptions *Options
 
 func init() {
+	developmentMode := os.Getenv("ATLAS_DEVELOPMENT_MODE") == "true"
+	
 	CurrentOptions = &Options{
 		DbFilename:                   "atlas.db",
 		MetaFilename:                 "atlas.meta",
@@ -79,6 +83,7 @@ func init() {
 		AdvertiseAddress:             "localhost",
 		AdvertisePort:                8080,
 		SocketPath:                   "atlas.sock",
+		DevelopmentMode:              developmentMode,
 		toleratedZoneFailures:        1,
 		toleratedNodePerZoneFailures: 1,
 	}

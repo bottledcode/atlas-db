@@ -374,7 +374,7 @@ func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts
 				TableVersion:     table.GetVersion(),
 				MigrationVersion: version,
 				NodeId:           currentNode.GetId(),
-				TableName:        in.Key,
+				TableName:        in.Table,
 			},
 			Migration: &Migration_Data{
 				Data: &DataMigration{

@@ -176,8 +176,7 @@ func (t *BadgerTransaction) NewIterator(opts IteratorOptions) Iterator {
 }
 
 func (t *BadgerTransaction) Begin(writable bool) (Transaction, error) {
-	// Nested transactions not supported, return self
-	return t, nil
+	return nil, ErrNestedTransaction
 }
 
 func (t *BadgerTransaction) Close() error {

@@ -94,8 +94,17 @@ type IteratorOptions struct {
 // ErrKeyNotFound is returned when a key doesn't exist
 var ErrKeyNotFound = &KeyNotFoundError{}
 
+// ErrNestedTransaction is returned when attempting to create nested transactions
+var ErrNestedTransaction = &NestedTransactionError{}
+
 type KeyNotFoundError struct{}
 
 func (e *KeyNotFoundError) Error() string {
 	return "key not found"
+}
+
+type NestedTransactionError struct{}
+
+func (e *NestedTransactionError) Error() string {
+	return "nested transactions are not supported"
 }

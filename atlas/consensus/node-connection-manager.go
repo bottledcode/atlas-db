@@ -67,10 +67,11 @@ func (m *ManagedNode) UpdateStatus(status NodeStatus) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.status = status
-	if status == NodeStatusActive {
+	switch status {
+	case NodeStatusActive:
 		m.lastSeen = time.Now()
 		m.failures = 0
-	} else if status == NodeStatusFailed {
+	case NodeStatusFailed:
 		m.failures++
 	}
 }
@@ -185,7 +186,7 @@ func GetNodeConnectionManager(ctx context.Context) *NodeConnectionManager {
 }
 
 func (ncm *NodeConnectionManager) loadNodesFromStorage(ctx context.Context) {
-	ncm.storage.Iterate(func(node *Node) error {
+	_ = ncm.storage.Iterate(func(node *Node) error {
 		managedNode := &ManagedNode{
 			Node:       node,
 			status:     NodeStatusUnknown,
@@ -230,7 +231,7 @@ func (ncm *NodeConnectionManager) connectToNode(ctx context.Context, node *Manag
 		zap.Int64("node_id", node.Id),
 		zap.String("address", address))
 
-	client, err, closer := getNewClient(address)
+	client, closer, err := getNewClient(address)
 	if err != nil {
 		options.Logger.Error("Failed to establish gRPC connection to node",
 			zap.Int64("node_id", node.Id),

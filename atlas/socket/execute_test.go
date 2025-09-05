@@ -53,7 +53,7 @@ func TestExecute_Handle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open SQLite connection: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	existing := conn.Prep("SELECT 1")
 	defer func() {

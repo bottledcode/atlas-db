@@ -52,7 +52,7 @@ func TestPrepare_Handle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open SQLite connection: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	s := &Socket{
 		sql:         conn,
@@ -72,7 +72,7 @@ func TestPrepare_Handle(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.prepare.Handle(s)
 			if tt.wantErr {
-				assert.ErrorIs(t, err, FatalErr)
+				assert.ErrorIs(t, err, ErrFatal)
 			}
 		})
 	}

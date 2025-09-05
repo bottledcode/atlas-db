@@ -109,7 +109,7 @@ func (q *defaultQuorumManager) AddNode(ctx context.Context, node *Node) error {
 
 	// Also add to the connection manager for health monitoring
 	if q.connectionManager != nil {
-		q.connectionManager.AddNode(ctx, node)
+		_ = q.connectionManager.AddNode(ctx, node)
 	}
 
 	return nil
@@ -165,7 +165,7 @@ type QuorumNode struct {
 func (q *QuorumNode) StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipResponse, error) {
 	var err error
 	if q.client == nil {
-		q.client, err, q.closer = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
 		if err != nil {
 			return nil, err
 		}
@@ -176,7 +176,7 @@ func (q *QuorumNode) StealTableOwnership(ctx context.Context, in *StealTableOwne
 func (q *QuorumNode) WriteMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*WriteMigrationResponse, error) {
 	var err error
 	if q.client == nil {
-		q.client, err, q.closer = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
 		if err != nil {
 			return nil, err
 		}
@@ -187,7 +187,7 @@ func (q *QuorumNode) WriteMigration(ctx context.Context, in *WriteMigrationReque
 func (q *QuorumNode) AcceptMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	var err error
 	if q.client == nil {
-		q.client, err, q.closer = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
 		if err != nil {
 			return nil, err
 		}
@@ -198,7 +198,7 @@ func (q *QuorumNode) AcceptMigration(ctx context.Context, in *WriteMigrationRequ
 func (q *QuorumNode) JoinCluster(ctx context.Context, in *Node, opts ...grpc.CallOption) (*JoinClusterResponse, error) {
 	var err error
 	if q.client == nil {
-		q.client, err, q.closer = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
 		if err != nil {
 			return nil, err
 		}
@@ -209,7 +209,7 @@ func (q *QuorumNode) JoinCluster(ctx context.Context, in *Node, opts ...grpc.Cal
 func (q *QuorumNode) Gossip(ctx context.Context, in *GossipMigration, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	var err error
 	if q.client == nil {
-		q.client, err, q.closer = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
 		if err != nil {
 			return nil, err
 		}
@@ -220,7 +220,7 @@ func (q *QuorumNode) Gossip(ctx context.Context, in *GossipMigration, opts ...gr
 func (q *QuorumNode) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
 	var err error
 	if q.client == nil {
-		q.client, err, q.closer = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
 		if err != nil {
 			return nil, err
 		}
@@ -231,7 +231,7 @@ func (q *QuorumNode) Ping(ctx context.Context, in *PingRequest, opts ...grpc.Cal
 func (q *QuorumNode) ReadKey(ctx context.Context, in *ReadKeyRequest, opts ...grpc.CallOption) (*ReadKeyResponse, error) {
 	var err error
 	if q.client == nil {
-		q.client, err, q.closer = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
 		if err != nil {
 			return nil, err
 		}
@@ -242,7 +242,7 @@ func (q *QuorumNode) ReadKey(ctx context.Context, in *ReadKeyRequest, opts ...gr
 func (q *QuorumNode) WriteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error) {
 	var err error
 	if q.client == nil {
-		q.client, err, q.closer = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
 		if err != nil {
 			return nil, err
 		}

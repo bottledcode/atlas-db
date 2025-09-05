@@ -28,10 +28,10 @@ import (
 func GetTempDb(t *testing.T) (string, func()) {
 	f, err := os.CreateTemp("", "initialize-maybe*")
 	require.NoError(t, err)
-	f.Close()
+	_ = f.Close()
 	return f.Name(), func() {
-		os.Remove(f.Name())
-		os.Remove(f.Name() + "-wal")
-		os.Remove(f.Name() + "-shm")
+		_ = os.Remove(f.Name())
+		_ = os.Remove(f.Name() + "-wal")
+		_ = os.Remove(f.Name() + "-shm")
 	}
 }

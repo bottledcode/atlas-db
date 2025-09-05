@@ -41,7 +41,6 @@ type Socket struct {
 	writer        *bufio.ReadWriter
 	conn          net.Conn
 	sql           *sqlite.Conn
-	inTransaction bool
 	session       *sqlite.Session
 	activeStmts   map[string]*Query
 	streams       []*sqlite.Stmt
@@ -118,32 +117,15 @@ func (s *Socket) outputTrailerHeaders() (err error) {
 	return
 }
 
-func (s *Socket) outputMetaHeaders(stmt *sqlite.Stmt) (err error) {
-	// output metadata
-	columns := stmt.ColumnCount()
-	err = s.writeMessage("META COLUMN_COUNT " + strconv.Itoa(columns))
-	if err != nil {
-		return
-	}
-	for i := range columns {
-		name := stmt.ColumnName(i)
-		err = s.writeMessage("META COLUMN_NAME " + strconv.Itoa(i) + " " + name)
-		if err != nil {
-			return
-		}
-	}
-
-	return nil
-}
 
 const ProtoVersion = "1.0"
 
 var ServerVersion = "Chronalys/1.0"
 
-var FatalErr = errors.New("fatal error")
+var ErrFatal = errors.New("fatal error")
 
 func makeFatal(err error) error {
-	return fmt.Errorf("%w: %v", FatalErr, err)
+	return fmt.Errorf("%w: %v", ErrFatal, err)
 }
 
 func (s *Socket) setTimeout(t time.Duration) error {

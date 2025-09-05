@@ -701,7 +701,7 @@ func SendGossip(ctx context.Context, req *GossipMigration, kvStore kv.Store) err
 		go func(i int) {
 			defer wg.Done()
 
-			client, err, closer := getNewClient(fmt.Sprintf("%s:%d", node.GetAddress(), node.GetPort()))
+			client, closer, err := getNewClient(fmt.Sprintf("%s:%d", node.GetAddress(), node.GetPort()))
 			if err != nil {
 				errs[i] = err
 			}
@@ -785,7 +785,7 @@ func (s *Server) Ping(ctx context.Context, req *PingRequest) (*PingResponse, err
 			nodeRepo := connectionManager.storage
 			if nodeRepo != nil {
 				var discoveredNode *Node
-				nodeRepo.Iterate(func(node *Node) error {
+				_ = nodeRepo.Iterate(func(node *Node) error {
 					if node.Id == req.SenderNodeId {
 						discoveredNode = node
 						return nil // found it, stop iterating

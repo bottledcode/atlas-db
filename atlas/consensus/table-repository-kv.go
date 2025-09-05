@@ -317,7 +317,7 @@ func (r *TableRepositoryKV) GetGroup(name string) (*TableGroup, error) {
 		Prefix:         prefix,
 		PrefetchValues: true,
 	})
-	defer iterator.Close()
+	defer func() { _ = iterator.Close() }()
 
 	for iterator.Rewind(); iterator.Valid(); iterator.Next() {
 		item := iterator.Item()
@@ -441,7 +441,7 @@ func (r *TableRepositoryKV) GetTablesByReplicationLevel(level ReplicationLevel) 
 		Prefix:         prefix,
 		PrefetchValues: true,
 	})
-	defer iterator.Close()
+	defer func() { _ = iterator.Close() }()
 
 	var tables []*Table
 	for iterator.Rewind(); iterator.Valid(); iterator.Next() {
@@ -479,7 +479,7 @@ func (r *TableRepositoryKV) GetTablesOwnedByNode(nodeID int64) ([]*Table, error)
 		Prefix:         prefix,
 		PrefetchValues: true,
 	})
-	defer iterator.Close()
+	defer func() { _ = iterator.Close() }()
 
 	var tables []*Table
 	for iterator.Rewind(); iterator.Valid(); iterator.Next() {

@@ -152,7 +152,7 @@ func (n *NodeRepositoryKV) GetNodesByRegion(region string) ([]*Node, error) {
 		Prefix:         prefix,
 		PrefetchValues: true,
 	})
-	defer iterator.Close()
+	defer func() { _ = iterator.Close() }()
 
 	var nodes []*Node
 
@@ -197,7 +197,7 @@ func (n *NodeRepositoryKV) GetRegions() ([]*Region, error) {
 		Prefix:         prefix,
 		PrefetchValues: false,
 	})
-	defer iterator.Close()
+	defer func() { _ = iterator.Close() }()
 
 	regionMap := make(map[string]bool)
 
@@ -236,7 +236,7 @@ func (n *NodeRepositoryKV) Iterate(fn func(*Node) error) error {
 		Prefix:         prefix,
 		PrefetchValues: true,
 	})
-	defer iterator.Close()
+	defer func() { _ = iterator.Close() }()
 
 	for iterator.Rewind(); iterator.Valid(); iterator.Next() {
 		item := iterator.Item()
@@ -280,7 +280,7 @@ func (n *NodeRepositoryKV) TotalCount() (int64, error) {
 		Prefix:         prefix,
 		PrefetchValues: false,
 	})
-	defer iterator.Close()
+	defer func() { _ = iterator.Close() }()
 
 	count := int64(0)
 	for iterator.Rewind(); iterator.Valid(); iterator.Next() {
@@ -305,7 +305,7 @@ func (n *NodeRepositoryKV) GetRandomNodes(num int64, excluding ...int64) ([]*Nod
 		Prefix:         prefix,
 		PrefetchValues: true,
 	})
-	defer iterator.Close()
+	defer func() { _ = iterator.Close() }()
 
 	var candidateIDs []int64
 	excludeMap := make(map[int64]bool)
@@ -509,21 +509,21 @@ func (n *NodeRepositoryKV) removeNodeIndexes(txn kv.Transaction, node *Node) err
 	// Remove address index
 	addressKey := kv.NewKeyBuilder().Meta().Append("index").Append("node").
 		Append("address").Append(node.Address).Append(fmt.Sprintf("%d", node.Port)).Build()
-	txn.Delete(n.ctx, addressKey)
+	_ = txn.Delete(n.ctx, addressKey)
 
 	// Remove region index
 	regionKey := kv.NewKeyBuilder().Meta().Append("index").Append("node").
 		Append("region").Append(node.Region.Name).Append(nodeIDStr).Build()
-	txn.Delete(n.ctx, regionKey)
+	_ = txn.Delete(n.ctx, regionKey)
 
 	// Remove active status indexes (both true and false)
 	activeKeyTrue := kv.NewKeyBuilder().Meta().Append("index").Append("node").
 		Append("active").Append("true").Append(nodeIDStr).Build()
-	txn.Delete(n.ctx, activeKeyTrue)
+	_ = txn.Delete(n.ctx, activeKeyTrue)
 
 	activeKeyFalse := kv.NewKeyBuilder().Meta().Append("index").Append("node").
 		Append("active").Append("false").Append(nodeIDStr).Build()
-	txn.Delete(n.ctx, activeKeyFalse)
+	_ = txn.Delete(n.ctx, activeKeyFalse)
 
 	return nil
 }

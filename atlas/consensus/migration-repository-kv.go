@@ -58,7 +58,7 @@ func (m *MigrationRepositoryKV) GetNextVersion(table string) (int64, error) {
 	iterator := txn.NewIterator(kv.IteratorOptions{
 		PrefetchValues: false,
 	})
-	defer iterator.Close()
+	defer func() { _ = iterator.Close() }()
 
 	maxVersion := int64(0)
 
@@ -161,13 +161,13 @@ func (m *MigrationRepositoryKV) CommitAllMigrations(table string) error {
 		}
 
 		if err := batch.Set(item.KeyCopy(), updatedData); err != nil {
-			iterator.Close()
+			_ = iterator.Close()
 			return fmt.Errorf("failed to add to batch: %w", err)
 		}
 	}
 
 	// Close iterator before flushing/committing
-	iterator.Close()
+	_ = iterator.Close()
 
 	if err := batch.Flush(); err != nil {
 		return fmt.Errorf("failed to flush batch: %w", err)
@@ -232,7 +232,7 @@ func (m *MigrationRepositoryKV) GetUncommittedMigrations(table *Table) ([]*Migra
 		Prefix:         prefix,
 		PrefetchValues: true,
 	})
-	defer iterator.Close()
+	defer func() { _ = iterator.Close() }()
 
 	var migrations []*Migration
 
@@ -368,7 +368,7 @@ func (m *MigrationRepositoryKV) GetMigrationsByTable(tableName string) ([]*Migra
 		Prefix:         prefix,
 		PrefetchValues: true,
 	})
-	defer iterator.Close()
+	defer func() { _ = iterator.Close() }()
 
 	var migrations []*Migration
 
@@ -417,14 +417,14 @@ func (m *MigrationRepositoryKV) DeleteMigration(version *MigrationVersion) error
 		Append(fmt.Sprintf("%d", version.GetMigrationVersion())).
 		Append(fmt.Sprintf("%d", version.GetNodeId())).
 		Build()
-	txn.Delete(m.ctx, tableIndexKey)
+	_ = txn.Delete(m.ctx, tableIndexKey)
 
 	uncommittedIndexKey := kv.NewKeyBuilder().Meta().Append("index").Append("migration").
 		Append("uncommitted").Append(version.GetTableName()).
 		Append(fmt.Sprintf("%d", version.GetMigrationVersion())).
 		Append(fmt.Sprintf("%d", version.GetNodeId())).
 		Build()
-	txn.Delete(m.ctx, uncommittedIndexKey)
+	_ = txn.Delete(m.ctx, uncommittedIndexKey)
 
 	return txn.Commit()
 }

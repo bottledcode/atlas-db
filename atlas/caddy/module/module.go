@@ -71,8 +71,8 @@ func (m *Module) Provision(ctx caddy.Context) (err error) {
 	options.Logger = caddy.Log()
 
 	// Ensure directory structure exists
-	os.MkdirAll(filepath.Dir(options.CurrentOptions.DbFilename), 0755)
-	os.MkdirAll(filepath.Dir(options.CurrentOptions.MetaFilename), 0755)
+	_ = os.MkdirAll(filepath.Dir(options.CurrentOptions.DbFilename), 0755)
+	_ = os.MkdirAll(filepath.Dir(options.CurrentOptions.MetaFilename), 0755)
 
 	if options.CurrentOptions.BootstrapConnect != "" {
 		options.Logger.Info("🚀 Starting Atlas bootstrap process...")
@@ -234,7 +234,7 @@ func init() {
 				if err != nil {
 					return 1, err
 				}
-				defer conn.Close()
+				defer func() { _ = conn.Close() }()
 
 				// perform handshake
 				handshakePart := 0
@@ -266,7 +266,7 @@ func init() {
 				if err != nil {
 					return 1, err
 				}
-				defer rl.Close()
+				defer func() { _ = rl.Close() }()
 
 				for {
 					line, err := rl.Readline()

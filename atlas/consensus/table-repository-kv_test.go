@@ -39,8 +39,8 @@ func setupTestStore(t *testing.T) (kv.Store, func()) {
 	require.NoError(t, err)
 
 	cleanup := func() {
-		store.Close()
-		os.RemoveAll(tempDir)
+		_ = store.Close()
+		_ = os.RemoveAll(tempDir)
 	}
 
 	return store, cleanup

@@ -122,7 +122,7 @@ func (b *Server) captureStoreSnapshot(store kv.Store, entries *[]*KVEntry) error
 		PrefetchValues: true,
 		PrefetchSize:   100,
 	})
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	// Iterate through all key-value pairs
 	for iter.Rewind(); iter.Valid(); iter.Next() {

@@ -56,9 +56,9 @@ func setupTestEnvironment(t *testing.T) (string, string, func()) {
 
 	cleanup := func() {
 		if pool := kv.GetPool(); pool != nil {
-			pool.Close()
+			_ = pool.Close()
 		}
-		kv.DrainPool()
+		_ = kv.DrainPool()
 	}
 
 	return dataPath, metaPath, cleanup
@@ -131,6 +131,7 @@ func TestBootstrapServer_GetBootstrapData(t *testing.T) {
 	defer server.Stop()
 
 	// Create client connection
+	//nolint:staticcheck // grpc.DialContext is deprecated but still needed for tests
 	conn, err := grpc.DialContext(ctx, "bufnet",
 		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
 			return lis.Dial()
@@ -139,7 +140,7 @@ func TestBootstrapServer_GetBootstrapData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to dial server: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	client := NewBootstrapClient(conn)
 
@@ -239,6 +240,7 @@ func TestBootstrapServer_IncompatibleVersion(t *testing.T) {
 	defer server.Stop()
 
 	ctx := context.Background()
+	//nolint:staticcheck // grpc.DialContext is deprecated but still needed for tests
 	conn, err := grpc.DialContext(ctx, "bufnet",
 		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
 			return lis.Dial()
@@ -247,7 +249,7 @@ func TestBootstrapServer_IncompatibleVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to dial server: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	client := NewBootstrapClient(conn)
 
@@ -331,13 +333,14 @@ func TestDoBootstrap_Integration(t *testing.T) {
 	}
 
 	// Mock the DoBootstrap by directly calling with custom connection
+	//nolint:staticcheck // grpc.DialContext is deprecated but still needed for tests
 	conn, err := grpc.DialContext(ctx, "bufnet",
 		grpc.WithContextDialer(customDialer),
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatalf("Failed to dial server: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	client := NewBootstrapClient(conn)
 	stream, err := client.GetBootstrapData(ctx, &BootstrapRequest{Version: 1})

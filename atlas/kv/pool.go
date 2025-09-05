@@ -79,7 +79,7 @@ func NewPool(dataPath, metaPath string) (*Pool, error) {
 	// Create metadata store (consensus, ownership, migrations)
 	metaStore, err := NewBadgerStore(metaPath)
 	if err != nil {
-		dataStore.Close()
+		_ = dataStore.Close()
 		return nil, fmt.Errorf("failed to create meta store: %w", err)
 	}
 

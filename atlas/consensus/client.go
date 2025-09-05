@@ -28,7 +28,7 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-func getNewClient(url string) (ConsensusClient, error, func()) {
+func getNewClient(url string) (ConsensusClient, func(), error) {
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: true,
 	}
@@ -45,11 +45,11 @@ func getNewClient(url string) (ConsensusClient, error, func()) {
 		return streamer(ctx, desc, cc, method, opts...)
 	}))
 	if err != nil {
-		return nil, err, nil
+		return nil, nil, err
 	}
 
 	client := NewConsensusClient(conn)
-	return client, nil, func() {
+	return client, func() {
 		_ = conn.Close()
-	}
+	}, nil
 }

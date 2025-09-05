@@ -189,7 +189,7 @@ func requestClusterMembership(ctx context.Context, nodeTable *consensus.Table, n
 	if err != nil {
 		return fmt.Errorf("failed to connect to cluster owner: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	client := consensus.NewConsensusClient(conn)
 
@@ -411,7 +411,7 @@ func DoBootstrap(ctx context.Context, url string, dataPath string, metaPath stri
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	client := NewBootstrapClient(conn)
 	resp, err := client.GetBootstrapData(ctx, &BootstrapRequest{

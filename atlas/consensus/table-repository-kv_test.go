@@ -137,6 +137,104 @@ func TestTableRepositoryKV_UpdateTable(t *testing.T) {
 	assert.Equal(t, []string{"us-east-1", "us-west-2", "eu-west-1"}, retrieved.AllowedRegions)
 }
 
+func TestTableRepositoryKV_UpdateTable_StaleIndexes(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	repo := NewTableRepositoryKV(ctx, store).(*TableRepositoryKV)
+
+	// Create initial table with regional replication
+	table := &Table{
+		Name:             "test_table",
+		Version:          1,
+		ReplicationLevel: ReplicationLevel_regional,
+		Group:            "old_group",
+		Owner: &Node{
+			Id:      100,
+			Address: "node1.example.com",
+			Port:    8080,
+			Region:  &Region{Name: "us-east-1"},
+			Active:  true,
+			Rtt:     durationpb.New(10 * time.Millisecond),
+		},
+		Type:      TableType_table,
+		CreatedAt: timestamppb.New(time.Now()),
+	}
+
+	err := repo.InsertTable(table)
+	require.NoError(t, err)
+
+	// Verify initial state - table should appear in regional queries
+	regionalTables, err := repo.GetTablesByReplicationLevel(ReplicationLevel_regional)
+	assert.NoError(t, err)
+	assert.Len(t, regionalTables, 1)
+	assert.Equal(t, "test_table", regionalTables[0].Name)
+
+	// Global queries should be empty
+	globalTables, err := repo.GetTablesByReplicationLevel(ReplicationLevel_global)
+	assert.NoError(t, err)
+	assert.Len(t, globalTables, 0)
+
+	// Update table to change replication level, group, and owner
+	table.Version = 2
+	table.ReplicationLevel = ReplicationLevel_global
+	table.Group = "new_group"
+	table.Owner = &Node{
+		Id:      200,
+		Address: "node2.example.com",
+		Port:    8080,
+		Region:  &Region{Name: "us-west-2"},
+		Active:  true,
+		Rtt:     durationpb.New(15 * time.Millisecond),
+	}
+
+	err = repo.UpdateTable(table)
+	require.NoError(t, err)
+
+	// BUG DEMONSTRATION: After update, table should NOT appear in regional queries
+	// but it will due to stale index entries
+	regionalTablesAfterUpdate, err := repo.GetTablesByReplicationLevel(ReplicationLevel_regional)
+	assert.NoError(t, err)
+	
+	// This assertion will FAIL because of stale indexes - the table will still appear
+	// in regional queries even though it's now global
+	assert.Len(t, regionalTablesAfterUpdate, 0, "Table should not appear in regional queries after being updated to global")
+
+	// Table should now appear in global queries
+	globalTablesAfterUpdate, err := repo.GetTablesByReplicationLevel(ReplicationLevel_global)
+	assert.NoError(t, err)
+	assert.Len(t, globalTablesAfterUpdate, 1)
+	assert.Equal(t, "test_table", globalTablesAfterUpdate[0].Name)
+
+	// Additional verification: Check for ghost entries in old group and owner indexes
+	// This requires access to the underlying KV store to check for stale keys
+	txn, err := store.Begin(false)
+	require.NoError(t, err)
+	defer txn.Discard()
+
+	// Check if old replication index key still exists (it shouldn't)
+	oldReplicationKey := kv.NewKeyBuilder().Meta().Append("index").Append("replication").
+		Append(ReplicationLevel_regional.String()).Append("test_table").Build()
+	_, err = txn.Get(ctx, oldReplicationKey)
+	assert.Error(t, err, "Old replication index key should not exist after update")
+	assert.ErrorIs(t, err, kv.ErrKeyNotFound, "Expected key not found error for old replication index")
+
+	// Check if old group index key still exists (it shouldn't)
+	oldGroupKey := kv.NewKeyBuilder().Meta().Append("index").Append("group").
+		Append("old_group").Append("test_table").Build()
+	_, err = txn.Get(ctx, oldGroupKey)
+	assert.Error(t, err, "Old group index key should not exist after update")
+	assert.ErrorIs(t, err, kv.ErrKeyNotFound, "Expected key not found error for old group index")
+
+	// Check if old owner index key still exists (it shouldn't)
+	oldOwnerKey := kv.NewKeyBuilder().Meta().Append("index").Append("owner").
+		Append("100").Append("test_table").Build()
+	_, err = txn.Get(ctx, oldOwnerKey)
+	assert.Error(t, err, "Old owner index key should not exist after update")
+	assert.ErrorIs(t, err, kv.ErrKeyNotFound, "Expected key not found error for old owner index")
+}
+
 func TestTableRepositoryKV_GetTablesByReplicationLevel(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()

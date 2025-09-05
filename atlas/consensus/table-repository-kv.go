@@ -189,8 +189,8 @@ func (r *TableRepositoryKV) UpdateTable(table *Table) error {
 	}
 	defer txn.Discard()
 
-	// First check if table exists
-	_, err = txn.Get(r.ctx, key)
+	// Get the existing table data to identify old index keys to clean up
+	existingData, err := txn.Get(r.ctx, key)
 	if err != nil {
 		if errors.Is(err, kv.ErrKeyNotFound) {
 			return fmt.Errorf("table %s does not exist", table.Name)
@@ -198,6 +198,19 @@ func (r *TableRepositoryKV) UpdateTable(table *Table) error {
 		return fmt.Errorf("failed to check table existence: %w", err)
 	}
 
+	// Parse existing table to get old index values
+	var existingStorageModel TableStorageModel
+	if err := json.Unmarshal(existingData, &existingStorageModel); err != nil {
+		return fmt.Errorf("failed to unmarshal existing table data: %w", err)
+	}
+	existingTable := r.convertStorageModelToTable(&existingStorageModel)
+
+	// Remove old index entries before updating
+	if err := r.removeTableIndex(txn, existingTable); err != nil {
+		return fmt.Errorf("failed to remove old table index: %w", err)
+	}
+
+	// Update the table data
 	storageModel := r.convertTableToStorageModel(table)
 	data, err := json.Marshal(storageModel)
 	if err != nil {
@@ -208,7 +221,7 @@ func (r *TableRepositoryKV) UpdateTable(table *Table) error {
 		return fmt.Errorf("failed to update table: %w", err)
 	}
 
-	// Also update table list index if replication level changed
+	// Add new index entries
 	if err := r.updateTableIndex(txn, table); err != nil {
 		return fmt.Errorf("failed to update table index: %w", err)
 	}
@@ -277,6 +290,37 @@ func (r *TableRepositoryKV) updateTableIndex(txn kv.Transaction, table *Table) e
 		ownerIndexKey := kv.NewKeyBuilder().Meta().Append("index").Append("owner").
 			Append(fmt.Sprintf("%d", table.Owner.Id)).Append(table.Name).Build()
 		if err := txn.Put(r.ctx, ownerIndexKey, []byte(table.Name)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// removeTableIndex removes secondary indexes for efficient querying cleanup
+func (r *TableRepositoryKV) removeTableIndex(txn kv.Transaction, table *Table) error {
+	// Remove replication level index: meta:index:replication:{level}:{table_name}
+	indexKey := kv.NewKeyBuilder().Meta().Append("index").Append("replication").
+		Append(table.ReplicationLevel.String()).Append(table.Name).Build()
+
+	if err := txn.Delete(r.ctx, indexKey); err != nil {
+		return err
+	}
+
+	// Remove group index if applicable
+	if table.Group != "" {
+		groupIndexKey := kv.NewKeyBuilder().Meta().Append("index").Append("group").
+			Append(table.Group).Append(table.Name).Build()
+		if err := txn.Delete(r.ctx, groupIndexKey); err != nil {
+			return err
+		}
+	}
+
+	// Remove owner node index if applicable
+	if table.Owner != nil {
+		ownerIndexKey := kv.NewKeyBuilder().Meta().Append("index").Append("owner").
+			Append(fmt.Sprintf("%d", table.Owner.Id)).Append(table.Name).Build()
+		if err := txn.Delete(r.ctx, ownerIndexKey); err != nil {
 			return err
 		}
 	}

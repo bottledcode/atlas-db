@@ -206,9 +206,7 @@ func (n *NodeRepositoryKV) GetRegions() ([]*Region, error) {
 		key := string(item.Key())
 
 		// Parse region from key: meta:index:node:region:{region}:{node_id}
-		parts := splitKey(key)
-		if len(parts) >= 6 && parts[5] != "" {
-			region := parts[5]
+		if region, ok := parseRegionFromNodeRegionKey(key); ok {
 			regionMap[region] = true
 		}
 	}
@@ -482,8 +480,7 @@ func (n *NodeRepositoryKV) updateNodeIndexes(txn kv.Transaction, node *Node) err
 	}
 
 	// Index by region: meta:index:node:region:{region}:{node_id} -> node_id
-	regionKey := kv.NewKeyBuilder().Meta().Append("index").Append("node").
-		Append("region").Append(node.Region.Name).Append(nodeIDStr).Build()
+	regionKey := buildNodeRegionKey(node.Region.Name, node.Id)
 	if err := txn.Put(n.ctx, regionKey, []byte(nodeIDStr)); err != nil {
 		return err
 	}
@@ -512,8 +509,7 @@ func (n *NodeRepositoryKV) removeNodeIndexes(txn kv.Transaction, node *Node) err
 	_ = txn.Delete(n.ctx, addressKey)
 
 	// Remove region index
-	regionKey := kv.NewKeyBuilder().Meta().Append("index").Append("node").
-		Append("region").Append(node.Region.Name).Append(nodeIDStr).Build()
+	regionKey := buildNodeRegionKey(node.Region.Name, node.Id)
 	_ = txn.Delete(n.ctx, regionKey)
 
 	// Remove active status indexes (both true and false)
@@ -579,4 +575,21 @@ func splitKey(key string) []string {
 	}
 
 	return parts
+}
+
+// buildNodeRegionKey creates a key for the node region index
+func buildNodeRegionKey(region string, nodeID int64) []byte {
+	nodeIDStr := strconv.FormatInt(nodeID, 10)
+	return kv.NewKeyBuilder().Meta().Append("index").Append("node").
+		Append("region").Append(region).Append(nodeIDStr).Build()
+}
+
+// parseRegionFromNodeRegionKey extracts the region from a node region index key
+// Expected format: meta:index:node:region:{region}:{node_id}
+func parseRegionFromNodeRegionKey(key string) (string, bool) {
+	parts := splitKey(key)
+	if len(parts) >= 6 && parts[4] != "" {
+		return parts[4], true
+	}
+	return "", false
 }

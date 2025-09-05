@@ -422,7 +422,7 @@ func (ncm *NodeConnectionManager) ExecuteOnNode(nodeID int64, operation func(Con
 			ncm.removeFromActiveNodes(nodeID)
 
 			// Trigger reconnection attempt in background
-			go ncm.connectToNode(context.Background(), node)
+			go ncm.connectToNode(ncm.ctx, node)
 		}
 	}
 

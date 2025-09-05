@@ -168,24 +168,24 @@ func (s *Socket) HandleConnection(conn net.Conn, ctx context.Context) {
 					err := s.writeError(Fatal, errors.New("invalid handshake"))
 					if err != nil {
 						options.Logger.Error("Error writing error message", zap.Error(err))
-						return
 					}
+					return
 				}
 
 				if p, _ := handshake.SelectNormalizedCommand(0); p != "HELLO" {
 					err := s.writeError(Fatal, errors.New("invalid handshake"))
 					if err != nil {
 						options.Logger.Error("Error writing error message", zap.Error(err))
-						return
 					}
+					return
 				}
 
 				if v, _ := handshake.SelectNormalizedCommand(1); v != ProtoVersion {
 					err := s.writeError(Fatal, errors.New("invalid protocol version"))
 					if err != nil {
 						options.Logger.Error("Error writing error message", zap.Error(err))
-						return
 					}
+					return
 				}
 
 				// ignore client version for now

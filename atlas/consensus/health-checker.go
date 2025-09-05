@@ -112,13 +112,14 @@ func (hc *HealthChecker) checkAllNodes(ctx context.Context) {
 			needsPing++
 		}
 	}
+	totalNodes := len(hc.manager.nodes)
 	hc.manager.mu.RUnlock()
 
 	options.Logger.Debug("Health check evaluation",
 		zap.Int64("current_node_id", currentNodeId),
 		zap.Int("skipped_self", skipped),
 		zap.Int("needs_ping", needsPing),
-		zap.Int("total_nodes", len(hc.manager.nodes)))
+		zap.Int("total_nodes", totalNodes))
 
 	for _, node := range nodes {
 		// In testing mode, skip jitter to avoid race conditions

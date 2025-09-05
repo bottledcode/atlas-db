@@ -218,6 +218,12 @@ func requestClusterMembership(ctx context.Context, nodeTable *consensus.Table, n
 
 	options.Logger.Info("Cluster membership request accepted", zap.Int64("assigned_node_id", result.GetNodeId()))
 
+	// Update the node with the server-assigned ID
+	newNode.Id = result.GetNodeId()
+	
+	// Update CurrentOptions with the server-assigned node ID
+	options.CurrentOptions.ServerId = result.GetNodeId()
+
 	// Now that we're successfully part of the cluster, add ourselves to our local repository
 	// so that we can participate in consensus and KV operations
 	kvPool := kv.GetPool()

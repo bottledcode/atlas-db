@@ -2,6 +2,7 @@ package socket
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"google.golang.org/grpc/codes"
@@ -14,7 +15,7 @@ func TestFormatCommandError_PermissionDenied_WithPrincipal(t *testing.T) {
 	if code != Warning {
 		t.Fatalf("expected Warning, got %v", code)
 	}
-	if msg == "" || msg[:17] != "permission denied" {
+	if msg == "" || !strings.HasPrefix(msg, "permission denied") {
 		t.Fatalf("unexpected message: %q", msg)
 	}
 	if want := "alice"; msg != "permission denied for principal '"+want+"': write access denied" {

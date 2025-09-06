@@ -102,7 +102,7 @@ func TestReadKey_ACL_PublicAndOwner(t *testing.T) {
 	}
 
 	// Read with correct principal
-	ctxAlice := metadata.NewIncomingContext(context.Background(), metadata.Pairs("Atlas-Principal", "alice"))
+	ctxAlice := metadata.NewIncomingContext(context.Background(), metadata.Pairs(atlasPrincipalKey, "alice"))
 	if resp, err := s.ReadKey(ctxAlice, &ReadKeyRequest{Key: key, Table: table}); err != nil || !resp.GetSuccess() {
 		t.Fatalf("ReadKey with owner failed: resp=%v err=%v", resp, err)
 	}
@@ -136,7 +136,7 @@ func TestAcceptMigration_WriteDelete_ACL(t *testing.T) {
 	if err := mr.AddMigration(mig2); err != nil {
 		t.Fatalf("AddMigration: %v", err)
 	}
-	ctxAlice := metadata.NewIncomingContext(context.Background(), metadata.Pairs("Atlas-Principal", "alice"))
+	ctxAlice := metadata.NewIncomingContext(context.Background(), metadata.Pairs(atlasPrincipalKey, "alice"))
 	if _, err := s.AcceptMigration(ctxAlice, &WriteMigrationRequest{Migration: mig2}); err != nil {
 		t.Fatalf("AcceptMigration set with owner failed: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestAcceptMigration_WriteDelete_ACL(t *testing.T) {
 	if err := mr.AddMigration(mig3); err != nil {
 		t.Fatalf("AddMigration: %v", err)
 	}
-	ctxBob := metadata.NewIncomingContext(context.Background(), metadata.Pairs("Atlas-Principal", "bob"))
+	ctxBob := metadata.NewIncomingContext(context.Background(), metadata.Pairs(atlasPrincipalKey, "bob"))
 	if _, err := s.AcceptMigration(ctxBob, &WriteMigrationRequest{Migration: mig3}); err == nil {
 		t.Fatalf("expected permission denied for bob")
 	}

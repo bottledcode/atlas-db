@@ -23,6 +23,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/bottledcode/atlas-db/atlas/kv"
@@ -31,11 +32,43 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
+// gRPC metadata key for the session principal; must be lowercase per grpc-go.
+const atlasPrincipalKey = "atlas-principal"
+
 type Socket struct {
 	writer    *bufio.ReadWriter
 	conn      net.Conn
 	timeout   time.Duration
 	principal string
+}
+
+// validatePrincipal ensures the provided principal name is safe for use in the
+// line-oriented protocol and for propagation via metadata. It trims surrounding
+// whitespace, rejects control characters (including CR/LF and Unicode line
+// breaks), and enforces a 1..256 length in both bytes and runes.
+func validatePrincipal(name string) (string, error) {
+	n := strings.TrimSpace(name)
+	if n == "" {
+		return "", errors.New("empty principal")
+	}
+	if len(n) > 256 { // bytes
+		return "", errors.New("principal too long")
+	}
+	runeCount := 0
+	for _, r := range n {
+		runeCount++
+		switch r {
+		case '\r', '\n', '\u0085', '\u2028', '\u2029':
+			return "", errors.New("invalid character in principal")
+		}
+		if r < 0x20 || r == 0x7f { // ASCII controls and DEL
+			return "", errors.New("invalid character in principal")
+		}
+	}
+	if runeCount == 0 || runeCount > 256 {
+		return "", errors.New("principal length out of range")
+	}
+	return n, nil
 }
 
 func (s *Socket) Cleanup() {
@@ -216,7 +249,17 @@ ready:
 						}
 						continue
 					}
-					s.principal = cmd.SelectCommand(2)
+					// Validate and set the session principal
+					candidate := cmd.SelectCommand(2)
+					validated, vErr := validatePrincipal(candidate)
+					if vErr != nil {
+						if err := s.writeError(Warning, errors.New("usage: PRINCIPAL ASSUME <name>")); err != nil {
+							options.Logger.Error("Error writing error message", zap.Error(err))
+							return
+						}
+						continue
+					}
+					s.principal = validated
 					if err := s.writeOk(OK); err != nil {
 						options.Logger.Error("Error writing OK response", zap.Error(err))
 						return
@@ -243,7 +286,7 @@ ready:
 			}
 			execCtx := ctx
 			if s.principal != "" {
-				execCtx = metadata.NewOutgoingContext(ctx, metadata.Pairs("Atlas-Principal", s.principal))
+				execCtx = metadata.NewOutgoingContext(ctx, metadata.Pairs(atlasPrincipalKey, s.principal))
 			}
 			resp, err := command.Execute(execCtx)
 			if err != nil {

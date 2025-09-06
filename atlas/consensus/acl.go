@@ -7,6 +7,9 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
+// gRPC metadata key for the session principal; must be lowercase.
+const atlasPrincipalKey = "atlas-principal"
+
 // aclKeyForDataKey maps a data key to its ACL metadata key.
 func aclKeyForDataKey(dataKey string) []byte {
 	return []byte("meta:acl:" + dataKey)
@@ -40,12 +43,12 @@ func decodeOwner(b []byte) (string, bool) {
 // getPrincipalFromContext extracts the principal identifier from outgoing/incoming metadata.
 func getPrincipalFromContext(ctx context.Context) string {
 	if md, ok := metadata.FromIncomingContext(ctx); ok {
-		if vals := md.Get("Atlas-Principal"); len(vals) > 0 {
+		if vals := md.Get(atlasPrincipalKey); len(vals) > 0 {
 			return vals[0]
 		}
 	}
 	if md, ok := metadata.FromOutgoingContext(ctx); ok {
-		if vals := md.Get("Atlas-Principal"); len(vals) > 0 {
+		if vals := md.Get(atlasPrincipalKey); len(vals) > 0 {
 			return vals[0]
 		}
 	}

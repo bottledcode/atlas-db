@@ -406,6 +406,17 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 									zap.String("key", string(op.Set.Key)),
 									zap.String("principal", principal),
 									zap.Error(err))
+							} else if options.CurrentOptions.DevelopmentMode {
+								mv := mig.GetVersion()
+								options.Logger.Info("ACL SET alongside migration",
+									zap.String("data_key", string(op.Set.Key)),
+									zap.String("acl_key", aclKey),
+									zap.Strings("principals", []string{principal}),
+									zap.Int64("table_version", mv.GetTableVersion()),
+									zap.Int64("migration_version", mv.GetMigrationVersion()),
+									zap.Int64("node_id", mv.GetNodeId()),
+									zap.String("table", mv.GetTableName()),
+								)
 							}
 						} else if e != nil {
 							// Unexpected error checking ACL existence - log but don't fail since data was already applied
@@ -423,6 +434,16 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 							options.Logger.Warn("Failed to delete ACL after successful delete",
 								zap.String("key", string(op.Del.Key)),
 								zap.Error(err))
+						} else if options.CurrentOptions.DevelopmentMode {
+							mv := mig.GetVersion()
+							options.Logger.Info("ACL DEL alongside migration",
+								zap.String("data_key", string(op.Del.Key)),
+								zap.String("acl_key", aclKey),
+								zap.Int64("table_version", mv.GetTableVersion()),
+								zap.Int64("migration_version", mv.GetMigrationVersion()),
+								zap.Int64("node_id", mv.GetNodeId()),
+								zap.String("table", mv.GetTableName()),
+							)
 						}
 					}
 				}
@@ -448,7 +469,7 @@ func (s *Server) applyMigration(migrations []*Migration, kvStore kv.Store) error
 				zap.String("table", migration.GetVersion().GetTableName()))
 			continue
 		case *Migration_Data:
-			err := s.applyKVDataMigration(migration.GetData(), kvStore)
+			err := s.applyKVDataMigration(migration, kvStore)
 			if err != nil {
 				return fmt.Errorf("failed to apply KV data migration: %w", err)
 			}
@@ -457,8 +478,10 @@ func (s *Server) applyMigration(migrations []*Migration, kvStore kv.Store) error
 	return nil
 }
 
-func (s *Server) applyKVDataMigration(dataMigration *DataMigration, kvStore kv.Store) error {
+func (s *Server) applyKVDataMigration(migration *Migration, kvStore kv.Store) error {
 	ctx := context.Background()
+	dataMigration := migration.GetData()
+	mv := migration.GetVersion()
 
 	switch migrationType := dataMigration.GetSession().(type) {
 	case *DataMigration_Change:
@@ -470,13 +493,24 @@ func (s *Server) applyKVDataMigration(dataMigration *DataMigration, kvStore kv.S
 			}
 			options.Logger.Info("Applied KV SET migration",
 				zap.String("key", string(op.Set.Key)),
-				zap.Int("value_size", len(op.Set.Value)))
+				zap.Int("value_size", len(op.Set.Value)),
+				zap.Int64("table_version", mv.GetTableVersion()),
+				zap.Int64("migration_version", mv.GetMigrationVersion()),
+				zap.Int64("node_id", mv.GetNodeId()),
+				zap.String("table", mv.GetTableName()),
+			)
 		case *KVChange_Del:
 			err := kvStore.Delete(ctx, op.Del.Key)
 			if err != nil {
 				return fmt.Errorf("failed to DELETE key %s: %w", op.Del.Key, err)
 			}
-			options.Logger.Info("Applied KV DELETE migration", zap.String("key", string(op.Del.Key)))
+			options.Logger.Info("Applied KV DELETE migration",
+				zap.String("key", string(op.Del.Key)),
+				zap.Int64("table_version", mv.GetTableVersion()),
+				zap.Int64("migration_version", mv.GetMigrationVersion()),
+				zap.Int64("node_id", mv.GetNodeId()),
+				zap.String("table", mv.GetTableName()),
+			)
 		default:
 			return fmt.Errorf("unknown KV operation: %s", op)
 		}

@@ -2,11 +2,13 @@ package consensus
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/bottledcode/atlas-db/atlas/kv"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -121,13 +123,16 @@ func grantToACLKey(ctx context.Context, metaStore interface {
 		if err != nil {
 			return err
 		}
-	} else {
+	} else if errors.Is(err, kv.ErrKeyNotFound) {
 		// ACL doesn't exist - create new one
 		aclData = &ACLData{
 			Principals: []string{},
 			CreatedAt:  timestamppb.New(time.Now()),
 			UpdatedAt:  timestamppb.New(time.Now()),
 		}
+	} else {
+		// Unexpected error; propagate
+		return err
 	}
 
 	// Grant access to principal
@@ -148,8 +153,11 @@ func revokeFromACLKey(ctx context.Context, metaStore interface {
 }, aclKey, principal string) error {
 	aclVal, err := metaStore.Get(ctx, []byte(aclKey))
 	if err != nil {
-		// ACL doesn't exist - nothing to revoke
-		return nil
+		// Ignore only not-found errors; propagate others
+		if errors.Is(err, kv.ErrKeyNotFound) {
+			return nil
+		}
+		return err
 	}
 
 	// Decode existing ACL
@@ -230,13 +238,16 @@ func GrantACLToKey(ctx context.Context, metaStore interface {
 		if err != nil {
 			return err
 		}
-	} else {
+	} else if errors.Is(err, kv.ErrKeyNotFound) {
 		// ACL doesn't exist - create new one
 		aclData = &ACLData{
 			Principals: []string{},
 			CreatedAt:  timestamppb.New(time.Now()),
 			UpdatedAt:  timestamppb.New(time.Now()),
 		}
+	} else {
+		// Unexpected error; propagate
+		return err
 	}
 
 	// Grant access to principal
@@ -259,8 +270,11 @@ func RevokeACLFromKey(ctx context.Context, metaStore interface {
 	aclKey := CreateACLKey(key)
 	aclVal, err := metaStore.Get(ctx, []byte(aclKey))
 	if err != nil {
-		// ACL doesn't exist - nothing to revoke
-		return nil
+		// Ignore only not-found errors; propagate others
+		if errors.Is(err, kv.ErrKeyNotFound) {
+			return nil
+		}
+		return err
 	}
 
 	// Decode existing ACL

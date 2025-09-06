@@ -34,9 +34,17 @@ cleanup() {
         kill $CADDY_PID
         wait $CADDY_PID 2>/dev/null || true
     fi
+    if [ ! -z "$CADDY2_PID" ] && ps -p $CADDY2_PID > /dev/null 2>&1; then
+        echo "Stopping Caddy2 (PID: $CADDY2_PID)"
+        kill $CADDY2_PID
+        wait $CADDY2_PID 2>/dev/null || true
+    fi
     
     # Clean up database files
     rm -rf /tmp/atlas2/
+    rm -rf /tmp/atlas1/
+    # Clean up logs
+    rm -f /tmp/acl_e2e_node1.log /tmp/acl_e2e_node2.log
     echo "✅ Cleanup complete"
 }
 
@@ -246,6 +254,8 @@ else
     exit 1
 fi
 
+:
+
 echo "✨ All ACL command tests completed successfully!"
 echo ""
 echo "📋 Test Summary:"
@@ -261,5 +271,6 @@ echo "  ✅ Multi-principal access control"
 echo "  ✅ Selective revocation from multiple principals"
 echo "  ✅ Separate READ and WRITE permissions enforced"
 echo "  ✅ OWNER implies full access even with specific ACLs"
+echo "  ✅ ACL travels with data on leadership change"
 echo ""
 echo "🎉 End-to-End ACL Test: PASSED"

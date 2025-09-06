@@ -14,8 +14,13 @@ func aclKeyForDataKey(dataKey string) []byte {
 
 // encodeOwner encodes a single-string owner principal as length-prefixed bytes.
 func encodeOwner(owner string) []byte {
-	b := make([]byte, 2+len(owner))
-	binary.BigEndian.PutUint16(b[:2], uint16(len(owner)))
+	n := len(owner)
+	if n > 0xFFFF {
+		n = 0xFFFF
+		owner = owner[:n]
+	}
+	b := make([]byte, 2+n)
+	binary.BigEndian.PutUint16(b[:2], uint16(n))
 	copy(b[2:], []byte(owner))
 	return b
 }

@@ -19,6 +19,32 @@ func TestEncodeDecodeOwner(t *testing.T) {
 	}
 }
 
+func TestEncodeDecodeOwnerOversized(t *testing.T) {
+	// Create an owner string larger than uint16 max (65535)
+	oversizedOwner := make([]byte, 70000)
+	for i := range oversizedOwner {
+		oversizedOwner[i] = byte('a' + (i % 26))
+	}
+	owner := string(oversizedOwner)
+
+	enc := encodeOwner(owner)
+	dec, ok := decodeOwner(enc)
+	if !ok {
+		t.Fatalf("decodeOwner returned !ok")
+	}
+
+	// Should be truncated to 65535 bytes
+	expectedTruncated := owner[:0xFFFF]
+	if dec != expectedTruncated {
+		t.Fatalf("expected truncated owner of length %d, got length %d", len(expectedTruncated), len(dec))
+	}
+
+	// Verify the encoded length matches the payload
+	if len(enc) != 2+0xFFFF {
+		t.Fatalf("expected encoded length %d, got %d", 2+0xFFFF, len(enc))
+	}
+}
+
 func TestGetPrincipalFromContext(t *testing.T) {
 	// Incoming metadata
 	mdIn := metadata.Pairs("Atlas-Principal", "carol")

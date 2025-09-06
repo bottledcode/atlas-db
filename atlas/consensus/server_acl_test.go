@@ -96,7 +96,7 @@ func TestReadKey_ACL_PublicAndOwner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode ACL data: %v", err)
 	}
-	aclKey := createACLKey(table, key)
+	aclKey := CreateACLKey(key)
 	if err := pool.MetaStore().Put(context.Background(), []byte(aclKey), aclData); err != nil {
 		t.Fatalf("set ACL: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestAcceptMigration_WriteDelete_ACL(t *testing.T) {
 	if _, err := s.AcceptMigration(context.Background(), &WriteMigrationRequest{Migration: mig1}); err != nil {
 		t.Fatalf("AcceptMigration public set failed: %v", err)
 	}
-	aclKey := createACLKey(table, key)
+	aclKey := CreateACLKey(key)
 	if _, err := pool.MetaStore().Get(context.Background(), []byte(aclKey)); err == nil {
 		t.Fatalf("unexpected ACL set for public write")
 	}
@@ -148,9 +148,9 @@ func TestAcceptMigration_WriteDelete_ACL(t *testing.T) {
 	}
 	if b, err := pool.MetaStore().Get(context.Background(), []byte(aclKey)); err != nil {
 		t.Fatalf("expected ACL present: %v", err)
-	} else if aclData, err := decodeACLData(b); err != nil {
+	} else if aclData, err := DecodeACLData(b); err != nil {
 		t.Fatalf("failed to decode ACL data: %v", err)
-	} else if !hasPrincipal(aclData, "alice") {
+	} else if !HasPrincipal(aclData, "alice") {
 		t.Fatalf("expected alice to have access, principals: %v", aclData.Principals)
 	}
 

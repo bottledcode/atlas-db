@@ -300,7 +300,6 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 
 	// Enforce ACL for write/delete operations using session principal
 	principal := getPrincipalFromContext(ctx)
-	tableName := req.GetMigration().GetVersion().GetTableName()
 	for _, mig := range migrations {
 		if d := mig.GetData(); d != nil {
 			if ch := d.GetChange(); ch != nil {
@@ -308,11 +307,11 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 				case *KVChange_Set:
 					// Check per-key ACL; missing ACL allows write (public)
 					if metaStore != nil {
-						aclKey := createACLKey(tableName, string(op.Set.Key))
+						aclKey := CreateACLKey(string(op.Set.Key))
 						aclVal, err := metaStore.Get(ctx, []byte(aclKey))
 						if err == nil {
 							// ACL exists - check if principal has access
-							aclData, err := decodeACLData(aclVal)
+							aclData, err := DecodeACLData(aclVal)
 							if err != nil {
 								return nil, status.Errorf(codes.Internal, "ACL decode failed")
 							} else {
@@ -330,11 +329,11 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 				case *KVChange_Del:
 					// Check per-key ACL; missing ACL allows delete (public)
 					if metaStore != nil {
-						aclKey := createACLKey(tableName, string(op.Del.Key))
+						aclKey := CreateACLKey(string(op.Del.Key))
 						aclVal, err := metaStore.Get(ctx, []byte(aclKey))
 						if err == nil {
 							// ACL exists - check if principal has access
-							aclData, err := decodeACLData(aclVal)
+							aclData, err := DecodeACLData(aclVal)
 							if err != nil {
 								return nil, status.Errorf(codes.Internal, "ACL decode failed")
 							} else {
@@ -367,7 +366,7 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 				case *KVChange_Set:
 					if metaStore != nil && principal != "" {
 						// Only set ACL if not present (creation) - use new multi-principal format
-						aclKey := createACLKey(tableName, string(op.Set.Key))
+						aclKey := CreateACLKey(string(op.Set.Key))
 						_, e := metaStore.Get(ctx, []byte(aclKey))
 						if errors.Is(e, kv.ErrKeyNotFound) {
 							// ACL not found - create initial ACL for this principal
@@ -394,7 +393,7 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 				case *KVChange_Del:
 					if metaStore != nil {
 						// Delete ACL entry using new key format
-						aclKey := createACLKey(tableName, string(op.Del.Key))
+						aclKey := CreateACLKey(string(op.Del.Key))
 						if err := metaStore.Delete(ctx, []byte(aclKey)); err != nil {
 							// Log error but don't fail the migration since data was already deleted
 							options.Logger.Warn("Failed to delete ACL after successful delete",
@@ -995,11 +994,11 @@ func (s *Server) ReadKey(ctx context.Context, req *ReadKeyRequest) (*ReadKeyResp
 	// Check per-key ACL; missing ACL means public read allowed
 	if metaStore != nil {
 		principal := getPrincipalFromContext(ctx)
-		aclKey := createACLKey(req.GetTable(), req.GetKey())
+		aclKey := CreateACLKey(req.GetKey())
 		aclVal, err := metaStore.Get(ctx, []byte(aclKey))
 		if err == nil {
 			// ACL exists - check if principal has access
-			aclData, err := decodeACLData(aclVal)
+			aclData, err := DecodeACLData(aclVal)
 			if err != nil {
 				return &ReadKeyResponse{Success: false, Error: "ACL decode failed"}, nil
 			} else {

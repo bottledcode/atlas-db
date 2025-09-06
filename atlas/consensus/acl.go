@@ -24,8 +24,8 @@ func encodeACLData(principals []string) ([]byte, error) {
 	return proto.Marshal(aclData)
 }
 
-// decodeACLData decodes bytes to ACLData protobuf message.
-func decodeACLData(b []byte) (*ACLData, error) {
+// DecodeACLData decodes bytes to ACLData protobuf message.
+func DecodeACLData(b []byte) (*ACLData, error) {
 	var aclData ACLData
 	err := proto.Unmarshal(b, &aclData)
 	if err != nil {
@@ -34,14 +34,14 @@ func decodeACLData(b []byte) (*ACLData, error) {
 	return &aclData, nil
 }
 
-// hasPrincipal checks if a principal exists in the ACL data.
-func hasPrincipal(aclData *ACLData, principal string) bool {
+// HasPrincipal checks if a principal exists in the ACL data.
+func HasPrincipal(aclData *ACLData, principal string) bool {
 	return slices.Contains(aclData.Principals, principal)
 }
 
 // grantPrincipal adds a principal to the ACL data if not already present.
 func grantPrincipal(aclData *ACLData, principal string) *ACLData {
-	if !hasPrincipal(aclData, principal) {
+	if !HasPrincipal(aclData, principal) {
 		return &ACLData{
 			Principals: append(aclData.Principals, principal),
 			CreatedAt:  aclData.CreatedAt,
@@ -86,12 +86,13 @@ func checkACLAccess(aclData *ACLData, principal string) bool {
 	if aclData == nil || len(aclData.Principals) == 0 {
 		return true // No ACL means public access
 	}
-	return hasPrincipal(aclData, principal)
+	return HasPrincipal(aclData, principal)
 }
 
-// createACLKey creates an ACL metadata key for a given data key and table.
-func createACLKey(table, key string) string {
-	return "meta:acl:" + table + ":" + key
+// CreateACLKey creates an ACL metadata key for a given data key.
+// Uses the same colon-separated format as the rest of Atlas-DB.
+func CreateACLKey(key string) string {
+	return "meta:acl:" + key
 }
 
 // GrantACLToKey grants access to a principal for a specific key by updating ACL metadata.
@@ -99,14 +100,14 @@ func createACLKey(table, key string) string {
 func GrantACLToKey(ctx context.Context, metaStore interface {
 	Get(context.Context, []byte) ([]byte, error)
 	Put(context.Context, []byte, []byte) error
-}, table, key, principal string) error {
-	aclKey := createACLKey(table, key)
+}, key, principal string) error {
+	aclKey := CreateACLKey(key)
 	aclVal, err := metaStore.Get(ctx, []byte(aclKey))
 
 	var aclData *ACLData
 	if err == nil {
 		// ACL exists - decode it
-		aclData, err = decodeACLData(aclVal)
+		aclData, err = DecodeACLData(aclVal)
 		if err != nil {
 			return err
 		}
@@ -135,8 +136,8 @@ func RevokeACLFromKey(ctx context.Context, metaStore interface {
 	Get(context.Context, []byte) ([]byte, error)
 	Put(context.Context, []byte, []byte) error
 	Delete(context.Context, []byte) error
-}, table, key, principal string) error {
-	aclKey := createACLKey(table, key)
+}, key, principal string) error {
+	aclKey := CreateACLKey(key)
 	aclVal, err := metaStore.Get(ctx, []byte(aclKey))
 	if err != nil {
 		// ACL doesn't exist - nothing to revoke
@@ -144,7 +145,7 @@ func RevokeACLFromKey(ctx context.Context, metaStore interface {
 	}
 
 	// Decode existing ACL
-	aclData, err := decodeACLData(aclVal)
+	aclData, err := DecodeACLData(aclVal)
 	if err != nil {
 		return err
 	}

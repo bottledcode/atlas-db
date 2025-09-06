@@ -32,9 +32,9 @@ func TestEncodeDecodeACLData(t *testing.T) {
 		t.Fatalf("encodeACLData failed: %v", err)
 	}
 
-	decoded, err := decodeACLData(encoded)
+	decoded, err := DecodeACLData(encoded)
 	if err != nil {
-		t.Fatalf("decodeACLData failed: %v", err)
+		t.Fatalf("DecodeACLData failed: %v", err)
 	}
 
 	if len(decoded.Principals) != len(principals) {
@@ -62,7 +62,7 @@ func TestGrantRevokeACLData(t *testing.T) {
 
 	// Grant access to alice
 	updatedACL := grantPrincipal(aclData, "alice")
-	if !hasPrincipal(updatedACL, "alice") {
+	if !HasPrincipal(updatedACL, "alice") {
 		t.Fatalf("alice should have access after grant")
 	}
 	if len(updatedACL.Principals) != 1 {
@@ -71,7 +71,7 @@ func TestGrantRevokeACLData(t *testing.T) {
 
 	// Grant access to bob
 	updatedACL = grantPrincipal(updatedACL, "bob")
-	if !hasPrincipal(updatedACL, "alice") || !hasPrincipal(updatedACL, "bob") {
+	if !HasPrincipal(updatedACL, "alice") || !HasPrincipal(updatedACL, "bob") {
 		t.Fatalf("both alice and bob should have access")
 	}
 	if len(updatedACL.Principals) != 2 {
@@ -86,10 +86,10 @@ func TestGrantRevokeACLData(t *testing.T) {
 
 	// Revoke alice
 	updatedACL = revokePrincipal(updatedACL, "alice")
-	if hasPrincipal(updatedACL, "alice") {
+	if HasPrincipal(updatedACL, "alice") {
 		t.Fatalf("alice should not have access after revoke")
 	}
-	if !hasPrincipal(updatedACL, "bob") {
+	if !HasPrincipal(updatedACL, "bob") {
 		t.Fatalf("bob should still have access")
 	}
 	if len(updatedACL.Principals) != 1 {
@@ -132,8 +132,8 @@ func TestCheckACLAccess(t *testing.T) {
 }
 
 func TestCreateACLKey(t *testing.T) {
-	key := createACLKey("users", "user:123")
-	expected := "meta:acl:users:user:123"
+	key := CreateACLKey("USERS.USER:123")
+	expected := "meta:acl:USERS.USER:123"
 	if key != expected {
 		t.Fatalf("expected %q, got %q", expected, key)
 	}

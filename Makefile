@@ -3,14 +3,14 @@ GOARCH ?= amd64
 GO_FILES = $(shell find . -name '*.go' -not -path "./vendor/*")
 export PATH = $(shell pwd)/tools/bin:$(shell echo $$PATH)
 
+caddy: atlas/caddy/caddy
+	cp atlas/caddy/caddy caddy
+
 atlasdb: caddy tools/bin/upx
 	go run golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@latest -fix -test ./...
 	go fmt ./...
 	golangci-lint run ./...
 	cp caddy atlasdb
-
-caddy: atlas/caddy/caddy
-	cp atlas/caddy/caddy caddy
 
 .PHONY: small
 small: atlasdb

@@ -427,23 +427,32 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 					}
 				case *KVChange_Del:
 					if metaStore != nil {
-						// Delete ACL entry using new key format
-						aclKey := CreateACLKey(string(op.Del.Key))
-						if err := metaStore.Delete(ctx, []byte(aclKey)); err != nil {
-							// Log error but don't fail the migration since data was already deleted
-							options.Logger.Warn("Failed to delete ACL after successful delete",
-								zap.String("key", string(op.Del.Key)),
-								zap.Error(err))
-						} else if options.CurrentOptions.DevelopmentMode {
-							mv := mig.GetVersion()
-							options.Logger.Info("ACL DEL alongside migration",
-								zap.String("data_key", string(op.Del.Key)),
-								zap.String("acl_key", aclKey),
-								zap.Int64("table_version", mv.GetTableVersion()),
-								zap.Int64("migration_version", mv.GetMigrationVersion()),
-								zap.Int64("node_id", mv.GetNodeId()),
-								zap.String("table", mv.GetTableName()),
-							)
+						// Delete all ACL entries (owner, read, write) for this key
+						keys := []string{
+							CreateACLKey(string(op.Del.Key)),
+							CreateReadACLKey(string(op.Del.Key)),
+							CreateWriteACLKey(string(op.Del.Key)),
+						}
+						for _, aclKey := range keys {
+							if err := metaStore.Delete(ctx, []byte(aclKey)); err != nil {
+								if errors.Is(err, kv.ErrKeyNotFound) {
+									// Not found is fine; continue deleting remaining ACL keys
+									continue
+								}
+								// Propagate other errors so callers can handle appropriately
+								return nil, status.Errorf(codes.Internal, "failed to delete ACL key %s: %v", aclKey, err)
+							}
+							if options.CurrentOptions.DevelopmentMode {
+								mv := mig.GetVersion()
+								options.Logger.Info("ACL DEL alongside migration",
+									zap.String("data_key", string(op.Del.Key)),
+									zap.String("acl_key", aclKey),
+									zap.Int64("table_version", mv.GetTableVersion()),
+									zap.Int64("migration_version", mv.GetMigrationVersion()),
+									zap.Int64("node_id", mv.GetNodeId()),
+									zap.String("table", mv.GetTableName()),
+								)
+							}
 						}
 					}
 				}

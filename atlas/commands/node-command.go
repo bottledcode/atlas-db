@@ -17,18 +17,18 @@ import (
 
 type NodeCommand struct{ CommandString }
 
-func (c *NodeCommand) GetNext() Command {
+func (c *NodeCommand) GetNext() (Command, error) {
 	if next, ok := c.SelectNormalizedCommand(1); ok {
 		switch next {
 		case "LIST":
-			return &NodeListCommand{*c}
+			return &NodeListCommand{*c}, nil
 		case "INFO":
-			return &NodeInfoCommand{*c}
+			return &NodeInfoCommand{*c}, nil
 		case "PING":
-			return &NodePingCommand{*c}
+			return &NodePingCommand{*c}, nil
 		}
 	}
-	return EmptyCommandString
+	return EmptyCommandString, nil
 }
 
 // NodeListCommand lists active nodes known to the repository

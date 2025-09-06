@@ -66,7 +66,7 @@ func (c *CommandString) GetNext() (Command, error) {
 		case "KEY":
 			return (&KeyCommand{*c}).GetNext()
 		case "NODE":
-			return (&NodeCommand{*c}).GetNext(), nil
+			return (&NodeCommand{*c}).GetNext()
 		case "SCAN":
 			return (&ScanCommand{CommandString: *c}).GetNext()
 		case "COUNT":

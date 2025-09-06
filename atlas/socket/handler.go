@@ -43,17 +43,13 @@ func (s *Socket) Cleanup() {
 
 func (s *Socket) writeRawMessage(msg ...[]byte) error {
 	for _, m := range msg {
-		n, err := s.writer.Write(m)
-		if err != nil {
-			return err
+		for len(m) > 0 {
+			n, err := s.writer.Write(m)
+			if err != nil {
+				return err
+			}
+			m = m[n:]
 		}
-		if n < len(m) {
-			return s.writeRawMessage(m[n:])
-		}
-	}
-	err := s.writer.Flush()
-	if err != nil {
-		return err
 	}
 	return nil
 }
@@ -73,19 +69,11 @@ func (s *Socket) writeMessage(msg []byte) error {
 }
 
 func (s *Socket) writeError(code ErrorCode, err error) error {
-	e := s.writeMessage([]byte("ERROR " + string(code) + " " + err.Error()))
-	if e != nil {
-		return e
-	}
-	return s.writer.Flush()
+	return s.writeMessage([]byte("ERROR " + string(code) + " " + err.Error()))
 }
 
 func (s *Socket) writeOk(code ErrorCode) error {
-	err := s.writeMessage([]byte(code))
-	if err != nil {
-		return err
-	}
-	return s.writer.Flush()
+	return s.writeMessage([]byte(code))
 }
 
 const ProtoVersion = "1.0"
@@ -93,7 +81,10 @@ const ProtoVersion = "1.0"
 var ServerVersion = "Chronalys/1.0"
 
 func (s *Socket) setTimeout(t time.Duration) error {
-	return s.conn.SetDeadline(time.Now().Add(t))
+	if t > 0 {
+		return s.conn.SetDeadline(time.Now().Add(t))
+	}
+	return nil
 }
 
 func (s *Socket) HandleConnection(conn net.Conn, ctx context.Context) {

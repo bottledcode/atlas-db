@@ -206,11 +206,43 @@ else
     exit 1
 fi
 
-result=$(run_session_commands "PRINCIPAL ASSUME bob" "KEY GET users.bob")
-if echo "$result" | grep -q "VALUE:"; then
-    echo "✅ Bob still has access after alice revoke"
+result=$(run_session_commands "PRINCIPAL ASSUME bob" "KEY PUT users.bob bob_still_can_write")
+if echo "$result" | grep -qi "ERROR"; then
+    echo "❌ Bob should still be able to WRITE after alice revoke, got: $result"
+    exit 1
 else
-    echo "❌ Bob should still have access, got: $result"
+    echo "✅ Bob still has WRITE access after alice revoke"
+fi
+
+echo "🏷️ 13. Testing OWNER implies full access even with specific ACLs present..."
+run_command "ACL GRANT users.owner alice PERMS OWNER"
+
+# Verify OWNER can write and then read
+result=$(run_session_commands "PRINCIPAL ASSUME alice" "KEY PUT users.owner owner_write")
+if echo "$result" | grep -qi "ERROR"; then
+    echo "❌ OWNER write should succeed initially; got: $result"
+    exit 1
+else
+    echo "✅ OWNER can write initially"
+fi
+
+# Add WRITE ACL for another principal and ensure OWNER still allowed to write
+run_command "ACL GRANT users.owner bob PERMS WRITE"
+result=$(run_session_commands "PRINCIPAL ASSUME alice" "KEY PUT users.owner owner_write_after_write_acl")
+if echo "$result" | grep -qi "permission denied"; then
+    echo "❌ OWNER write was denied after WRITE ACL added; should still be allowed"
+    exit 1
+else
+    echo "✅ OWNER still allowed to write despite WRITE ACL present"
+fi
+
+# Add READ ACL for another principal and ensure OWNER still allowed to read
+run_command "ACL GRANT users.owner charlie PERMS READ"
+result=$(run_session_commands "PRINCIPAL ASSUME alice" "KEY GET users.owner")
+if echo "$result" | grep -q "VALUE:"; then
+    echo "✅ OWNER still allowed to read despite READ ACL present"
+else
+    echo "❌ OWNER read denied after READ ACL added; should still be allowed: $result"
     exit 1
 fi
 
@@ -228,5 +260,6 @@ echo "  ✅ Access revocation verification"
 echo "  ✅ Multi-principal access control"
 echo "  ✅ Selective revocation from multiple principals"
 echo "  ✅ Separate READ and WRITE permissions enforced"
+echo "  ✅ OWNER implies full access even with specific ACLs"
 echo ""
 echo "🎉 End-to-End ACL Test: PASSED"

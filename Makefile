@@ -11,6 +11,9 @@ atlasdb: caddy tools/bin/upx
 	go fmt ./...
 	golangci-lint run ./...
 	cp caddy atlasdb
+
+.PHONY: small
+small: atlasdb
 	upx atlasdb
 
 atlas/caddy/caddy: $(GO_FILES) atlas/bootstrap/bootstrap.pb.go atlas/consensus/consensus.pb.go

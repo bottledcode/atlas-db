@@ -307,58 +307,70 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 				case *KVChange_Set:
 					// Check per-key ACL; missing ACL allows write (public)
 					if metaStore != nil {
-						// Prefer write-specific ACL, fall back to owner ACL
-						aclKeyWrite := CreateWriteACLKey(string(op.Set.Key))
-						aclVal, err := metaStore.Get(ctx, []byte(aclKeyWrite))
-						if errors.Is(err, kv.ErrKeyNotFound) {
-							// fall back to owner ACL
-							aclKey := CreateACLKey(string(op.Set.Key))
-							aclVal, err = metaStore.Get(ctx, []byte(aclKey))
-						}
-
-						if err == nil {
-							// ACL exists - check if principal has access
-							aclData, err := DecodeACLData(aclVal)
-							if err != nil {
+						haveAny := false
+						// First, check OWNER ACL (implies full access)
+						if aclVal, err := metaStore.Get(ctx, []byte(CreateACLKey(string(op.Set.Key)))); err == nil {
+							haveAny = true
+							if aclData, decErr := DecodeACLData(aclVal); decErr != nil {
 								return nil, status.Errorf(codes.Internal, "ACL decode failed")
-							} else {
-								if !checkACLAccess(aclData, principal) {
-									return nil, status.Errorf(codes.PermissionDenied, "write access denied")
-								}
+							} else if checkACLAccess(aclData, principal) {
+								// Allowed by OWNER ACL
+								break
 							}
 						} else if !errors.Is(err, kv.ErrKeyNotFound) {
-							// Unexpected error during ACL check - fail securely
 							return nil, status.Errorf(codes.Internal, "ACL check failed: %v", err)
 						}
-						// If ACL not found (kv.ErrKeyNotFound), allow write
+
+						// Then, check WRITE-specific ACL
+						if aclVal, err := metaStore.Get(ctx, []byte(CreateWriteACLKey(string(op.Set.Key)))); err == nil {
+							haveAny = true
+							if aclData, decErr := DecodeACLData(aclVal); decErr != nil {
+								return nil, status.Errorf(codes.Internal, "ACL decode failed")
+							} else if checkACLAccess(aclData, principal) {
+								// Allowed by WRITE ACL
+								break
+							}
+						} else if !errors.Is(err, kv.ErrKeyNotFound) {
+							return nil, status.Errorf(codes.Internal, "ACL check failed: %v", err)
+						}
+
+						// If any ACLs existed but none allowed this principal, deny
+						if haveAny {
+							return nil, status.Errorf(codes.PermissionDenied, "write access denied")
+						}
+						// If no ACLs exist, allow (public)
 					}
 				case *KVChange_Del:
 					// Check per-key ACL; missing ACL allows delete (public)
 					if metaStore != nil {
-						// Prefer write-specific ACL for deletes too, fall back to owner ACL
-						aclKeyWrite := CreateWriteACLKey(string(op.Del.Key))
-						aclVal, err := metaStore.Get(ctx, []byte(aclKeyWrite))
-						if errors.Is(err, kv.ErrKeyNotFound) {
-							// fall back to owner ACL
-							aclKey := CreateACLKey(string(op.Del.Key))
-							aclVal, err = metaStore.Get(ctx, []byte(aclKey))
-						}
-
-						if err == nil {
-							// ACL exists - check if principal has access
-							aclData, err := DecodeACLData(aclVal)
-							if err != nil {
+						haveAny := false
+						// First, check OWNER ACL
+						if aclVal, err := metaStore.Get(ctx, []byte(CreateACLKey(string(op.Del.Key)))); err == nil {
+							haveAny = true
+							if aclData, decErr := DecodeACLData(aclVal); decErr != nil {
 								return nil, status.Errorf(codes.Internal, "ACL decode failed")
-							} else {
-								if !checkACLAccess(aclData, principal) {
-									return nil, status.Errorf(codes.PermissionDenied, "delete access denied")
-								}
+							} else if checkACLAccess(aclData, principal) {
+								break
 							}
 						} else if !errors.Is(err, kv.ErrKeyNotFound) {
-							// Unexpected error during ACL check - fail securely
 							return nil, status.Errorf(codes.Internal, "ACL check failed: %v", err)
 						}
-						// If ACL not found (kv.ErrKeyNotFound), allow delete
+
+						// Then, check WRITE-specific ACL (delete is a write)
+						if aclVal, err := metaStore.Get(ctx, []byte(CreateWriteACLKey(string(op.Del.Key)))); err == nil {
+							haveAny = true
+							if aclData, decErr := DecodeACLData(aclVal); decErr != nil {
+								return nil, status.Errorf(codes.Internal, "ACL decode failed")
+							} else if checkACLAccess(aclData, principal) {
+								break
+							}
+						} else if !errors.Is(err, kv.ErrKeyNotFound) {
+							return nil, status.Errorf(codes.Internal, "ACL check failed: %v", err)
+						}
+
+						if haveAny {
+							return nil, status.Errorf(codes.PermissionDenied, "delete access denied")
+						}
 					}
 				}
 			}
@@ -1006,29 +1018,51 @@ func (s *Server) ReadKey(ctx context.Context, req *ReadKeyRequest) (*ReadKeyResp
 	// Check per-key ACL; missing ACL means public read allowed
 	if metaStore != nil {
 		principal := getPrincipalFromContext(ctx)
-		// Prefer read-specific ACL, fall back to owner ACL
-		aclKeyRead := CreateReadACLKey(req.GetKey())
-		aclVal, err := metaStore.Get(ctx, []byte(aclKeyRead))
-		if errors.Is(err, kv.ErrKeyNotFound) {
-			// fall back to owner ACL
-			aclKey := CreateACLKey(req.GetKey())
-			aclVal, err = metaStore.Get(ctx, []byte(aclKey))
-		}
-		if err == nil {
-			// ACL exists - check if principal has access
-			aclData, err := DecodeACLData(aclVal)
-			if err != nil {
+		haveAny := false
+		allowed := false
+		// Check OWNER ACL first (implies full access)
+		if aclVal, err := metaStore.Get(ctx, []byte(CreateACLKey(req.GetKey()))); err == nil {
+			haveAny = true
+			if aclData, decErr := DecodeACLData(aclVal); decErr != nil {
 				return &ReadKeyResponse{Success: false, Error: "ACL decode failed"}, nil
-			} else {
-				if !checkACLAccess(aclData, principal) {
-					return &ReadKeyResponse{Success: false, Error: "access denied"}, nil
+			} else if checkACLAccess(aclData, principal) {
+				allowed = true
+				if options.CurrentOptions.DevelopmentMode {
+					options.Logger.Info("ACL allow (owner)", zap.String("key", req.GetKey()), zap.String("principal", principal))
 				}
+			} else if options.CurrentOptions.DevelopmentMode {
+				options.Logger.Info("ACL miss (owner)", zap.String("key", req.GetKey()), zap.String("principal", principal))
 			}
 		} else if !errors.Is(err, kv.ErrKeyNotFound) {
-			// Unexpected error during ACL check - fail securely
 			return &ReadKeyResponse{Success: false, Error: "ACL check failed"}, nil
 		}
-		// If ACL not found (kv.ErrKeyNotFound), allow public access
+
+		// Then check READ-specific ACL only if not already allowed by owner
+		if !allowed {
+			if aclVal, err := metaStore.Get(ctx, []byte(CreateReadACLKey(req.GetKey()))); err == nil {
+				haveAny = true
+				if aclData, decErr := DecodeACLData(aclVal); decErr != nil {
+					return &ReadKeyResponse{Success: false, Error: "ACL decode failed"}, nil
+				} else if checkACLAccess(aclData, principal) {
+					allowed = true
+					if options.CurrentOptions.DevelopmentMode {
+						options.Logger.Info("ACL allow (read)", zap.String("key", req.GetKey()), zap.String("principal", principal))
+					}
+				} else if options.CurrentOptions.DevelopmentMode {
+					options.Logger.Info("ACL miss (read)", zap.String("key", req.GetKey()), zap.String("principal", principal))
+				}
+			} else if !errors.Is(err, kv.ErrKeyNotFound) {
+				return &ReadKeyResponse{Success: false, Error: "ACL check failed"}, nil
+			}
+		}
+
+		if haveAny && !allowed {
+			if options.CurrentOptions.DevelopmentMode {
+				options.Logger.Info("ACL deny (read)", zap.String("key", req.GetKey()), zap.String("principal", principal))
+			}
+			return &ReadKeyResponse{Success: false, Error: "access denied"}, nil
+		}
+		// If no ACLs found at all, allow public access
 	}
 
 	// Read the key from local store

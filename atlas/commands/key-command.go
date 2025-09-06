@@ -206,6 +206,7 @@ func (k *KeyGetCommand) Execute(ctx context.Context) ([]byte, error) {
 		return nil, err
 	}
 	key, _ := k.SelectNormalizedCommand(2)
+
 	builder := k.FromKey(key)
 	value, err := atlas.GetKey(ctx, builder)
 	if err != nil {

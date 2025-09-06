@@ -298,9 +298,62 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 		return nil, err
 	}
 
+	// Enforce ACL for write/delete operations using session principal
+	principal := getPrincipalFromContext(ctx)
+	for _, mig := range migrations {
+		if d := mig.GetData(); d != nil {
+			if ch := d.GetChange(); ch != nil {
+				switch op := ch.GetOperation().(type) {
+				case *KVChange_Set:
+					// If ACL exists for this key, require matching principal
+					if metaStore != nil {
+						if b, e := metaStore.Get(ctx, aclKeyForDataKey(string(op.Set.Key))); e == nil {
+							if owner, ok := decodeOwner(b); ok {
+								if principal == "" || principal != owner {
+									return nil, status.Errorf(codes.PermissionDenied, "write access denied")
+								}
+							}
+						}
+					}
+				case *KVChange_Del:
+					if metaStore != nil {
+						if b, e := metaStore.Get(ctx, aclKeyForDataKey(string(op.Del.Key))); e == nil {
+							if owner, ok := decodeOwner(b); ok {
+								if principal == "" || principal != owner {
+									return nil, status.Errorf(codes.PermissionDenied, "delete access denied")
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	err = s.applyMigration(migrations, kvStore)
 	if err != nil {
 		return nil, err
+	}
+
+	// After applying, set or clear ACL entries as needed
+	for _, mig := range migrations {
+		if d := mig.GetData(); d != nil {
+			if ch := d.GetChange(); ch != nil {
+				switch op := ch.GetOperation().(type) {
+				case *KVChange_Set:
+					if metaStore != nil && principal != "" {
+						// Only set owner if not present (creation)
+						if _, e := metaStore.Get(ctx, aclKeyForDataKey(string(op.Set.Key))); e != nil {
+							_ = metaStore.Put(ctx, aclKeyForDataKey(string(op.Set.Key)), encodeOwner(principal))
+						}
+					}
+				case *KVChange_Del:
+					if metaStore != nil {
+						_ = metaStore.Delete(ctx, aclKeyForDataKey(string(op.Del.Key)))
+					}
+				}
+			}
+		}
 	}
 
 	err = mr.CommitMigrationExact(req.GetMigration().GetVersion())
@@ -878,7 +931,7 @@ func (s *Server) ReadKey(ctx context.Context, req *ReadKeyRequest) (*ReadKeyResp
 		}, nil
 	}
 
-	// Read the key from local store
+	// Enforce ACL if present in meta store (owner-only model for now)
 	dataStore := kvPool.DataStore()
 	if dataStore == nil {
 		return &ReadKeyResponse{
@@ -888,6 +941,20 @@ func (s *Server) ReadKey(ctx context.Context, req *ReadKeyRequest) (*ReadKeyResp
 	}
 
 	keyBytes := []byte(req.GetKey())
+	// Check ACL in meta store; missing => public read allowed
+	if metaStore != nil {
+		if aclVal, err := metaStore.Get(ctx, aclKeyForDataKey(req.GetKey())); err == nil {
+			owner, ok := decodeOwner(aclVal)
+			if ok {
+				principal := getPrincipalFromContext(ctx)
+				if principal == "" || principal != owner {
+					return &ReadKeyResponse{Success: false, Error: "access denied"}, nil
+				}
+			}
+		}
+	}
+
+	// Read the key from local store
 	value, err := dataStore.Get(ctx, keyBytes)
 	if err != nil {
 		if errors.Is(err, kv.ErrKeyNotFound) {

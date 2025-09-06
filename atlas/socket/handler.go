@@ -28,12 +28,14 @@ import (
 	"github.com/bottledcode/atlas-db/atlas/kv"
 	"github.com/bottledcode/atlas-db/atlas/options"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/metadata"
 )
 
 type Socket struct {
-	writer  *bufio.ReadWriter
-	conn    net.Conn
-	timeout time.Duration
+	writer    *bufio.ReadWriter
+	conn      net.Conn
+	timeout   time.Duration
+	principal string
 }
 
 func (s *Socket) Cleanup() {
@@ -190,6 +192,54 @@ ready:
 				}
 			}
 
+			// Session-level principal commands handled here
+			if first, _ := cmd.SelectNormalizedCommand(0); first == "PRINCIPAL" {
+				if cmd.CheckMinLen(2) != nil {
+					if err := s.writeError(Warning, errors.New("invalid PRINCIPAL command")); err != nil {
+						options.Logger.Error("Error writing error message", zap.Error(err))
+						return
+					}
+					continue
+				}
+				action, _ := cmd.SelectNormalizedCommand(1)
+				switch action {
+				case "WHOAMI":
+					who := s.principal
+					if who == "" {
+						who = "(none)"
+					}
+					if err := s.writeMessage([]byte("PRINCIPAL " + who)); err != nil {
+						options.Logger.Error("Error writing WHOAMI response", zap.Error(err))
+						return
+					}
+					if err := s.writeOk(OK); err != nil {
+						options.Logger.Error("Error writing OK response", zap.Error(err))
+						return
+					}
+					continue
+				case "ASSUME":
+					if cmd.CheckMinLen(3) != nil {
+						if err := s.writeError(Warning, errors.New("usage: PRINCIPAL ASSUME <name>")); err != nil {
+							options.Logger.Error("Error writing error message", zap.Error(err))
+							return
+						}
+						continue
+					}
+					s.principal = cmd.SelectCommand(2)
+					if err := s.writeOk(OK); err != nil {
+						options.Logger.Error("Error writing OK response", zap.Error(err))
+						return
+					}
+					continue
+				default:
+					if err := s.writeError(Warning, errors.New("unknown PRINCIPAL action")); err != nil {
+						options.Logger.Error("Error writing error message", zap.Error(err))
+						return
+					}
+					continue
+				}
+			}
+
 			command, err := cmd.GetNext()
 			if err != nil {
 				options.Logger.Error("Error reading command", zap.Error(err))
@@ -200,10 +250,15 @@ ready:
 				}
 				continue
 			}
-			resp, err := command.Execute(ctx)
+			execCtx := ctx
+			if s.principal != "" {
+				execCtx = metadata.NewOutgoingContext(ctx, metadata.Pairs("Atlas-Principal", s.principal))
+			}
+			resp, err := command.Execute(execCtx)
 			if err != nil {
 				options.Logger.Error("Error executing command", zap.Error(err))
-				err = s.writeError(Warning, err)
+				code, msg := formatCommandError(err, s.principal)
+				err = s.writeError(code, errors.New(msg))
 				if err != nil {
 					options.Logger.Error("Error writing error message", zap.Error(err))
 					return

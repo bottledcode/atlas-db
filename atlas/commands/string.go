@@ -64,7 +64,7 @@ func (c *CommandString) GetNext() (Command, error) {
 	if next, ok := c.SelectNormalizedCommand(0); ok {
 		switch next {
 		case "KEY":
-			return (&KeyCommand{*c}).GetNext(), nil
+			return (&KeyCommand{*c}).GetNext()
 		case "NODE":
 			return (&NodeCommand{*c}).GetNext(), nil
 		case "SCAN":

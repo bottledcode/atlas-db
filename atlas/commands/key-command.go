@@ -41,18 +41,18 @@ func (c *KeyCommand) GetKey() *KeyGetCommand {
 	return nil
 }
 
-func (c *KeyCommand) GetNext() Command {
+func (c *KeyCommand) GetNext() (Command, error) {
 	if next, ok := c.SelectNormalizedCommand(1); ok {
 		switch next {
 		case "GET":
-			return &KeyGetCommand{*c}
+			return &KeyGetCommand{*c}, nil
 		case "PUT":
-			return &KeyPutCommand{*c}
+			return &KeyPutCommand{*c}, nil
 		case "DEL":
-			return &KeyDelCommand{*c}
+			return &KeyDelCommand{*c}, nil
 		}
 	}
-	return EmptyCommandString
+	return EmptyCommandString, nil
 }
 
 func (c *KeyCommand) FromKey(key string) *kv.KeyBuilder {

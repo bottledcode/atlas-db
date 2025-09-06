@@ -21,7 +21,6 @@ package commands
 import (
 	"bytes"
 	"context"
-	"strings"
 	"time"
 
 	"github.com/bottledcode/atlas-db/atlas"
@@ -47,6 +46,8 @@ func (c *KeyCommand) GetNext() (Command, error) {
 		case "GET":
 			return &KeyGetCommand{*c}, nil
 		case "PUT":
+			fallthrough
+		case "SET":
 			return &KeyPutCommand{*c}, nil
 		case "DEL":
 			return &KeyDelCommand{*c}, nil
@@ -56,16 +57,7 @@ func (c *KeyCommand) GetNext() (Command, error) {
 }
 
 func (c *KeyCommand) FromKey(key string) *kv.KeyBuilder {
-	builder := kv.NewKeyBuilder()
-	parts := strings.Split(key, ".")
-	if len(parts) == 1 {
-		builder = builder.Table(parts[0])
-	} else if len(parts) == 2 {
-		builder = builder.Table(parts[0]).Row(parts[1])
-	} else {
-		builder = builder.Table(parts[0]).Row(parts[1]).Append(strings.Join(parts[2:], "."))
-	}
-	return builder
+	return kv.FromDottedKey(key)
 }
 
 type KeyPutCommand struct {

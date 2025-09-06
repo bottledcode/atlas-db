@@ -31,15 +31,23 @@ func WriteKey(ctx context.Context, builder *kv.KeyBuilder, value []byte) error {
 
 	key := builder.Build()
 	keyString := string(key)
+	tableName, ok := builder.TableName()
+	if !ok || tableName == "" {
+		if t, _, valid := kv.ParseTableRowKey(key); valid {
+			tableName = t
+		} else {
+			tableName = keyString
+		}
+	}
 
-	q, err := qm.GetQuorum(ctx, keyString)
+	q, err := qm.GetQuorum(ctx, tableName)
 	if err != nil {
 		return err
 	}
 	resp, err := q.WriteKey(ctx, &consensus.WriteKeyRequest{
 		Sender: nil,
 		Key:    keyString,
-		Table:  keyString,
+		Table:  tableName,
 		Value:  value,
 	})
 	if err != nil {
@@ -56,15 +64,23 @@ func GetKey(ctx context.Context, builder *kv.KeyBuilder) ([]byte, error) {
 
 	key := builder.Build()
 	keyString := string(key)
+	tableName, ok := builder.TableName()
+	if !ok || tableName == "" {
+		if t, _, valid := kv.ParseTableRowKey(key); valid {
+			tableName = t
+		} else {
+			tableName = keyString
+		}
+	}
 
-	q, err := qm.GetQuorum(ctx, keyString)
+	q, err := qm.GetQuorum(ctx, tableName)
 	if err != nil {
 		return nil, err
 	}
 	resp, err := q.ReadKey(ctx, &consensus.ReadKeyRequest{
 		Sender: nil,
 		Key:    keyString,
-		Table:  keyString,
+		Table:  tableName,
 	})
 	if err != nil {
 		return nil, err
@@ -82,8 +98,16 @@ func DeleteKey(ctx context.Context, builder *kv.KeyBuilder) error {
 
 	key := builder.Build()
 	keyString := string(key)
+	tableName, ok := builder.TableName()
+	if !ok || tableName == "" {
+		if t, _, valid := kv.ParseTableRowKey(key); valid {
+			tableName = t
+		} else {
+			tableName = keyString
+		}
+	}
 
-	q, err := qm.GetQuorum(ctx, keyString)
+	q, err := qm.GetQuorum(ctx, tableName)
 	if err != nil {
 		return err
 	}
@@ -92,7 +116,7 @@ func DeleteKey(ctx context.Context, builder *kv.KeyBuilder) error {
 	resp, err := q.DeleteKey(ctx, &consensus.WriteKeyRequest{
 		Sender: nil,
 		Key:    keyString,
-		Table:  keyString,
+		Table:  tableName,
 	})
 	if err != nil {
 		return err

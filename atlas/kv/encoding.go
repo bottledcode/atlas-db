@@ -107,6 +107,35 @@ func (kb *KeyBuilder) Clone() *KeyBuilder {
 	return newKB
 }
 
+// TableName attempts to extract the table name from the builder.
+// It returns the first segment that follows a "table" prefix, if present.
+func (kb *KeyBuilder) TableName() (string, bool) {
+	for i := 0; i < len(kb.parts)-1; i++ {
+		if kb.parts[i] == "table" {
+			return kb.parts[i+1], true
+		}
+	}
+	return "", false
+}
+
+// FromDottedKey constructs a KeyBuilder from a logical dotted key of the form
+// "table.row.extra" -> "table:<TABLE>:row:<ROW>:EXTRA".
+// Additional segments after the first two are re-joined with '.' and appended as a single part.
+func FromDottedKey(key string) *KeyBuilder {
+	builder := NewKeyBuilder()
+	parts := strings.Split(key, ".")
+	switch len(parts) {
+	case 0:
+		return builder
+	case 1:
+		return builder.Table(parts[0])
+	case 2:
+		return builder.Table(parts[0]).Row(parts[1])
+	default:
+		return builder.Table(parts[0]).Row(parts[1]).Append(strings.Join(parts[2:], "."))
+	}
+}
+
 // Value represents a typed value that can be stored in the KV store
 type Value struct {
 	Type     TypeCode       `json:"type"`

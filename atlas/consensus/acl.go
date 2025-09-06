@@ -15,6 +15,11 @@ func aclKeyForDataKey(dataKey string) []byte {
 	return []byte("meta:acl:" + dataKey)
 }
 
+// aclKeyForTable maps a table name to its table-level ACL metadata key.
+func aclKeyForTable(table string) []byte {
+	return []byte("meta:acl:table:" + table)
+}
+
 // encodeOwner encodes a single-string owner principal as length-prefixed bytes.
 func encodeOwner(owner string) []byte {
 	n := len(owner)

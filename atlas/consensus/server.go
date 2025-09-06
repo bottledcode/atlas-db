@@ -300,6 +300,7 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 
 	// Enforce ACL for write/delete operations using session principal
 	principal := getPrincipalFromContext(ctx)
+	tableName := req.GetMigration().GetVersion().GetTableName()
 	for _, mig := range migrations {
 		if d := mig.GetData(); d != nil {
 			if ch := d.GetChange(); ch != nil {
@@ -314,7 +315,18 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 									return nil, status.Errorf(codes.PermissionDenied, "write access denied")
 								}
 							}
-						} else if !errors.Is(e, kv.ErrKeyNotFound) {
+						} else if errors.Is(e, kv.ErrKeyNotFound) {
+							// Fallback to table-level ACL
+							if tb, te := metaStore.Get(ctx, aclKeyForTable(tableName)); te == nil {
+								if owner, ok := decodeOwner(tb); ok {
+									if principal == "" || principal != owner {
+										return nil, status.Errorf(codes.PermissionDenied, "write access denied")
+									}
+								}
+							} else if !errors.Is(te, kv.ErrKeyNotFound) {
+								return nil, status.Errorf(codes.Internal, "ACL check failed: %v", te)
+							}
+						} else {
 							// Unexpected error during ACL check - fail securely
 							return nil, status.Errorf(codes.Internal, "ACL check failed: %v", e)
 						}
@@ -328,7 +340,18 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 									return nil, status.Errorf(codes.PermissionDenied, "delete access denied")
 								}
 							}
-						} else if !errors.Is(e, kv.ErrKeyNotFound) {
+						} else if errors.Is(e, kv.ErrKeyNotFound) {
+							// Fallback to table-level ACL
+							if tb, te := metaStore.Get(ctx, aclKeyForTable(tableName)); te == nil {
+								if owner, ok := decodeOwner(tb); ok {
+									if principal == "" || principal != owner {
+										return nil, status.Errorf(codes.PermissionDenied, "delete access denied")
+									}
+								}
+							} else if !errors.Is(te, kv.ErrKeyNotFound) {
+								return nil, status.Errorf(codes.Internal, "ACL check failed: %v", te)
+							}
+						} else {
 							// Unexpected error during ACL check - fail securely
 							return nil, status.Errorf(codes.Internal, "ACL check failed: %v", e)
 						}
@@ -969,16 +992,28 @@ func (s *Server) ReadKey(ctx context.Context, req *ReadKeyRequest) (*ReadKeyResp
 	keyBytes := []byte(req.GetKey())
 	// Check ACL in meta store; missing => public read allowed
 	if metaStore != nil {
+		principal := getPrincipalFromContext(ctx)
+		// First, check row-level ACL
 		aclVal, err := metaStore.Get(ctx, aclKeyForDataKey(req.GetKey()))
 		if err == nil {
-			owner, ok := decodeOwner(aclVal)
-			if ok {
-				principal := getPrincipalFromContext(ctx)
+			if owner, ok := decodeOwner(aclVal); ok {
 				if principal == "" || principal != owner {
 					return &ReadKeyResponse{Success: false, Error: "access denied"}, nil
 				}
 			}
-		} else if !errors.Is(err, kv.ErrKeyNotFound) {
+		} else if errors.Is(err, kv.ErrKeyNotFound) {
+			// Fallback to table-level ACL if row-level missing
+			if tAcl, tErr := metaStore.Get(ctx, aclKeyForTable(req.GetTable())); tErr == nil {
+				if owner, ok := decodeOwner(tAcl); ok {
+					if principal == "" || principal != owner {
+						return &ReadKeyResponse{Success: false, Error: "access denied"}, nil
+					}
+				}
+			} else if !errors.Is(tErr, kv.ErrKeyNotFound) {
+				// Unexpected error during table-level ACL check - fail securely
+				return &ReadKeyResponse{Success: false, Error: "ACL check failed"}, nil
+			}
+		} else {
 			// Unexpected error during ACL check - fail securely
 			return &ReadKeyResponse{Success: false, Error: "ACL check failed"}, nil
 		}

@@ -74,3 +74,31 @@ func GetKey(ctx context.Context, builder *kv.KeyBuilder) ([]byte, error) {
 	}
 	return nil, nil
 }
+
+// DeleteKey performs a distributed delete of the provided key using the
+// same migration-based consensus path used for writes.
+func DeleteKey(ctx context.Context, builder *kv.KeyBuilder) error {
+	qm := consensus.GetDefaultQuorumManager(ctx)
+
+	key := builder.Build()
+	keyString := string(key)
+
+	q, err := qm.GetQuorum(ctx, keyString)
+	if err != nil {
+		return err
+	}
+
+	// Reuse WriteKeyRequest shape for quorum-level delete operation
+	resp, err := q.DeleteKey(ctx, &consensus.WriteKeyRequest{
+		Sender: nil,
+		Key:    keyString,
+		Table:  keyString,
+	})
+	if err != nil {
+		return err
+	}
+	if resp.Success {
+		return nil
+	}
+	return fmt.Errorf("delete failed: %s", resp.Error)
+}

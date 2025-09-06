@@ -110,8 +110,8 @@ func TestKeyGet_FromKey_Mapping_MultiPart(t *testing.T) {
 	}
 }
 
-func TestKeyDel_NotImplemented(t *testing.T) {
-	cmd := CommandFromString("KEY DEL my.key")
+func TestKeyDel_FromKey_Mapping(t *testing.T) {
+	cmd := CommandFromString("KEY DEL table.row.attr.more")
 	next, err := cmd.GetNext()
 	if err != nil {
 		t.Fatalf("unexpected error getting next: %v", err)
@@ -120,8 +120,10 @@ func TestKeyDel_NotImplemented(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *KeyDelCommand, got %T", next)
 	}
-	if _, err := kd.Execute(context.Background()); err == nil {
-		t.Fatalf("expected not implemented error for KEY DEL")
+	key, _ := kd.SelectNormalizedCommand(2)
+	builder := kd.FromKey(key)
+	if got := builder.String(); got != "table:TABLE:row:ROW:ATTR.MORE" {
+		t.Fatalf("unexpected key mapping, got %q", got)
 	}
 }
 

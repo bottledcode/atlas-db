@@ -155,6 +155,8 @@ type Quorum interface {
 	ConsensusClient
 	CurrentNodeInReplicationQuorum() bool
 	CurrentNodeInMigrationQuorum() bool
+	// DeleteKey mirrors WriteKey semantics but deletes the key via migration
+	DeleteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error)
 }
 
 type QuorumNode struct {

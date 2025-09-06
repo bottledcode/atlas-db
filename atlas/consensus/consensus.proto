@@ -238,3 +238,10 @@ message WriteKeyResponse {
   bool success = 1; // Whether the write was successful
   string error = 2; // Error message if not successful
 }
+
+// ACL data structure for protobuf encoding
+message ACLData {
+  repeated string principals = 1; // List of principals with access to this key
+  google.protobuf.Timestamp created_at = 2; // When ACL was created
+  google.protobuf.Timestamp updated_at = 3; // When ACL was last modified
+}

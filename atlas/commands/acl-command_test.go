@@ -185,18 +185,18 @@ func TestACLCommands_Integration(t *testing.T) {
 	builtKey := string(kv.FromDottedKey("USERS.123").Build())
 	assert.Contains(t, string(result), "ACL granted to alice for "+builtKey+" with permissions READ")
 
-	// Verify ACL was set by checking the metadata store directly
+	// Verify READ ACL was set by checking the metadata store directly
 	kvPool := kv.GetPool()
 	metaStore := kvPool.MetaStore()
-	aclKey := consensus.CreateACLKey(builtKey)
-	aclVal, err := metaStore.Get(ctx, []byte(aclKey))
+	aclKeyRead := consensus.CreateReadACLKey(builtKey)
+	aclVal, err := metaStore.Get(ctx, []byte(aclKeyRead))
 	require.NoError(t, err)
 
 	aclData, err := consensus.DecodeACLData(aclVal)
 	require.NoError(t, err)
 	assert.True(t, consensus.HasPrincipal(aclData, "alice"))
 
-	// Test ACL GRANT to add another principal
+	// Test ACL GRANT to add another principal (WRITE)
 	grantCmd2 := CommandFromString("ACL GRANT users.123 bob PERMS WRITE")
 	cmd2, err := grantCmd2.GetNext()
 	require.NoError(t, err)
@@ -205,15 +205,22 @@ func TestACLCommands_Integration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(result2), "ACL granted to bob for "+builtKey+" with permissions WRITE")
 
-	// Verify both principals have access
-	aclVal2, err := metaStore.Get(ctx, []byte(aclKey))
+	// Verify principals are placed under correct permission keys
+	// READ should have alice
+	aclVal2Read, err := metaStore.Get(ctx, []byte(aclKeyRead))
 	require.NoError(t, err)
-
-	aclData2, err := consensus.DecodeACLData(aclVal2)
+	aclData2Read, err := consensus.DecodeACLData(aclVal2Read)
 	require.NoError(t, err)
-	assert.True(t, consensus.HasPrincipal(aclData2, "alice"))
-	assert.True(t, consensus.HasPrincipal(aclData2, "bob"))
-	assert.Len(t, aclData2.Principals, 2)
+	assert.True(t, consensus.HasPrincipal(aclData2Read, "alice"))
+	assert.Len(t, aclData2Read.Principals, 1)
+	// WRITE should have bob
+	aclKeyWrite := consensus.CreateWriteACLKey(builtKey)
+	aclVal2Write, err := metaStore.Get(ctx, []byte(aclKeyWrite))
+	require.NoError(t, err)
+	aclData2Write, err := consensus.DecodeACLData(aclVal2Write)
+	require.NoError(t, err)
+	assert.True(t, consensus.HasPrincipal(aclData2Write, "bob"))
+	assert.Len(t, aclData2Write.Principals, 1)
 
 	// Test ACL REVOKE
 	revokeCmd := CommandFromString("ACL REVOKE users.123 alice PERMS READ")
@@ -224,15 +231,15 @@ func TestACLCommands_Integration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(result3), "ACL revoked from alice for "+builtKey+" with permissions READ")
 
-	// Verify alice was removed but bob remains
-	aclVal3, err := metaStore.Get(ctx, []byte(aclKey))
+	// Verify alice was removed from READ but bob remains in WRITE
+	_, err = metaStore.Get(ctx, []byte(aclKeyRead))
+	assert.Error(t, err) // READ list should be gone
+	aclVal3Write, err := metaStore.Get(ctx, []byte(aclKeyWrite))
 	require.NoError(t, err)
-
-	aclData3, err := consensus.DecodeACLData(aclVal3)
+	aclData3Write, err := consensus.DecodeACLData(aclVal3Write)
 	require.NoError(t, err)
-	assert.False(t, consensus.HasPrincipal(aclData3, "alice"))
-	assert.True(t, consensus.HasPrincipal(aclData3, "bob"))
-	assert.Len(t, aclData3.Principals, 1)
+	assert.True(t, consensus.HasPrincipal(aclData3Write, "bob"))
+	assert.Len(t, aclData3Write.Principals, 1)
 
 	// Test ACL REVOKE last principal (should remove ACL entirely)
 	revokeCmd2 := CommandFromString("ACL REVOKE users.123 bob PERMS WRITE")
@@ -243,8 +250,10 @@ func TestACLCommands_Integration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(result4), "ACL revoked from bob for "+builtKey+" with permissions WRITE")
 
-	// Verify ACL was completely removed
-	_, err = metaStore.Get(ctx, []byte(aclKey))
+	// Verify WRITE ACL was completely removed and READ already removed
+	_, err = metaStore.Get(ctx, []byte(aclKeyWrite))
+	assert.Error(t, err) // Should be kv.ErrKeyNotFound
+	_, err = metaStore.Get(ctx, []byte(aclKeyRead))
 	assert.Error(t, err) // Should be kv.ErrKeyNotFound
 }
 

@@ -84,9 +84,8 @@ func (c *ACLGrantCommand) Execute(ctx context.Context) ([]byte, error) {
 	builder := kv.FromDottedKey(tableKey)
 	builtKey := string(builder.Build())
 
-	// Grant ACL using our consensus helper
-	// TODO: Implement permission parsing (READ|WRITE|OWNER)
-	err := consensus.GrantACLToKey(ctx, metaStore, builtKey, principal)
+	// Grant ACL using our consensus helper with permission
+	err := consensus.GrantACLToKeyWithPermission(ctx, metaStore, builtKey, principal, permissions)
 	if err != nil {
 		options.Logger.Error("Failed to grant ACL",
 			zap.String("principal", principal),
@@ -143,9 +142,8 @@ func (c *ACLRevokeCommand) Execute(ctx context.Context) ([]byte, error) {
 	builder := kv.FromDottedKey(tableKey)
 	builtKey := string(builder.Build())
 
-	// Revoke ACL using our consensus helper
-	// TODO: Implement permission parsing (READ|WRITE|OWNER)
-	err := consensus.RevokeACLFromKey(ctx, metaStore, builtKey, principal)
+	// Revoke ACL using our consensus helper with permission
+	err := consensus.RevokeACLFromKeyWithPermission(ctx, metaStore, builtKey, principal, permissions)
 	if err != nil {
 		options.Logger.Error("Failed to revoke ACL",
 			zap.String("principal", principal),

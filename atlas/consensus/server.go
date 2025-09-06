@@ -307,15 +307,21 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 				case *KVChange_Set:
 					// Check per-key ACL; missing ACL allows write (public)
 					if metaStore != nil {
-						aclKey := CreateACLKey(string(op.Set.Key))
-						aclVal, err := metaStore.Get(ctx, []byte(aclKey))
+						// Prefer write-specific ACL, fall back to owner ACL
+						aclKeyWrite := CreateWriteACLKey(string(op.Set.Key))
+						aclVal, err := metaStore.Get(ctx, []byte(aclKeyWrite))
+						if errors.Is(err, kv.ErrKeyNotFound) {
+							// fall back to owner ACL
+							aclKey := CreateACLKey(string(op.Set.Key))
+							aclVal, err = metaStore.Get(ctx, []byte(aclKey))
+						}
+
 						if err == nil {
 							// ACL exists - check if principal has access
 							aclData, err := DecodeACLData(aclVal)
 							if err != nil {
 								return nil, status.Errorf(codes.Internal, "ACL decode failed")
 							} else {
-								// Use new multi-principal ACL format
 								if !checkACLAccess(aclData, principal) {
 									return nil, status.Errorf(codes.PermissionDenied, "write access denied")
 								}
@@ -329,15 +335,21 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 				case *KVChange_Del:
 					// Check per-key ACL; missing ACL allows delete (public)
 					if metaStore != nil {
-						aclKey := CreateACLKey(string(op.Del.Key))
-						aclVal, err := metaStore.Get(ctx, []byte(aclKey))
+						// Prefer write-specific ACL for deletes too, fall back to owner ACL
+						aclKeyWrite := CreateWriteACLKey(string(op.Del.Key))
+						aclVal, err := metaStore.Get(ctx, []byte(aclKeyWrite))
+						if errors.Is(err, kv.ErrKeyNotFound) {
+							// fall back to owner ACL
+							aclKey := CreateACLKey(string(op.Del.Key))
+							aclVal, err = metaStore.Get(ctx, []byte(aclKey))
+						}
+
 						if err == nil {
 							// ACL exists - check if principal has access
 							aclData, err := DecodeACLData(aclVal)
 							if err != nil {
 								return nil, status.Errorf(codes.Internal, "ACL decode failed")
 							} else {
-								// Use new multi-principal ACL format
 								if !checkACLAccess(aclData, principal) {
 									return nil, status.Errorf(codes.PermissionDenied, "delete access denied")
 								}
@@ -994,15 +1006,20 @@ func (s *Server) ReadKey(ctx context.Context, req *ReadKeyRequest) (*ReadKeyResp
 	// Check per-key ACL; missing ACL means public read allowed
 	if metaStore != nil {
 		principal := getPrincipalFromContext(ctx)
-		aclKey := CreateACLKey(req.GetKey())
-		aclVal, err := metaStore.Get(ctx, []byte(aclKey))
+		// Prefer read-specific ACL, fall back to owner ACL
+		aclKeyRead := CreateReadACLKey(req.GetKey())
+		aclVal, err := metaStore.Get(ctx, []byte(aclKeyRead))
+		if errors.Is(err, kv.ErrKeyNotFound) {
+			// fall back to owner ACL
+			aclKey := CreateACLKey(req.GetKey())
+			aclVal, err = metaStore.Get(ctx, []byte(aclKey))
+		}
 		if err == nil {
 			// ACL exists - check if principal has access
 			aclData, err := DecodeACLData(aclVal)
 			if err != nil {
 				return &ReadKeyResponse{Success: false, Error: "ACL decode failed"}, nil
 			} else {
-				// Use new multi-principal ACL format
 				if !checkACLAccess(aclData, principal) {
 					return &ReadKeyResponse{Success: false, Error: "access denied"}, nil
 				}

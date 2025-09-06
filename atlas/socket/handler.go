@@ -90,7 +90,7 @@ func (s *Socket) writeRawMessage(msg ...[]byte) error {
 const EOL = "\r\n"
 
 func (s *Socket) writeMessage(msg []byte) error {
-	err := s.setTimeout(s.timeout)
+	err := s.setWriteTimeout(s.timeout)
 	if err != nil {
 		return err
 	}
@@ -113,9 +113,21 @@ const ProtoVersion = "1.0"
 
 var ServerVersion = "Chronalys/1.0"
 
+// setTimeout sets both read and write deadlines on the connection.
+//
+//nolint:unused // kept for contexts that require a full deadline; writeMessage uses setWriteTimeout.
 func (s *Socket) setTimeout(t time.Duration) error {
 	if t > 0 {
 		return s.conn.SetDeadline(time.Now().Add(t))
+	}
+	return nil
+}
+
+// setWriteTimeout sets only the write deadline on the connection so that
+// read deadlines remain untouched for the scanner goroutine.
+func (s *Socket) setWriteTimeout(t time.Duration) error {
+	if t > 0 {
+		return s.conn.SetWriteDeadline(time.Now().Add(t))
 	}
 	return nil
 }

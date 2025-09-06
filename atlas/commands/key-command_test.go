@@ -195,3 +195,26 @@ func TestQuorum_Parse_Info(t *testing.T) {
 		t.Fatalf("expected *QuorumInfoCommand, got %T", next)
 	}
 }
+
+// Basic test to ensure the fix compiles and command parsing still works
+func TestKeyGet_ParseCommandStructure(t *testing.T) {
+	cmd := CommandFromString("KEY GET test.key")
+	next, err := cmd.GetNext()
+	if err != nil {
+		t.Fatalf("unexpected error getting next: %v", err)
+	}
+	kgc, ok := next.(*KeyGetCommand)
+	if !ok {
+		t.Fatalf("expected *KeyGetCommand, got %T", next)
+	}
+
+	// Ensure command structure is intact after our changes
+	if err := kgc.CheckMinLen(3); err != nil {
+		t.Fatalf("command should have at least 3 tokens: %v", err)
+	}
+
+	key, _ := kgc.SelectNormalizedCommand(2)
+	if key != "TEST.KEY" {
+		t.Fatalf("expected normalized key 'TEST.KEY', got %q", key)
+	}
+}

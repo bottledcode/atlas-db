@@ -260,7 +260,7 @@ func TestDescribeQuorum_BasicFunctionality(t *testing.T) {
 
 	// Verify the connection manager state is preserved
 	// Note: Connection manager might be nil if the global manager state was reset by another concurrent test
-	// The important thing is that DescribeQuorum completed successfully 
+	// The important thing is that DescribeQuorum completed successfully
 	if dqm.connectionManager == nil {
 		t.Logf("Connection manager is nil (possibly due to concurrent test interference), but DescribeQuorum completed successfully")
 	} else {

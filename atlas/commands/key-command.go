@@ -212,6 +212,9 @@ func (k *KeyGetCommand) Execute(ctx context.Context) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if value == nil {
+		return []byte("NOT_FOUND"), nil
+	}
 	resp := bytes.Join([][]byte{[]byte("VALUE:"), value}, nil)
 	return resp, nil
 }

@@ -182,12 +182,13 @@ func TestACLCommands_Integration(t *testing.T) {
 
 	result, err := cmd.Execute(ctx)
 	require.NoError(t, err)
-	assert.Contains(t, string(result), "ACL granted to alice for USERS.123 with permissions READ")
+	builtKey := string(kv.FromDottedKey("USERS.123").Build())
+	assert.Contains(t, string(result), "ACL granted to alice for "+builtKey+" with permissions READ")
 
 	// Verify ACL was set by checking the metadata store directly
 	kvPool := kv.GetPool()
 	metaStore := kvPool.MetaStore()
-	aclKey := consensus.CreateACLKey("USERS.123")
+	aclKey := consensus.CreateACLKey(builtKey)
 	aclVal, err := metaStore.Get(ctx, []byte(aclKey))
 	require.NoError(t, err)
 
@@ -202,7 +203,7 @@ func TestACLCommands_Integration(t *testing.T) {
 
 	result2, err := cmd2.Execute(ctx)
 	require.NoError(t, err)
-	assert.Contains(t, string(result2), "ACL granted to bob for USERS.123 with permissions WRITE")
+	assert.Contains(t, string(result2), "ACL granted to bob for "+builtKey+" with permissions WRITE")
 
 	// Verify both principals have access
 	aclVal2, err := metaStore.Get(ctx, []byte(aclKey))
@@ -221,7 +222,7 @@ func TestACLCommands_Integration(t *testing.T) {
 
 	result3, err := cmd3.Execute(ctx)
 	require.NoError(t, err)
-	assert.Contains(t, string(result3), "ACL revoked from alice for USERS.123 with permissions READ")
+	assert.Contains(t, string(result3), "ACL revoked from alice for "+builtKey+" with permissions READ")
 
 	// Verify alice was removed but bob remains
 	aclVal3, err := metaStore.Get(ctx, []byte(aclKey))
@@ -240,7 +241,7 @@ func TestACLCommands_Integration(t *testing.T) {
 
 	result4, err := cmd4.Execute(ctx)
 	require.NoError(t, err)
-	assert.Contains(t, string(result4), "ACL revoked from bob for USERS.123 with permissions WRITE")
+	assert.Contains(t, string(result4), "ACL revoked from bob for "+builtKey+" with permissions WRITE")
 
 	// Verify ACL was completely removed
 	_, err = metaStore.Get(ctx, []byte(aclKey))

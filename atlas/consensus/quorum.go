@@ -551,3 +551,43 @@ func (q *defaultQuorumManager) filterHealthyNodes(nodes map[RegionName][]*Quorum
 
 	return filteredNodes
 }
+
+// DescribeQuorum computes the quorum for a given table and returns the Q1 and Q2 members.
+func DescribeQuorum(ctx context.Context, table string) (q1 []*QuorumNode, q2 []*QuorumNode, err error) {
+	// Ensure manager is initialized
+	qm := GetDefaultQuorumManager(ctx)
+
+	// Prepare a temporary connection manager view that treats all known nodes as active
+	// to provide a full quorum description independent of live connections.
+	dqm, ok := qm.(*defaultQuorumManager)
+	if !ok {
+		return nil, nil, fmt.Errorf("unsupported quorum manager type")
+	}
+
+	// Snapshot nodes under lock
+	dqm.mu.RLock()
+	// Build region -> []*ManagedNode with Active status
+	aliasActive := make(map[string][]*ManagedNode)
+	for region, nodes := range dqm.nodes {
+		for _, qn := range nodes {
+			aliasActive[string(region)] = append(aliasActive[string(region)], &ManagedNode{Node: qn.Node, status: NodeStatusActive})
+		}
+	}
+	dqm.mu.RUnlock()
+
+	// Save and replace connection manager
+	oldCM := dqm.connectionManager
+	dqm.connectionManager = &NodeConnectionManager{activeNodes: aliasActive}
+
+	// Compute quorum using standard path
+	qu, err := dqm.GetQuorum(ctx, table)
+	// Restore original connection manager
+	dqm.connectionManager = oldCM
+	if err != nil {
+		return nil, nil, err
+	}
+	if mq, ok := qu.(*majorityQuorum); ok {
+		return mq.q1, mq.q2, nil
+	}
+	return nil, nil, fmt.Errorf("unsupported quorum implementation")
+}

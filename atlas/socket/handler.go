@@ -22,11 +22,9 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"time"
 
-	"github.com/bottledcode/atlas-db/atlas"
 	"github.com/bottledcode/atlas-db/atlas/kv"
 	"github.com/bottledcode/atlas-db/atlas/options"
 	"go.uber.org/zap"
@@ -41,25 +39,31 @@ type Socket struct {
 func (s *Socket) Cleanup() {
 }
 
-func (s *Socket) writeRawMessage(msg string) error {
-	n, err := s.writer.WriteString(msg)
+func (s *Socket) writeRawMessage(msg ...[]byte) error {
+	for _, m := range msg {
+		n, err := s.writer.Write(m)
+		if err != nil {
+			return err
+		}
+		if n < len(m) {
+			return s.writeRawMessage(m[n:])
+		}
+	}
+	err := s.writer.Flush()
 	if err != nil {
 		return err
-	}
-	if n < len(msg) {
-		return s.writeRawMessage(msg[n:])
 	}
 	return nil
 }
 
 const EOL = "\r\n"
 
-func (s *Socket) writeMessage(msg string) error {
+func (s *Socket) writeMessage(msg []byte) error {
 	err := s.setTimeout(s.timeout)
 	if err != nil {
 		return err
 	}
-	err = s.writeRawMessage(msg + EOL)
+	err = s.writeRawMessage(msg, []byte(EOL))
 	if err != nil {
 		return err
 	}
@@ -67,7 +71,7 @@ func (s *Socket) writeMessage(msg string) error {
 }
 
 func (s *Socket) writeError(code ErrorCode, err error) error {
-	e := s.writeMessage("ERROR " + string(code) + " " + err.Error())
+	e := s.writeMessage([]byte("ERROR " + string(code) + " " + err.Error()))
 	if e != nil {
 		return e
 	}
@@ -75,7 +79,7 @@ func (s *Socket) writeError(code ErrorCode, err error) error {
 }
 
 func (s *Socket) writeOk(code ErrorCode) error {
-	err := s.writeMessage(string(code))
+	err := s.writeMessage([]byte(code))
 	if err != nil {
 		return err
 	}
@@ -101,7 +105,7 @@ func (s *Socket) HandleConnection(conn net.Conn, ctx context.Context) {
 	s.conn = conn
 	s.writer = bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn))
 
-	err := s.writeMessage("WELCOME " + ProtoVersion + " " + ServerVersion)
+	err := s.writeMessage([]byte("WELCOME " + ProtoVersion + " " + ServerVersion))
 	if err != nil {
 		options.Logger.Error("Error writing welcome message", zap.Error(err))
 		return
@@ -148,7 +152,7 @@ func (s *Socket) HandleConnection(conn net.Conn, ctx context.Context) {
 
 				// ignore client version for now
 				// ignore authentication for now
-				err := s.writeMessage("READY")
+				err := s.writeMessage([]byte("READY"))
 				if err != nil {
 					options.Logger.Error("Error writing ready message", zap.Error(err))
 					return
@@ -186,80 +190,35 @@ ready:
 				}
 			}
 
-			switch k, _ := cmd.SelectNormalizedCommand(0); k {
-			case "SET":
-				// Validate command format: SET key value
-				if cmd.CheckMinLen(3) != nil {
-					err := s.writeError(Fatal, errors.New("SET requires key and value"))
-					if err != nil {
-						options.Logger.Error("Error writing error message", zap.Error(err))
-						return
-					}
-					continue
-				}
-
-				key := cmd.SelectCommand(1)
-				value := cmd.From(2).Raw()
-
-				err = atlas.WriteKey(ctx, kv.NewKeyBuilder().Table(key), []byte(value))
+			command, err := cmd.GetNext()
+			if err != nil {
+				options.Logger.Error("Error reading command", zap.Error(err))
+				err = s.writeError(Warning, err)
 				if err != nil {
-					options.Logger.Error("Error writing key", zap.Error(err))
-					err := s.writeError(Fatal, fmt.Errorf("SET failed: %w", err))
-					if err != nil {
-						options.Logger.Error("Error writing error message", zap.Error(err))
-						return
-					}
-					continue
-				}
-
-				// Send success response
-				err = s.writeOk(OK)
-				if err != nil {
-					options.Logger.Error("Error writing OK response", zap.Error(err))
+					options.Logger.Error("Error writing error message", zap.Error(err))
 					return
 				}
-			case "GET":
-				// Validate command format: GET key
-				if cmd.CheckMinLen(2) != nil {
-					err := s.writeError(Fatal, errors.New("GET requires key"))
-					if err != nil {
-						options.Logger.Error("Error writing error message", zap.Error(err))
-						return
-					}
-					continue
-				}
-
-				key := cmd.SelectCommand(1)
-
-				value, err := atlas.GetKey(ctx, kv.NewKeyBuilder().Table(key))
+				continue
+			}
+			resp, err := command.Execute(ctx)
+			if err != nil {
+				options.Logger.Error("Error executing command", zap.Error(err))
+				err = s.writeError(Warning, err)
 				if err != nil {
-					options.Logger.Error("Error reading key", zap.Error(err))
-					err := s.writeError(Fatal, fmt.Errorf("GET failed: %w", err))
-					if err != nil {
-						options.Logger.Error("Error writing error message", zap.Error(err))
-						return
-					}
-					continue
-				}
-
-				// Send value response
-				if value == nil {
-					// Key not found
-					err = s.writeMessage("NOT_FOUND")
-				} else {
-					// Key found, return value
-					err = s.writeMessage("VALUE " + string(value))
-				}
-				if err != nil {
-					options.Logger.Error("Error writing GET response", zap.Error(err))
+					options.Logger.Error("Error writing error message", zap.Error(err))
 					return
 				}
-				err = s.writeOk(OK)
-				if err != nil {
-					options.Logger.Error("Error writing OK response", zap.Error(err))
-					return
-				}
-			case "DELETE":
+				continue
+			}
+			err = s.writeMessage(resp)
+			if err != nil {
+				options.Logger.Error("Error writing response", zap.Error(err))
+				return
+			}
+			err = s.writeOk(OK)
+			if err != nil {
+				options.Logger.Error("Error writing OK response", zap.Error(err))
+				return
 			}
 		}
 	}

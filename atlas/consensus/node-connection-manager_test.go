@@ -260,9 +260,9 @@ func TestNodeConnectionManager_ActiveNodesTracking(t *testing.T) {
 	}
 
 	// Add nodes to different regions
-	node1 := createTestNode(1, "us-east-1", "host1", 8080)
-	node2 := createTestNode(2, "us-east-1", "host2", 8080)
-	node3 := createTestNode(3, "us-west-2", "host3", 8080)
+	node1 := createTestNode(1, "us-east-1", "node1.example.com", 8080)
+	node2 := createTestNode(2, "us-east-1", "node2.example.com", 8080)
+	node3 := createTestNode(3, "us-west-2", "node3.example.com", 8080)
 
 	managedNode1 := &ManagedNode{Node: node1, status: NodeStatusActive, rttHistory: make([]time.Duration, 0)}
 	managedNode2 := &ManagedNode{Node: node2, status: NodeStatusActive, rttHistory: make([]time.Duration, 0)}
@@ -402,9 +402,9 @@ func TestHealthChecker_GetHealthStats(t *testing.T) {
 	healthChecker := NewHealthChecker(manager)
 
 	// Add test nodes with different statuses
-	node1 := createTestNode(1, "us-east-1", "host1", 8080)
-	node2 := createTestNode(2, "us-east-1", "host2", 8080)
-	node3 := createTestNode(3, "us-west-2", "host3", 8080)
+	node1 := createTestNode(1, "us-east-1", "node1.example.com", 8080)
+	node2 := createTestNode(2, "us-east-1", "node2.example.com", 8080)
+	node3 := createTestNode(3, "us-west-2", "node3.example.com", 8080)
 
 	managedNode1 := &ManagedNode{Node: node1, status: NodeStatusActive, rttHistory: []time.Duration{10 * time.Millisecond}}
 	managedNode2 := &ManagedNode{Node: node2, status: NodeStatusFailed, rttHistory: make([]time.Duration, 0)}

@@ -551,3 +551,221 @@ func (q *defaultQuorumManager) filterHealthyNodes(nodes map[RegionName][]*Quorum
 
 	return filteredNodes
 }
+
+// describeQuorumDiagnostic implements quorum computation for diagnostic purposes,
+// treating all known nodes as active to show the complete potential quorum structure.
+// This method is thread-safe and does not modify shared state.
+func (q *defaultQuorumManager) describeQuorumDiagnostic(ctx context.Context, table string) (q1 []*QuorumNode, q2 []*QuorumNode, err error) {
+	// Snapshot current nodes under read lock
+	q.mu.RLock()
+	nodesCopy := make(map[RegionName][]*QuorumNode)
+	for region, nodes := range q.nodes {
+		nodesCopy[region] = make([]*QuorumNode, len(nodes))
+		copy(nodesCopy[region], nodes)
+	}
+	q.mu.RUnlock()
+
+	// Get table configuration
+	Fz := options.CurrentOptions.GetFz()
+	Fn := options.CurrentOptions.GetFn()
+
+	kvPool := kv.GetPool()
+	if kvPool == nil {
+		return nil, nil, fmt.Errorf("KV pool not initialized")
+	}
+
+	metaStore := kvPool.MetaStore()
+	if metaStore == nil {
+		return nil, nil, fmt.Errorf("metaStore is closed")
+	}
+
+	tableRepo := NewTableRepositoryKV(ctx, metaStore)
+	tableConfig, err := tableRepo.GetTable(table)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Apply table region restrictions to our local copy
+	if tableConfig != nil {
+		if len(tableConfig.GetAllowedRegions()) > 0 {
+			filteredNodes := make(map[RegionName][]*QuorumNode)
+			for _, region := range tableConfig.GetAllowedRegions() {
+				if nodeSlice, ok := nodesCopy[RegionName(region)]; ok {
+					filteredNodes[RegionName(region)] = nodeSlice
+				}
+			}
+			nodesCopy = filteredNodes
+		} else if len(tableConfig.GetRestrictedRegions()) > 0 {
+			for region := range nodesCopy {
+				for _, restricted := range tableConfig.GetRestrictedRegions() {
+					if string(region) == restricted {
+						delete(nodesCopy, region)
+					}
+				}
+			}
+		}
+	}
+
+	// For diagnostic purposes, treat all nodes as healthy (no filtering by connection manager)
+	// This shows the complete potential quorum structure
+
+recalculate:
+	// Validate quorum is possible
+	q1RegionCount := q.calculateNumberZonesQ1(nodesCopy, Fz)
+	if q1RegionCount < 1 {
+		Fz = Fz - 1
+		if Fz < 0 {
+			return nil, nil, errors.New("unable to form a quorum")
+		}
+		goto recalculate
+	}
+
+	farRegions := q.getClosestRegionsDiagnostic(nodesCopy)
+	slices.Reverse(farRegions)
+
+	// Select Q1 regions from farthest away first
+	selectedQ1Regions := make([]RegionName, 0, int(q1RegionCount))
+	nodesPerQ1Region := q.calculateTotalNodesPerZoneQ1(Fn)
+
+	for _, region := range farRegions {
+		if int64(len(nodesCopy[region])) < nodesPerQ1Region {
+			continue
+		}
+		if int64(len(selectedQ1Regions)) >= q1RegionCount {
+			break
+		}
+		selectedQ1Regions = append(selectedQ1Regions, region)
+	}
+
+	if int64(len(selectedQ1Regions)) < q1RegionCount {
+		Fn = Fn - 1
+		if Fn < 0 {
+			return nil, nil, errors.New("unable to form a quorum")
+		}
+		goto recalculate
+	}
+
+	// Select Q2 regions
+	q2RegionCount := q.calculateNumberZonesQ2(Fz)
+	selectedQ2Regions := make([]RegionName, 0, q2RegionCount)
+	slices.Reverse(farRegions)
+
+	for _, region := range farRegions {
+		lfn := q.calculateLfnDiagnostic(nodesCopy, region, Fn)
+		if lfn == 0 {
+			continue
+		}
+		if int64(len(selectedQ2Regions)) >= q2RegionCount {
+			break
+		}
+		selectedQ2Regions = append(selectedQ2Regions, region)
+	}
+
+	if int64(len(selectedQ2Regions)) < q2RegionCount {
+		Fn = Fn - 1
+		if Fn < 0 {
+			return nil, nil, errors.New("unable to form a quorum")
+		}
+		goto recalculate
+	}
+
+	// Validate quorum sizes
+	q1S := q.calculateQ1SizeDiagnostic(nodesCopy, Fz, Fn)
+	q2S := q.calculateQ2SizeDiagnostic(nodesCopy, Fn, selectedQ2Regions...)
+	Fmax := q.calculateFmaxDiagnostic(nodesCopy, q1S, q2S, Fz, Fn)
+	Fmin := q.calculateFmin(q1S, q2S)
+
+	if Fmax < 0 || Fmin < 0 {
+		next := Fz - 1
+		if next < 0 {
+			return nil, nil, errors.New("unable to form a quorum")
+		}
+		Fz = next
+		goto recalculate
+	}
+
+	// Construct quorum node lists
+	q1Nodes := make([]*QuorumNode, 0, q1S)
+	q2Nodes := make([]*QuorumNode, 0, q2S)
+
+	for _, region := range selectedQ1Regions {
+		for i := range nodesPerQ1Region {
+			if i < int64(len(nodesCopy[region])) {
+				q1Nodes = append(q1Nodes, nodesCopy[region][i])
+			}
+		}
+	}
+
+	for _, region := range selectedQ2Regions {
+		lfn := q.calculateLfnDiagnostic(nodesCopy, region, Fn)
+		for i := int64(0); i < lfn && i < int64(len(nodesCopy[region])); i++ {
+			q2Nodes = append(q2Nodes, nodesCopy[region][i])
+		}
+	}
+
+	return q1Nodes, q2Nodes, nil
+}
+
+// Helper methods for diagnostic quorum calculation that operate on local copies
+func (q *defaultQuorumManager) getClosestRegionsDiagnostic(nodes map[RegionName][]*QuorumNode) []RegionName {
+	regions := make([]RegionName, 0, len(nodes))
+	for region := range nodes {
+		regions = append(regions, region)
+	}
+
+	sort.SliceStable(regions, func(i, j int) bool {
+		iRtt := time.Duration(0)
+		jRtt := time.Duration(0)
+		for _, node := range nodes[regions[i]] {
+			iRtt += node.GetRtt().AsDuration()
+		}
+		for _, node := range nodes[regions[j]] {
+			jRtt += node.GetRtt().AsDuration()
+		}
+		return iRtt < jRtt
+	})
+
+	return regions
+}
+
+func (q *defaultQuorumManager) calculateLfnDiagnostic(nodes map[RegionName][]*QuorumNode, region RegionName, Fn int64) int64 {
+	return int64(len(nodes[region])) - Fn
+}
+
+func (q *defaultQuorumManager) calculateNDiagnostic(nodes map[RegionName][]*QuorumNode) int64 {
+	total := int64(0)
+	for _, nodes := range nodes {
+		total += int64(len(nodes))
+	}
+	return total
+}
+
+func (q *defaultQuorumManager) calculateQ1SizeDiagnostic(nodes map[RegionName][]*QuorumNode, Fz, Fn int64) int64 {
+	q1RegionCount := q.calculateNumberZonesQ1(nodes, Fz)
+	return q1RegionCount * q.calculateTotalNodesPerZoneQ1(Fn)
+}
+
+func (q *defaultQuorumManager) calculateQ2SizeDiagnostic(nodes map[RegionName][]*QuorumNode, Fn int64, regions ...RegionName) int64 {
+	lfn := int64(0)
+	for _, region := range regions {
+		lfn += q.calculateLfnDiagnostic(nodes, region, Fn)
+	}
+	return lfn
+}
+
+func (q *defaultQuorumManager) calculateFmaxDiagnostic(nodes map[RegionName][]*QuorumNode, q1Size, q2Size, Fz, Fn int64) int64 {
+	return q.calculateNDiagnostic(nodes) - q1Size - q2Size + (Fz+1)*(Fn+1)
+}
+
+// DescribeQuorum computes and returns diagnostic information about the potential quorum
+// for a given table, showing all known nodes regardless of their current health status.
+// This is intended for diagnostic purposes only.
+func DescribeQuorum(ctx context.Context, table string) (q1 []*QuorumNode, q2 []*QuorumNode, err error) {
+	qm := GetDefaultQuorumManager(ctx)
+	dqm, ok := qm.(*defaultQuorumManager)
+	if !ok {
+		return nil, nil, fmt.Errorf("unsupported quorum manager type")
+	}
+
+	return dqm.describeQuorumDiagnostic(ctx, table)
+}

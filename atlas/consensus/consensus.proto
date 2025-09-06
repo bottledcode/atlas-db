@@ -34,6 +34,7 @@ service Consensus {
   rpc Ping(PingRequest) returns (PingResponse) {}
   rpc ReadKey(ReadKeyRequest) returns (ReadKeyResponse) {}
   rpc WriteKey(WriteKeyRequest) returns (WriteKeyResponse) {}
+  rpc DeleteKey(WriteKeyRequest) returns (WriteKeyResponse) {}
 }
 
 message MigrationVersion {

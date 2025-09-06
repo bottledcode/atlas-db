@@ -409,3 +409,119 @@ func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts
 
 	return &WriteKeyResponse{Success: true}, nil
 }
+
+// DeleteKey deletes a key using the same ownership-steal and migration path as WriteKey,
+// but emits a KVChange_Del instead of KVChange_Set.
+func (m *majorityQuorum) DeleteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error) {
+	tr := NewTableRepositoryKV(ctx, kv.GetPool().MetaStore())
+	nr := NewNodeRepositoryKV(ctx, kv.GetPool().MetaStore())
+
+	currentNode, err := nr.GetNodeById(options.CurrentOptions.ServerId)
+	if err != nil {
+		return nil, err
+	}
+
+	table, err := tr.GetTable(in.GetTable())
+	if err != nil {
+		return nil, err
+	}
+	if table == nil {
+		table = &Table{
+			Name:              in.Table,
+			ReplicationLevel:  ReplicationLevel_global,
+			Owner:             currentNode,
+			CreatedAt:         timestamppb.Now(),
+			Version:           0,
+			AllowedRegions:    []string{},
+			RestrictedRegions: []string{},
+			Group:             "",
+			Type:              TableType_table,
+			ShardPrincipals:   []string{},
+		}
+	}
+
+	table.Owner = currentNode
+	table.Version++
+
+	p1r := &StealTableOwnershipRequest{
+		Sender: currentNode,
+		Reason: StealReason_writeReason,
+		Table:  table,
+	}
+
+	phase1, err := m.StealTableOwnership(ctx, p1r, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if !phase1.Promised {
+		table = phase1.GetFailure().GetTable()
+		// we are not the leader, so update our tr with the new table information
+		err = upsertTable(ctx, tr, table)
+		if err != nil {
+			return nil, err
+		}
+		return nil, ErrStealTableOwnershipFailed{Table: table}
+	}
+
+	// we are promised the table, but we may be missing migrations
+	err = upsertTable(ctx, tr, table)
+	if err != nil {
+		return nil, err
+	}
+
+	s := Server{}
+	for _, migration := range phase1.GetSuccess().GetMissingMigrations() {
+		_, err = s.AcceptMigration(ctx, &WriteMigrationRequest{
+			Sender:    currentNode,
+			Migration: migration,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	mr := NewMigrationRepositoryKV(ctx, kv.GetPool().MetaStore())
+	version, err := mr.GetNextVersion(in.Key)
+	if err != nil {
+		return nil, err
+	}
+
+	// phase 2: broadcast delete migration
+	p2r := &WriteMigrationRequest{
+		Sender: currentNode,
+		Migration: &Migration{
+			Version: &MigrationVersion{
+				TableVersion:     table.GetVersion(),
+				MigrationVersion: version,
+				NodeId:           currentNode.GetId(),
+				TableName:        in.Table,
+			},
+			Migration: &Migration_Data{
+				Data: &DataMigration{
+					Time: timestamppb.Now(),
+					Session: &DataMigration_Change{
+						Change: &KVChange{
+							Operation: &KVChange_Del{
+								Del: &DelChange{Key: []byte(in.Key)},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	p2, err := m.WriteMigration(ctx, p2r, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if !p2.Success {
+		return nil, ErrStealTableOwnershipFailed{Table: p2.GetTable()}
+	}
+
+	_, err = m.AcceptMigration(ctx, p2r, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	return &WriteKeyResponse{Success: true}, nil
+}

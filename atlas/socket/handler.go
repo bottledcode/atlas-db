@@ -22,44 +22,79 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"fmt"
 	"net"
+	"strings"
 	"time"
 
-	"github.com/bottledcode/atlas-db/atlas"
 	"github.com/bottledcode/atlas-db/atlas/kv"
 	"github.com/bottledcode/atlas-db/atlas/options"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/metadata"
 )
 
+// gRPC metadata key for the session principal; must be lowercase per grpc-go.
+const atlasPrincipalKey = "atlas-principal"
+
 type Socket struct {
-	writer  *bufio.ReadWriter
-	conn    net.Conn
-	timeout time.Duration
+	writer    *bufio.ReadWriter
+	conn      net.Conn
+	timeout   time.Duration
+	principal string
+}
+
+// validatePrincipal ensures the provided principal name is safe for use in the
+// line-oriented protocol and for propagation via metadata. It trims surrounding
+// whitespace, rejects control characters (including CR/LF and Unicode line
+// breaks), and enforces a 1..256 length in both bytes and runes.
+func validatePrincipal(name string) (string, error) {
+	n := strings.TrimSpace(name)
+	if n == "" {
+		return "", errors.New("empty principal")
+	}
+	if len(n) > 256 { // bytes
+		return "", errors.New("principal too long")
+	}
+	runeCount := 0
+	for _, r := range n {
+		runeCount++
+		switch r {
+		case '\r', '\n', '\u0085', '\u2028', '\u2029':
+			return "", errors.New("invalid character in principal")
+		}
+		if r < 0x20 || r == 0x7f { // ASCII controls and DEL
+			return "", errors.New("invalid character in principal")
+		}
+	}
+	if runeCount == 0 || runeCount > 256 {
+		return "", errors.New("principal length out of range")
+	}
+	return n, nil
 }
 
 func (s *Socket) Cleanup() {
 }
 
-func (s *Socket) writeRawMessage(msg string) error {
-	n, err := s.writer.WriteString(msg)
-	if err != nil {
-		return err
-	}
-	if n < len(msg) {
-		return s.writeRawMessage(msg[n:])
+func (s *Socket) writeRawMessage(msg ...[]byte) error {
+	for _, m := range msg {
+		for len(m) > 0 {
+			n, err := s.writer.Write(m)
+			if err != nil {
+				return err
+			}
+			m = m[n:]
+		}
 	}
 	return nil
 }
 
 const EOL = "\r\n"
 
-func (s *Socket) writeMessage(msg string) error {
-	err := s.setTimeout(s.timeout)
+func (s *Socket) writeMessage(msg []byte) error {
+	err := s.setWriteTimeout(s.timeout)
 	if err != nil {
 		return err
 	}
-	err = s.writeRawMessage(msg + EOL)
+	err = s.writeRawMessage(msg, []byte(EOL))
 	if err != nil {
 		return err
 	}
@@ -67,27 +102,34 @@ func (s *Socket) writeMessage(msg string) error {
 }
 
 func (s *Socket) writeError(code ErrorCode, err error) error {
-	e := s.writeMessage("ERROR " + string(code) + " " + err.Error())
-	if e != nil {
-		return e
-	}
-	return s.writer.Flush()
+	return s.writeMessage([]byte("ERROR " + string(code) + " " + err.Error()))
 }
 
 func (s *Socket) writeOk(code ErrorCode) error {
-	err := s.writeMessage(string(code))
-	if err != nil {
-		return err
-	}
-	return s.writer.Flush()
+	return s.writeMessage([]byte(code))
 }
 
 const ProtoVersion = "1.0"
 
 var ServerVersion = "Chronalys/1.0"
 
+// setTimeout sets both read and write deadlines on the connection.
+//
+//nolint:unused // kept for contexts that require a full deadline; writeMessage uses setWriteTimeout.
 func (s *Socket) setTimeout(t time.Duration) error {
-	return s.conn.SetDeadline(time.Now().Add(t))
+	if t > 0 {
+		return s.conn.SetDeadline(time.Now().Add(t))
+	}
+	return nil
+}
+
+// setWriteTimeout sets only the write deadline on the connection so that
+// read deadlines remain untouched for the scanner goroutine.
+func (s *Socket) setWriteTimeout(t time.Duration) error {
+	if t > 0 {
+		return s.conn.SetWriteDeadline(time.Now().Add(t))
+	}
+	return nil
 }
 
 func (s *Socket) HandleConnection(conn net.Conn, ctx context.Context) {
@@ -101,7 +143,7 @@ func (s *Socket) HandleConnection(conn net.Conn, ctx context.Context) {
 	s.conn = conn
 	s.writer = bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn))
 
-	err := s.writeMessage("WELCOME " + ProtoVersion + " " + ServerVersion)
+	err := s.writeMessage([]byte("WELCOME " + ProtoVersion + " " + ServerVersion))
 	if err != nil {
 		options.Logger.Error("Error writing welcome message", zap.Error(err))
 		return
@@ -148,7 +190,7 @@ func (s *Socket) HandleConnection(conn net.Conn, ctx context.Context) {
 
 				// ignore client version for now
 				// ignore authentication for now
-				err := s.writeMessage("READY")
+				err := s.writeMessage([]byte("READY"))
 				if err != nil {
 					options.Logger.Error("Error writing ready message", zap.Error(err))
 					return
@@ -186,80 +228,98 @@ ready:
 				}
 			}
 
-			switch k, _ := cmd.SelectNormalizedCommand(0); k {
-			case "SET":
-				// Validate command format: SET key value
-				if cmd.CheckMinLen(3) != nil {
-					err := s.writeError(Fatal, errors.New("SET requires key and value"))
-					if err != nil {
-						options.Logger.Error("Error writing error message", zap.Error(err))
-						return
-					}
-					continue
-				}
-
-				key := cmd.SelectCommand(1)
-				value := cmd.From(2).Raw()
-
-				err = atlas.WriteKey(ctx, kv.NewKeyBuilder().Table(key), []byte(value))
-				if err != nil {
-					options.Logger.Error("Error writing key", zap.Error(err))
-					err := s.writeError(Fatal, fmt.Errorf("SET failed: %w", err))
-					if err != nil {
-						options.Logger.Error("Error writing error message", zap.Error(err))
-						return
-					}
-					continue
-				}
-
-				// Send success response
-				err = s.writeOk(OK)
-				if err != nil {
-					options.Logger.Error("Error writing OK response", zap.Error(err))
-					return
-				}
-			case "GET":
-				// Validate command format: GET key
+			// Session-level principal commands handled here
+			if first, _ := cmd.SelectNormalizedCommand(0); first == "PRINCIPAL" {
 				if cmd.CheckMinLen(2) != nil {
-					err := s.writeError(Fatal, errors.New("GET requires key"))
-					if err != nil {
+					if err := s.writeError(Warning, errors.New("invalid PRINCIPAL command")); err != nil {
 						options.Logger.Error("Error writing error message", zap.Error(err))
 						return
 					}
 					continue
 				}
-
-				key := cmd.SelectCommand(1)
-
-				value, err := atlas.GetKey(ctx, kv.NewKeyBuilder().Table(key))
-				if err != nil {
-					options.Logger.Error("Error reading key", zap.Error(err))
-					err := s.writeError(Fatal, fmt.Errorf("GET failed: %w", err))
-					if err != nil {
+				action, _ := cmd.SelectNormalizedCommand(1)
+				switch action {
+				case "WHOAMI":
+					who := s.principal
+					if who == "" {
+						who = "(none)"
+					}
+					if err := s.writeMessage([]byte("PRINCIPAL " + who)); err != nil {
+						options.Logger.Error("Error writing WHOAMI response", zap.Error(err))
+						return
+					}
+					if err := s.writeOk(OK); err != nil {
+						options.Logger.Error("Error writing OK response", zap.Error(err))
+						return
+					}
+					continue
+				case "ASSUME":
+					if cmd.CheckMinLen(3) != nil {
+						if err := s.writeError(Warning, errors.New("usage: PRINCIPAL ASSUME <name>")); err != nil {
+							options.Logger.Error("Error writing error message", zap.Error(err))
+							return
+						}
+						continue
+					}
+					// Validate and set the session principal
+					candidate := cmd.SelectCommand(2)
+					validated, vErr := validatePrincipal(candidate)
+					if vErr != nil {
+						if err := s.writeError(Warning, errors.New("usage: PRINCIPAL ASSUME <name>")); err != nil {
+							options.Logger.Error("Error writing error message", zap.Error(err))
+							return
+						}
+						continue
+					}
+					s.principal = validated
+					if err := s.writeOk(OK); err != nil {
+						options.Logger.Error("Error writing OK response", zap.Error(err))
+						return
+					}
+					continue
+				default:
+					if err := s.writeError(Warning, errors.New("unknown PRINCIPAL action")); err != nil {
 						options.Logger.Error("Error writing error message", zap.Error(err))
 						return
 					}
 					continue
 				}
+			}
 
-				// Send value response
-				if value == nil {
-					// Key not found
-					err = s.writeMessage("NOT_FOUND")
-				} else {
-					// Key found, return value
-					err = s.writeMessage("VALUE " + string(value))
-				}
+			command, err := cmd.GetNext()
+			if err != nil {
+				options.Logger.Error("Error reading command", zap.Error(err))
+				err = s.writeError(Warning, err)
 				if err != nil {
-					options.Logger.Error("Error writing GET response", zap.Error(err))
+					options.Logger.Error("Error writing error message", zap.Error(err))
 					return
 				}
-				err = s.writeOk(OK)
+				continue
+			}
+			execCtx := ctx
+			if s.principal != "" {
+				execCtx = metadata.NewOutgoingContext(ctx, metadata.Pairs(atlasPrincipalKey, s.principal))
+			}
+			resp, err := command.Execute(execCtx)
+			if err != nil {
+				options.Logger.Error("Error executing command", zap.Error(err))
+				code, msg := formatCommandError(err, s.principal)
+				err = s.writeError(code, errors.New(msg))
 				if err != nil {
-					options.Logger.Error("Error writing OK response", zap.Error(err))
+					options.Logger.Error("Error writing error message", zap.Error(err))
 					return
 				}
-			case "DELETE":
+				continue
+			}
+			err = s.writeMessage(resp)
+			if err != nil {
+				options.Logger.Error("Error writing response", zap.Error(err))
+				return
+			}
+			err = s.writeOk(OK)
+			if err != nil {
+				options.Logger.Error("Error writing OK response", zap.Error(err))
+				return
 			}
 		}
 	}

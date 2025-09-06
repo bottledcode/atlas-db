@@ -1,0 +1,56 @@
+package consensus
+
+import (
+	"context"
+	"encoding/binary"
+
+	"google.golang.org/grpc/metadata"
+)
+
+// gRPC metadata key for the session principal; must be lowercase.
+const atlasPrincipalKey = "atlas-principal"
+
+// aclKeyForDataKey maps a data key to its ACL metadata key.
+func aclKeyForDataKey(dataKey string) []byte {
+	return []byte("meta:acl:" + dataKey)
+}
+
+// encodeOwner encodes a single-string owner principal as length-prefixed bytes.
+func encodeOwner(owner string) []byte {
+	n := len(owner)
+	if n > 0xFFFF {
+		n = 0xFFFF
+		owner = owner[:n]
+	}
+	b := make([]byte, 2+n)
+	binary.BigEndian.PutUint16(b[:2], uint16(n))
+	copy(b[2:], []byte(owner))
+	return b
+}
+
+// decodeOwner decodes a single-string owner principal from length-prefixed bytes.
+func decodeOwner(b []byte) (string, bool) {
+	if len(b) < 2 {
+		return "", false
+	}
+	l := int(binary.BigEndian.Uint16(b[:2]))
+	if len(b) < 2+l {
+		return "", false
+	}
+	return string(b[2 : 2+l]), true
+}
+
+// getPrincipalFromContext extracts the principal identifier from outgoing/incoming metadata.
+func getPrincipalFromContext(ctx context.Context) string {
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if vals := md.Get(atlasPrincipalKey); len(vals) > 0 {
+			return vals[0]
+		}
+	}
+	if md, ok := metadata.FromOutgoingContext(ctx); ok {
+		if vals := md.Get(atlasPrincipalKey); len(vals) > 0 {
+			return vals[0]
+		}
+	}
+	return ""
+}

@@ -19,7 +19,9 @@
 package commands
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -35,6 +37,8 @@ type Command interface {
 	Normalized() string
 	Raw() string
 	String() string
+	GetNext() (Command, error)
+	Execute(ctx context.Context) ([]byte, error)
 }
 
 type CommandString struct {
@@ -54,6 +58,31 @@ func (c *CommandString) Normalized() string {
 
 func (c *CommandString) Raw() string {
 	return c.raw
+}
+
+func (c *CommandString) GetNext() (Command, error) {
+	if next, ok := c.SelectNormalizedCommand(0); ok {
+		switch next {
+		case "KEY":
+			return (&KeyCommand{*c}).GetNext()
+		case "NODE":
+			return (&NodeCommand{*c}).GetNext()
+		case "SCAN":
+			return (&ScanCommand{CommandString: *c}).GetNext()
+		case "COUNT":
+			return (&CountCommand{CommandString: *c}).GetNext()
+		case "SAMPLE":
+			return (&SampleCommand{CommandString: *c}).GetNext()
+		case "QUORUM":
+			return (&QuorumCommand{CommandString: *c}).GetNext()
+		}
+		return EmptyCommandString, fmt.Errorf("command expected, got %s", next)
+	}
+	return EmptyCommandString, nil
+}
+
+func (c *CommandString) Execute(ctx context.Context) ([]byte, error) {
+	return nil, fmt.Errorf("command not implemented: %s", c.String())
 }
 
 func countWhitespace(str string) int {

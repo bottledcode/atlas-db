@@ -85,7 +85,7 @@ func (m *majorityQuorum) Gossip(ctx context.Context, in *GossipMigration, opts .
 	return &emptypb.Empty{}, nil
 }
 
-func broadcast[T interface{}, U interface{}](nodes []*QuorumNode, send func(node *QuorumNode) (T, error), coalesce func(T, U) (U, error)) (U, error) {
+func broadcast[T any, U any](nodes []*QuorumNode, send func(node *QuorumNode) (T, error), coalesce func(T, U) (U, error)) (U, error) {
 	wg := sync.WaitGroup{}
 	wg.Add(len(nodes))
 	results := make([]T, len(nodes))
@@ -269,7 +269,7 @@ func (m *majorityQuorum) ReadKey(ctx context.Context, in *ReadKeyRequest, opts .
 
 	owner := phase1.GetFailure().GetTable().GetOwner()
 	qm := GetDefaultQuorumManager(ctx)
-	resp, err := qm.Send(owner, func(node *QuorumNode) (interface{}, error) {
+	resp, err := qm.Send(owner, func(node *QuorumNode) (any, error) {
 		return node.ReadKey(ctx, in, opts...)
 	})
 	if err != nil {

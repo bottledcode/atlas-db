@@ -109,9 +109,9 @@ func (kb *KeyBuilder) Clone() *KeyBuilder {
 
 // Value represents a typed value that can be stored in the KV store
 type Value struct {
-	Type     TypeCode               `json:"type"`
-	Data     interface{}            `json:"data"`
-	Metadata map[string]interface{} `json:"metadata,omitempty"`
+	Type     TypeCode       `json:"type"`
+	Data     any            `json:"data"`
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 // TypeCode represents the data type
@@ -196,7 +196,7 @@ func NewDurationValue(d time.Duration) *Value {
 }
 
 // NewJSONValue creates a JSON value
-func NewJSONValue(data interface{}) *Value {
+func NewJSONValue(data any) *Value {
 	return &Value{Type: TypeJSON, Data: data}
 }
 

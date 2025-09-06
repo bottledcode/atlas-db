@@ -258,10 +258,7 @@ func (b *BadgerBatch) Flush() error {
 	const maxOpsPerBatch = 1000 // Conservative limit to avoid ErrTxnTooBig
 
 	for i := 0; i < len(b.operations); i += maxOpsPerBatch {
-		end := i + maxOpsPerBatch
-		if end > len(b.operations) {
-			end = len(b.operations)
-		}
+		end := min(i+maxOpsPerBatch, len(b.operations))
 
 		wb := b.db.NewWriteBatch()
 		defer wb.Cancel() // Ensure cleanup even if error occurs

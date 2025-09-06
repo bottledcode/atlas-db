@@ -355,7 +355,7 @@ func (s *Server) applyKVDataMigration(dataMigration *DataMigration, kvStore kv.S
 		}
 	case *DataMigration_RawData:
 		sessionData := migrationType.RawData.GetData()
-		var operationCheck map[string]interface{}
+		var operationCheck map[string]any
 		err := json.Unmarshal(sessionData, &operationCheck)
 		if err != nil {
 			return fmt.Errorf("failed to unmarshal operation data: %w", err)
@@ -383,7 +383,7 @@ func (s *Server) applyKVDataMigration(dataMigration *DataMigration, kvStore kv.S
 // applyAddNodeOperation handles the ADD_NODE operation by properly adding the node using NodeRepositoryKV
 func (s *Server) applyAddNodeOperation(ctx context.Context, sessionData []byte, kvStore kv.Store) error {
 	// Parse the node data from the ADD_NODE operation
-	var nodeData map[string]interface{}
+	var nodeData map[string]any
 	err := json.Unmarshal(sessionData, &nodeData)
 	if err != nil {
 		return fmt.Errorf("failed to unmarshal ADD_NODE data: %w", err)
@@ -500,7 +500,7 @@ func (s *Server) JoinCluster(ctx context.Context, req *Node) (*JoinClusterRespon
 	}
 
 	// Create KV change for adding the node
-	nodeChange := map[string]interface{}{
+	nodeChange := map[string]any{
 		"operation": "ADD_NODE",
 		"id":        req.GetId(),
 		"address":   req.GetAddress(),

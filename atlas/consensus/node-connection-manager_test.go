@@ -204,7 +204,7 @@ func TestManagedNode_RTTTracking(t *testing.T) {
 	assert.Equal(t, 25*time.Millisecond, managedNode.Rtt.AsDuration())
 
 	// Test history limit (10 measurements max)
-	for i := 0; i < 15; i++ {
+	for i := range 15 {
 		managedNode.AddRTTMeasurement(time.Duration(i+1) * time.Millisecond)
 	}
 

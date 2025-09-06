@@ -350,7 +350,7 @@ func (n *NodeRepositoryKV) GetRandomNodes(num int64, excluding ...int64) ([]*Nod
 	candidatesCopy := make([]int64, len(candidateIDs))
 	copy(candidatesCopy, candidateIDs)
 
-	for i := int64(0); i < num; i++ {
+	for i := range num {
 		remaining := int64(len(candidatesCopy)) - i
 		randIndex, err := rand.Int(rand.Reader, big.NewInt(remaining))
 		if err != nil {

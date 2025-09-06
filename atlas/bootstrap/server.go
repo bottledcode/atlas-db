@@ -83,10 +83,7 @@ func (b *Server) GetBootstrapData(request *BootstrapRequest, stream Bootstrap_Ge
 	totalSize := len(snapshotData)
 
 	for offset := 0; offset < totalSize; offset += chunkSize {
-		end := offset + chunkSize
-		if end > totalSize {
-			end = totalSize
-		}
+		end := min(offset+chunkSize, totalSize)
 
 		chunk := snapshotData[offset:end]
 		response := &BootstrapResponse{

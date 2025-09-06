@@ -53,17 +53,12 @@ func ServeSocket(ctx context.Context) (func() error, error) {
 					continue
 				}
 				c := &Socket{
-					activeStmts: make(map[string]*Query),
-					timeout:     5 * time.Minute,
+					timeout: 5 * time.Minute,
 				}
 				go func() {
 					ctx, done := context.WithCancel(ctx)
 					defer done()
 					c.HandleConnection(conn, ctx)
-					if c.session != nil {
-						c.session.Delete()
-						c.session = nil
-					}
 				}()
 			}
 		}

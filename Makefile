@@ -6,6 +6,13 @@ export PATH = $(shell pwd)/tools/bin:$(shell echo $$PATH)
 caddy: atlas/caddy/caddy
 	cp atlas/caddy/caddy caddy
 
+atlasdb: caddy tools/bin/upx
+	go run golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@latest -fix -test ./...
+	go fmt ./...
+	golangci-lint run ./...
+	cp caddy atlasdb
+	upx atlasdb
+
 atlas/caddy/caddy: $(GO_FILES) atlas/bootstrap/bootstrap.pb.go atlas/consensus/consensus.pb.go
 	@echo "Building Caddy"
 	@cd atlas/caddy && go build
@@ -35,7 +42,7 @@ tools/bin/protoc:
 
 tools/bin/upx:
 	@mkdir -p tools/bin
-	@wget https://github.com/upx/upx/releases/download/v4.2.4/upx-4.2.4-amd64_linux.tar.xz -O upx.tar.xz
+	@wget https://github.com/upx/upx/releases/download/v5.0.2/upx-5.0.2-amd64_linux.tar.xz -O upx.tar.xz
 	@tar -xvf upx.tar.xz && mv upx-*/upx tools/bin/upx && rm -rf upx.tar.xz && rm -rf upx-*
 
 .PHONY: release

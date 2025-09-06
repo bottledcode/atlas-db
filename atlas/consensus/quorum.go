@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
@@ -39,7 +40,7 @@ type QuorumManager interface {
 	GetQuorum(ctx context.Context, table string) (Quorum, error)
 	AddNode(ctx context.Context, node *Node) error
 	RemoveNode(nodeID int64) error
-	Send(node *Node, do func(quorumNode *QuorumNode) (interface{}, error)) (interface{}, error)
+	Send(node *Node, do func(quorumNode *QuorumNode) (any, error)) (any, error)
 }
 
 var manager *defaultQuorumManager
@@ -64,7 +65,7 @@ type defaultQuorumManager struct {
 	connectionManager *NodeConnectionManager
 }
 
-func (q *defaultQuorumManager) Send(node *Node, do func(quorumNode *QuorumNode) (interface{}, error)) (interface{}, error) {
+func (q *defaultQuorumManager) Send(node *Node, do func(quorumNode *QuorumNode) (any, error)) (any, error) {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
@@ -375,9 +376,7 @@ func (q *defaultQuorumManager) GetQuorum(ctx context.Context, table string) (Quo
 	}
 	// Create a shallow copy of q.nodes to avoid mutating the original map
 	nodes := make(map[RegionName][]*QuorumNode)
-	for region, nodeSlice := range q.nodes {
-		nodes[region] = nodeSlice
-	}
+	maps.Copy(nodes, q.nodes)
 
 	if tableConfig != nil {
 		// allow regions allowed by the table config

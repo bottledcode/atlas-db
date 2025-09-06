@@ -24,37 +24,21 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"slices"
-	"strconv"
 	"time"
 
 	"github.com/bottledcode/atlas-db/atlas"
-	"github.com/bottledcode/atlas-db/atlas/commands"
-	"github.com/bottledcode/atlas-db/atlas/consensus"
 	"github.com/bottledcode/atlas-db/atlas/kv"
 	"github.com/bottledcode/atlas-db/atlas/options"
 	"go.uber.org/zap"
-	"zombiezen.com/go/sqlite"
 )
 
 type Socket struct {
-	writer      *bufio.ReadWriter
-	conn        net.Conn
-	sql         *sqlite.Conn
-	session     *sqlite.Session
-	activeStmts map[string]*Query
-	streams     []*sqlite.Stmt
-	principals  []*consensus.Principal
-	timeout     time.Duration
+	writer  *bufio.ReadWriter
+	conn    net.Conn
+	timeout time.Duration
 }
 
 func (s *Socket) Cleanup() {
-	for _, query := range s.activeStmts {
-		err := query.stmt.Finalize()
-		if err != nil {
-			options.Logger.Error("Error closing statement", zap.Error(err))
-		}
-	}
 }
 
 func (s *Socket) writeRawMessage(msg string) error {
@@ -98,34 +82,9 @@ func (s *Socket) writeOk(code ErrorCode) error {
 	return s.writer.Flush()
 }
 
-func (s *Socket) outputTrailerHeaders() (err error) {
-	lastRow := s.sql.LastInsertRowID()
-	if lastRow != 0 {
-		err = s.writeMessage("META LAST_INSERT_ID " + strconv.FormatInt(lastRow, 10))
-		if err != nil {
-			return
-		}
-	}
-
-	affected := s.sql.Changes()
-	if affected != 0 {
-		err = s.writeMessage("META AFFECTED_ROWS " + strconv.Itoa(affected))
-		if err != nil {
-			return
-		}
-	}
-	return
-}
-
 const ProtoVersion = "1.0"
 
 var ServerVersion = "Chronalys/1.0"
-
-var ErrFatal = errors.New("fatal error")
-
-func makeFatal(err error) error {
-	return fmt.Errorf("%w: %v", ErrFatal, err)
-}
 
 func (s *Socket) setTimeout(t time.Duration) error {
 	return s.conn.SetDeadline(time.Now().Add(t))
@@ -304,26 +263,4 @@ ready:
 			}
 		}
 	}
-}
-
-func (s *Socket) PerformFinalize(cmd *commands.CommandString) (err error) {
-	if err = cmd.CheckExactLen(2); err != nil {
-		return
-	}
-	id, _ := cmd.SelectNormalizedCommand(1)
-	if stmt, ok := s.activeStmts[id]; ok {
-		if idx := slices.Index(s.streams, stmt.stmt); idx >= 0 {
-			s.streams = append(s.streams[:idx], s.streams[idx+1:]...)
-		}
-		err = stmt.stmt.Finalize()
-		if err != nil {
-			return
-		}
-		delete(s.activeStmts, id)
-	} else {
-		err = errors.New("unknown statement")
-		return
-	}
-	err = s.writeOk(OK)
-	return
 }

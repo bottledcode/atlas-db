@@ -253,9 +253,9 @@ func TestBadgerBatch_LargeBatch(t *testing.T) {
 
 	// Create a large batch that would exceed single transaction limits
 	const numOperations = 2500
-	for i := 0; i < numOperations; i++ {
-		key := []byte(fmt.Sprintf("key-%d", i))
-		value := []byte(fmt.Sprintf("value-%d", i))
+	for i := range numOperations {
+		key := fmt.Appendf(nil, "key-%d", i)
+		value := fmt.Appendf(nil, "value-%d", i)
 
 		err = batch.Set(key, value)
 		if err != nil {
@@ -272,7 +272,7 @@ func TestBadgerBatch_LargeBatch(t *testing.T) {
 	// Verify a few random values were written correctly
 	testIndices := []int{0, numOperations / 2, numOperations - 1}
 	for _, i := range testIndices {
-		key := []byte(fmt.Sprintf("key-%d", i))
+		key := fmt.Appendf(nil, "key-%d", i)
 		expectedValue := fmt.Sprintf("value-%d", i)
 
 		value, err := store.Get(ctx, key)

@@ -11,6 +11,9 @@ atlasdb: caddy tools/bin/upx
 	go fmt ./...
 	golangci-lint run ./...
 	cp caddy atlasdb
+
+.PHONY: small
+small: atlasdb
 	upx atlasdb
 
 atlas/caddy/caddy: $(GO_FILES) atlas/bootstrap/bootstrap.pb.go atlas/consensus/consensus.pb.go
@@ -49,9 +52,15 @@ tools/bin/upx:
 release: caddy tools/bin/upx
 	@upx caddy
 
-.PHONY: test
-test:
+.PHONY: test test-go test-e2e-acl
+test: test-go test-e2e-acl
+
+test-go:
 	@go test -v -race ./...
+
+# End-to-end ACL test using the local caddy binary and socket REPL
+test-e2e-acl: caddy
+	@bash ./test_acl_e2e.sh
 
 .PHONY: clean
 clean:

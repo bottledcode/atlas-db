@@ -30,10 +30,10 @@ jobs:
 
     - name: Build
       run: |
-        make
+        make caddy
 
     - name: Test
-      run: make test
+      run: make test-go
 
   lint:
     runs-on: ubuntu-latest
@@ -48,7 +48,7 @@ jobs:
 
     - name: Build
       run: |
-        make
+        make caddy
 
     - name: golangci-lint
       uses: golangci/golangci-lint-action@v8

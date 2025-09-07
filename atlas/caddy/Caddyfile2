@@ -10,6 +10,7 @@ https://localhost:4444 {
 		credentials mySecret
 		db_path /tmp/atlas2/
 		socket /tmp/atlas2/socket
+		development_mode true
 	}
 	#tls internal
 }

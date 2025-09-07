@@ -307,46 +307,70 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 				case *KVChange_Set:
 					// Check per-key ACL; missing ACL allows write (public)
 					if metaStore != nil {
-						aclKey := CreateACLKey(string(op.Set.Key))
-						aclVal, err := metaStore.Get(ctx, []byte(aclKey))
-						if err == nil {
-							// ACL exists - check if principal has access
-							aclData, err := DecodeACLData(aclVal)
-							if err != nil {
+						haveAny := false
+						// First, check OWNER ACL (implies full access)
+						if aclVal, err := metaStore.Get(ctx, []byte(CreateACLKey(string(op.Set.Key)))); err == nil {
+							haveAny = true
+							if aclData, decErr := DecodeACLData(aclVal); decErr != nil {
 								return nil, status.Errorf(codes.Internal, "ACL decode failed")
-							} else {
-								// Use new multi-principal ACL format
-								if !checkACLAccess(aclData, principal) {
-									return nil, status.Errorf(codes.PermissionDenied, "write access denied")
-								}
+							} else if checkACLAccess(aclData, principal) {
+								// Allowed by OWNER ACL
+								break
 							}
 						} else if !errors.Is(err, kv.ErrKeyNotFound) {
-							// Unexpected error during ACL check - fail securely
 							return nil, status.Errorf(codes.Internal, "ACL check failed: %v", err)
 						}
-						// If ACL not found (kv.ErrKeyNotFound), allow write
+
+						// Then, check WRITE-specific ACL
+						if aclVal, err := metaStore.Get(ctx, []byte(CreateWriteACLKey(string(op.Set.Key)))); err == nil {
+							haveAny = true
+							if aclData, decErr := DecodeACLData(aclVal); decErr != nil {
+								return nil, status.Errorf(codes.Internal, "ACL decode failed")
+							} else if checkACLAccess(aclData, principal) {
+								// Allowed by WRITE ACL
+								break
+							}
+						} else if !errors.Is(err, kv.ErrKeyNotFound) {
+							return nil, status.Errorf(codes.Internal, "ACL check failed: %v", err)
+						}
+
+						// If any ACLs existed but none allowed this principal, deny
+						if haveAny {
+							return nil, status.Errorf(codes.PermissionDenied, "write access denied")
+						}
+						// If no ACLs exist, allow (public)
 					}
 				case *KVChange_Del:
 					// Check per-key ACL; missing ACL allows delete (public)
 					if metaStore != nil {
-						aclKey := CreateACLKey(string(op.Del.Key))
-						aclVal, err := metaStore.Get(ctx, []byte(aclKey))
-						if err == nil {
-							// ACL exists - check if principal has access
-							aclData, err := DecodeACLData(aclVal)
-							if err != nil {
+						haveAny := false
+						// First, check OWNER ACL
+						if aclVal, err := metaStore.Get(ctx, []byte(CreateACLKey(string(op.Del.Key)))); err == nil {
+							haveAny = true
+							if aclData, decErr := DecodeACLData(aclVal); decErr != nil {
 								return nil, status.Errorf(codes.Internal, "ACL decode failed")
-							} else {
-								// Use new multi-principal ACL format
-								if !checkACLAccess(aclData, principal) {
-									return nil, status.Errorf(codes.PermissionDenied, "delete access denied")
-								}
+							} else if checkACLAccess(aclData, principal) {
+								break
 							}
 						} else if !errors.Is(err, kv.ErrKeyNotFound) {
-							// Unexpected error during ACL check - fail securely
 							return nil, status.Errorf(codes.Internal, "ACL check failed: %v", err)
 						}
-						// If ACL not found (kv.ErrKeyNotFound), allow delete
+
+						// Then, check WRITE-specific ACL (delete is a write)
+						if aclVal, err := metaStore.Get(ctx, []byte(CreateWriteACLKey(string(op.Del.Key)))); err == nil {
+							haveAny = true
+							if aclData, decErr := DecodeACLData(aclVal); decErr != nil {
+								return nil, status.Errorf(codes.Internal, "ACL decode failed")
+							} else if checkACLAccess(aclData, principal) {
+								break
+							}
+						} else if !errors.Is(err, kv.ErrKeyNotFound) {
+							return nil, status.Errorf(codes.Internal, "ACL check failed: %v", err)
+						}
+
+						if haveAny {
+							return nil, status.Errorf(codes.PermissionDenied, "delete access denied")
+						}
 					}
 				}
 			}
@@ -382,6 +406,17 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 									zap.String("key", string(op.Set.Key)),
 									zap.String("principal", principal),
 									zap.Error(err))
+							} else if options.CurrentOptions.DevelopmentMode {
+								mv := mig.GetVersion()
+								options.Logger.Info("ACL SET alongside migration",
+									zap.String("data_key", string(op.Set.Key)),
+									zap.String("acl_key", aclKey),
+									zap.Strings("principals", []string{principal}),
+									zap.Int64("table_version", mv.GetTableVersion()),
+									zap.Int64("migration_version", mv.GetMigrationVersion()),
+									zap.Int64("node_id", mv.GetNodeId()),
+									zap.String("table", mv.GetTableName()),
+								)
 							}
 						} else if e != nil {
 							// Unexpected error checking ACL existence - log but don't fail since data was already applied
@@ -392,13 +427,32 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 					}
 				case *KVChange_Del:
 					if metaStore != nil {
-						// Delete ACL entry using new key format
-						aclKey := CreateACLKey(string(op.Del.Key))
-						if err := metaStore.Delete(ctx, []byte(aclKey)); err != nil {
-							// Log error but don't fail the migration since data was already deleted
-							options.Logger.Warn("Failed to delete ACL after successful delete",
-								zap.String("key", string(op.Del.Key)),
-								zap.Error(err))
+						// Delete all ACL entries (owner, read, write) for this key
+						keys := []string{
+							CreateACLKey(string(op.Del.Key)),
+							CreateReadACLKey(string(op.Del.Key)),
+							CreateWriteACLKey(string(op.Del.Key)),
+						}
+						for _, aclKey := range keys {
+							if err := metaStore.Delete(ctx, []byte(aclKey)); err != nil {
+								if errors.Is(err, kv.ErrKeyNotFound) {
+									// Not found is fine; continue deleting remaining ACL keys
+									continue
+								}
+								// Propagate other errors so callers can handle appropriately
+								return nil, status.Errorf(codes.Internal, "failed to delete ACL key %s: %v", aclKey, err)
+							}
+							if options.CurrentOptions.DevelopmentMode {
+								mv := mig.GetVersion()
+								options.Logger.Info("ACL DEL alongside migration",
+									zap.String("data_key", string(op.Del.Key)),
+									zap.String("acl_key", aclKey),
+									zap.Int64("table_version", mv.GetTableVersion()),
+									zap.Int64("migration_version", mv.GetMigrationVersion()),
+									zap.Int64("node_id", mv.GetNodeId()),
+									zap.String("table", mv.GetTableName()),
+								)
+							}
 						}
 					}
 				}
@@ -424,7 +478,7 @@ func (s *Server) applyMigration(migrations []*Migration, kvStore kv.Store) error
 				zap.String("table", migration.GetVersion().GetTableName()))
 			continue
 		case *Migration_Data:
-			err := s.applyKVDataMigration(migration.GetData(), kvStore)
+			err := s.applyKVDataMigration(migration, kvStore)
 			if err != nil {
 				return fmt.Errorf("failed to apply KV data migration: %w", err)
 			}
@@ -433,8 +487,10 @@ func (s *Server) applyMigration(migrations []*Migration, kvStore kv.Store) error
 	return nil
 }
 
-func (s *Server) applyKVDataMigration(dataMigration *DataMigration, kvStore kv.Store) error {
+func (s *Server) applyKVDataMigration(migration *Migration, kvStore kv.Store) error {
 	ctx := context.Background()
+	dataMigration := migration.GetData()
+	mv := migration.GetVersion()
 
 	switch migrationType := dataMigration.GetSession().(type) {
 	case *DataMigration_Change:
@@ -446,13 +502,24 @@ func (s *Server) applyKVDataMigration(dataMigration *DataMigration, kvStore kv.S
 			}
 			options.Logger.Info("Applied KV SET migration",
 				zap.String("key", string(op.Set.Key)),
-				zap.Int("value_size", len(op.Set.Value)))
+				zap.Int("value_size", len(op.Set.Value)),
+				zap.Int64("table_version", mv.GetTableVersion()),
+				zap.Int64("migration_version", mv.GetMigrationVersion()),
+				zap.Int64("node_id", mv.GetNodeId()),
+				zap.String("table", mv.GetTableName()),
+			)
 		case *KVChange_Del:
 			err := kvStore.Delete(ctx, op.Del.Key)
 			if err != nil {
 				return fmt.Errorf("failed to DELETE key %s: %w", op.Del.Key, err)
 			}
-			options.Logger.Info("Applied KV DELETE migration", zap.String("key", string(op.Del.Key)))
+			options.Logger.Info("Applied KV DELETE migration",
+				zap.String("key", string(op.Del.Key)),
+				zap.Int64("table_version", mv.GetTableVersion()),
+				zap.Int64("migration_version", mv.GetMigrationVersion()),
+				zap.Int64("node_id", mv.GetNodeId()),
+				zap.String("table", mv.GetTableName()),
+			)
 		default:
 			return fmt.Errorf("unknown KV operation: %s", op)
 		}
@@ -994,24 +1061,51 @@ func (s *Server) ReadKey(ctx context.Context, req *ReadKeyRequest) (*ReadKeyResp
 	// Check per-key ACL; missing ACL means public read allowed
 	if metaStore != nil {
 		principal := getPrincipalFromContext(ctx)
-		aclKey := CreateACLKey(req.GetKey())
-		aclVal, err := metaStore.Get(ctx, []byte(aclKey))
-		if err == nil {
-			// ACL exists - check if principal has access
-			aclData, err := DecodeACLData(aclVal)
-			if err != nil {
+		haveAny := false
+		allowed := false
+		// Check OWNER ACL first (implies full access)
+		if aclVal, err := metaStore.Get(ctx, []byte(CreateACLKey(req.GetKey()))); err == nil {
+			haveAny = true
+			if aclData, decErr := DecodeACLData(aclVal); decErr != nil {
 				return &ReadKeyResponse{Success: false, Error: "ACL decode failed"}, nil
-			} else {
-				// Use new multi-principal ACL format
-				if !checkACLAccess(aclData, principal) {
-					return &ReadKeyResponse{Success: false, Error: "access denied"}, nil
+			} else if checkACLAccess(aclData, principal) {
+				allowed = true
+				if options.CurrentOptions.DevelopmentMode {
+					options.Logger.Info("ACL allow (owner)", zap.String("key", req.GetKey()), zap.String("principal", principal))
 				}
+			} else if options.CurrentOptions.DevelopmentMode {
+				options.Logger.Info("ACL miss (owner)", zap.String("key", req.GetKey()), zap.String("principal", principal))
 			}
 		} else if !errors.Is(err, kv.ErrKeyNotFound) {
-			// Unexpected error during ACL check - fail securely
 			return &ReadKeyResponse{Success: false, Error: "ACL check failed"}, nil
 		}
-		// If ACL not found (kv.ErrKeyNotFound), allow public access
+
+		// Then check READ-specific ACL only if not already allowed by owner
+		if !allowed {
+			if aclVal, err := metaStore.Get(ctx, []byte(CreateReadACLKey(req.GetKey()))); err == nil {
+				haveAny = true
+				if aclData, decErr := DecodeACLData(aclVal); decErr != nil {
+					return &ReadKeyResponse{Success: false, Error: "ACL decode failed"}, nil
+				} else if checkACLAccess(aclData, principal) {
+					allowed = true
+					if options.CurrentOptions.DevelopmentMode {
+						options.Logger.Info("ACL allow (read)", zap.String("key", req.GetKey()), zap.String("principal", principal))
+					}
+				} else if options.CurrentOptions.DevelopmentMode {
+					options.Logger.Info("ACL miss (read)", zap.String("key", req.GetKey()), zap.String("principal", principal))
+				}
+			} else if !errors.Is(err, kv.ErrKeyNotFound) {
+				return &ReadKeyResponse{Success: false, Error: "ACL check failed"}, nil
+			}
+		}
+
+		if haveAny && !allowed {
+			if options.CurrentOptions.DevelopmentMode {
+				options.Logger.Info("ACL deny (read)", zap.String("key", req.GetKey()), zap.String("principal", principal))
+			}
+			return &ReadKeyResponse{Success: false, Error: "access denied"}, nil
+		}
+		// If no ACLs found at all, allow public access
 	}
 
 	// Read the key from local store

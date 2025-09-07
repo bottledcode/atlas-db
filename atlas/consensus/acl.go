@@ -2,9 +2,13 @@ package consensus
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"slices"
+	"strings"
 	"time"
 
+	"github.com/bottledcode/atlas-db/atlas/kv"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -95,6 +99,129 @@ func CreateACLKey(key string) string {
 	return "meta:acl:" + key
 }
 
+// CreateReadACLKey creates an ACL metadata key for READ permissions for a given data key.
+func CreateReadACLKey(key string) string {
+	return "meta:acl-r:" + key
+}
+
+// CreateWriteACLKey creates an ACL metadata key for WRITE permissions for a given data key.
+func CreateWriteACLKey(key string) string {
+	return "meta:acl-w:" + key
+}
+
+// internal helper to grant to a specific ACL key
+func grantToACLKey(ctx context.Context, metaStore interface {
+	Get(context.Context, []byte) ([]byte, error)
+	Put(context.Context, []byte, []byte) error
+}, aclKey, principal string) error {
+	aclVal, err := metaStore.Get(ctx, []byte(aclKey))
+
+	var aclData *ACLData
+	if err == nil {
+		// ACL exists - decode it
+		aclData, err = DecodeACLData(aclVal)
+		if err != nil {
+			return err
+		}
+	} else if errors.Is(err, kv.ErrKeyNotFound) {
+		// ACL doesn't exist - create new one
+		aclData = &ACLData{
+			Principals: []string{},
+			CreatedAt:  timestamppb.New(time.Now()),
+			UpdatedAt:  timestamppb.New(time.Now()),
+		}
+	} else {
+		// Unexpected error; propagate
+		return err
+	}
+
+	// Grant access to principal
+	updatedACL := grantPrincipal(aclData, principal)
+	encodedACL, err := proto.Marshal(updatedACL)
+	if err != nil {
+		return err
+	}
+
+	return metaStore.Put(ctx, []byte(aclKey), encodedACL)
+}
+
+// internal helper to revoke from a specific ACL key
+func revokeFromACLKey(ctx context.Context, metaStore interface {
+	Get(context.Context, []byte) ([]byte, error)
+	Put(context.Context, []byte, []byte) error
+	Delete(context.Context, []byte) error
+}, aclKey, principal string) error {
+	aclVal, err := metaStore.Get(ctx, []byte(aclKey))
+	if err != nil {
+		// Ignore only not-found errors; propagate others
+		if errors.Is(err, kv.ErrKeyNotFound) {
+			return nil
+		}
+		return err
+	}
+
+	// Decode existing ACL
+	aclData, err := DecodeACLData(aclVal)
+	if err != nil {
+		return err
+	}
+
+	// Revoke access from principal
+	updatedACL := revokePrincipal(aclData, principal)
+
+	// If no principals left, delete the ACL entry entirely
+	if len(updatedACL.Principals) == 0 {
+		return metaStore.Delete(ctx, []byte(aclKey))
+	}
+
+	// Otherwise update the ACL
+	encodedACL, err := proto.Marshal(updatedACL)
+	if err != nil {
+		return err
+	}
+
+	return metaStore.Put(ctx, []byte(aclKey), encodedACL)
+}
+
+// GrantACLToKeyWithPermission grants a specific permission (READ, WRITE, OWNER)
+// to a principal for the given key by updating the appropriate ACL metadata key.
+// OWNER maps to the base ACL key and implies full access.
+func GrantACLToKeyWithPermission(ctx context.Context, metaStore interface {
+	Get(context.Context, []byte) ([]byte, error)
+	Put(context.Context, []byte, []byte) error
+}, key, principal, permission string) error {
+	switch strings.ToUpper(permission) {
+	case "READ":
+		return grantToACLKey(ctx, metaStore, CreateReadACLKey(key), principal)
+	case "WRITE":
+		return grantToACLKey(ctx, metaStore, CreateWriteACLKey(key), principal)
+	case "OWNER":
+		return GrantACLToKey(ctx, metaStore, key, principal)
+	default:
+		return fmt.Errorf("unknown permission: %s", permission)
+	}
+}
+
+// RevokeACLFromKeyWithPermission revokes a specific permission (READ, WRITE, OWNER)
+// from a principal for the given key by updating the appropriate ACL metadata key.
+// OWNER maps to the base ACL key and implies full access.
+func RevokeACLFromKeyWithPermission(ctx context.Context, metaStore interface {
+	Get(context.Context, []byte) ([]byte, error)
+	Put(context.Context, []byte, []byte) error
+	Delete(context.Context, []byte) error
+}, key, principal, permission string) error {
+	switch strings.ToUpper(permission) {
+	case "READ":
+		return revokeFromACLKey(ctx, metaStore, CreateReadACLKey(key), principal)
+	case "WRITE":
+		return revokeFromACLKey(ctx, metaStore, CreateWriteACLKey(key), principal)
+	case "OWNER":
+		return RevokeACLFromKey(ctx, metaStore, key, principal)
+	default:
+		return fmt.Errorf("unknown permission: %s", permission)
+	}
+}
+
 // GrantACLToKey grants access to a principal for a specific key by updating ACL metadata.
 // This is designed to be used via WriteKey operations to ensure consensus.
 func GrantACLToKey(ctx context.Context, metaStore interface {
@@ -111,13 +238,16 @@ func GrantACLToKey(ctx context.Context, metaStore interface {
 		if err != nil {
 			return err
 		}
-	} else {
+	} else if errors.Is(err, kv.ErrKeyNotFound) {
 		// ACL doesn't exist - create new one
 		aclData = &ACLData{
 			Principals: []string{},
 			CreatedAt:  timestamppb.New(time.Now()),
 			UpdatedAt:  timestamppb.New(time.Now()),
 		}
+	} else {
+		// Unexpected error; propagate
+		return err
 	}
 
 	// Grant access to principal
@@ -140,8 +270,11 @@ func RevokeACLFromKey(ctx context.Context, metaStore interface {
 	aclKey := CreateACLKey(key)
 	aclVal, err := metaStore.Get(ctx, []byte(aclKey))
 	if err != nil {
-		// ACL doesn't exist - nothing to revoke
-		return nil
+		// Ignore only not-found errors; propagate others
+		if errors.Is(err, kv.ErrKeyNotFound) {
+			return nil
+		}
+		return err
 	}
 
 	// Decode existing ACL

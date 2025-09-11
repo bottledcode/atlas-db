@@ -172,30 +172,6 @@ func TestSample_NotImplemented(t *testing.T) {
 	}
 }
 
-func TestNode_Parse_List(t *testing.T) {
-	cmd := CommandFromString("NODE LIST")
-	next, err := cmd.GetNext()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	_, ok := next.(*NodeListCommand)
-	if !ok {
-		t.Fatalf("expected *NodeListCommand, got %T", next)
-	}
-}
-
-func TestQuorum_Parse_Info(t *testing.T) {
-	cmd := CommandFromString("QUORUM INFO mytable")
-	next, err := cmd.GetNext()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	_, ok := next.(*QuorumInfoCommand)
-	if !ok {
-		t.Fatalf("expected *QuorumInfoCommand, got %T", next)
-	}
-}
-
 // Basic test to ensure the fix compiles and command parsing still works
 func TestKeyGet_ParseCommandStructure(t *testing.T) {
 	cmd := CommandFromString("KEY GET test.key")

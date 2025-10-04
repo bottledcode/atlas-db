@@ -25,6 +25,7 @@ import (
 
 	"github.com/bottledcode/atlas-db/atlas/kv"
 	"github.com/bottledcode/atlas-db/atlas/options"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -291,6 +292,71 @@ func upsertTable(ctx context.Context, tr TableRepository, table *Table) error {
 		}
 	}
 	return nil
+}
+
+func (m *majorityQuorum) PrefixScan(ctx context.Context, in *PrefixScanRequest, opts ...grpc.CallOption) (*PrefixScanResponse, error) {
+	options.Logger.Info("MajorityQuorum PrefixScan called", zap.String("prefix", in.GetPrefix()))
+
+	nr := NewNodeRepositoryKV(ctx, kv.GetPool().MetaStore())
+	qm := GetDefaultQuorumManager(ctx)
+
+	var allNodes []*Node
+	err := nr.Iterate(func(node *Node) error {
+		allNodes = append(allNodes, node)
+		return nil
+	})
+	if err != nil {
+		options.Logger.Error("Failed to iterate nodes", zap.Error(err))
+		return &PrefixScanResponse{
+			Success: false,
+			Error:   "failed to get nodes: " + err.Error(),
+		}, nil
+	}
+
+	options.Logger.Info("Broadcasting PrefixScan to nodes",
+		zap.Int("node_count", len(allNodes)),
+		zap.String("prefix", in.GetPrefix()))
+
+	allKeys := make(map[string]bool)
+	var mu sync.Mutex
+	wg := sync.WaitGroup{}
+	wg.Add(len(allNodes))
+	errs := make([]error, len(allNodes))
+
+	for i, node := range allNodes {
+		go func(i int, node *Node) {
+			defer wg.Done()
+
+			resp, err := qm.Send(node, func(quorumNode *QuorumNode) (any, error) {
+				return quorumNode.PrefixScan(ctx, in, opts...)
+			})
+
+			if err != nil {
+				errs[i] = err
+				return
+			}
+
+			if scanResp, ok := resp.(*PrefixScanResponse); ok && scanResp.Success {
+				mu.Lock()
+				for _, key := range scanResp.Keys {
+					allKeys[key] = true
+				}
+				mu.Unlock()
+			}
+		}(i, node)
+	}
+
+	wg.Wait()
+
+	keys := make([]string, 0, len(allKeys))
+	for key := range allKeys {
+		keys = append(keys, key)
+	}
+
+	return &PrefixScanResponse{
+		Success: true,
+		Keys:    keys,
+	}, nil
 }
 
 func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error) {

@@ -130,7 +130,25 @@ func (sc *SocketClient) ExecuteCommand(cmd string) (string, error) {
 		   strings.Contains(line, "ERROR") ||
 		   strings.Contains(line, "VALUE:") ||
 		   strings.Contains(line, "NOT_FOUND") ||
+		   strings.Contains(line, "EMPTY") ||
 		   strings.Contains(line, "permission denied") {
+			break
+		}
+
+		// For KEYS: response, read all subsequent lines until we get an empty line or connection closes
+		if strings.HasPrefix(line, "KEYS:") {
+			// Continue reading all key lines
+			for {
+				nextLine, err := reader.ReadString('\n')
+				if err != nil {
+					break
+				}
+				response.WriteString(nextLine)
+				// If we get an empty line, we're done
+				if strings.TrimSpace(nextLine) == "" {
+					break
+				}
+			}
 			break
 		}
 	}
@@ -185,6 +203,46 @@ func (sc *SocketClient) KeyPut(key, value string) error {
 	}
 
 	return nil
+}
+
+func (sc *SocketClient) Scan(prefix string) ([]string, error) {
+	resp, err := sc.ExecuteCommand(fmt.Sprintf("SCAN %s", prefix))
+	if err != nil {
+		return nil, err
+	}
+
+	// Debug output
+	fmt.Printf("DEBUG: Raw SCAN response: %q\n", resp)
+
+	if strings.HasPrefix(resp, "EMPTY") {
+		return []string{}, nil
+	}
+
+	// Parse response: KEYS:<count>\n<key1>\n<key2>\n...
+	lines := strings.Split(resp, "\n")
+	fmt.Printf("DEBUG: Split lines: %d lines\n", len(lines))
+	for i, line := range lines {
+		fmt.Printf("DEBUG: Line %d: %q\n", i, line)
+	}
+
+	if len(lines) < 1 || !strings.HasPrefix(lines[0], "KEYS:") {
+		return nil, fmt.Errorf("unexpected response format: %s", resp)
+	}
+
+	// Skip the first line (KEYS:<count>) and return the rest
+	if len(lines) == 1 {
+		return []string{}, nil
+	}
+
+	// Filter out empty lines
+	keys := make([]string, 0, len(lines)-1)
+	for i := 1; i < len(lines); i++ {
+		if trimmed := strings.TrimSpace(lines[i]); trimmed != "" {
+			keys = append(keys, trimmed)
+		}
+	}
+
+	return keys, nil
 }
 
 func (sc *SocketClient) AssumeIdentity(principal string) error {

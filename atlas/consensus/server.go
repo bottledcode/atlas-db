@@ -1130,6 +1130,106 @@ func (s *Server) ReadKey(ctx context.Context, req *ReadKeyRequest) (*ReadKeyResp
 	}, nil
 }
 
+func (s *Server) PrefixScan(ctx context.Context, req *PrefixScanRequest) (*PrefixScanResponse, error) {
+	kvPool := kv.GetPool()
+	if kvPool == nil {
+		return &PrefixScanResponse{
+			Success: false,
+			Error:   "KV pool not initialized",
+		}, nil
+	}
+
+	metaStore := kvPool.MetaStore()
+	if metaStore == nil {
+		return &PrefixScanResponse{
+			Success: false,
+			Error:   "metadata store not available",
+		}, nil
+	}
+
+	dataStore := kvPool.DataStore()
+	if dataStore == nil {
+		return &PrefixScanResponse{
+			Success: false,
+			Error:   "data store not available",
+		}, nil
+	}
+
+	nr := NewNodeRepositoryKV(ctx, metaStore)
+	currentNode, err := nr.GetNodeById(options.CurrentOptions.ServerId)
+	if err != nil {
+		return &PrefixScanResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get current node: %v", err),
+		}, nil
+	}
+	if currentNode == nil {
+		return &PrefixScanResponse{
+			Success: false,
+			Error:   "node not yet part of cluster",
+		}, nil
+	}
+
+	options.Logger.Info("PrefixScan request",
+		zap.String("prefix", req.GetPrefix()),
+		zap.Int64("node_id", currentNode.Id))
+
+	matchingKeys, err := dataStore.PrefixScan(ctx, []byte(req.GetPrefix()))
+	if err != nil {
+		return &PrefixScanResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to scan prefix: %v", err),
+		}, nil
+	}
+
+	options.Logger.Info("PrefixScan found keys",
+		zap.String("prefix", req.GetPrefix()),
+		zap.Int("count", len(matchingKeys)))
+
+	tr := NewTableRepositoryKV(ctx, metaStore)
+	ownedKeys := make([]string, 0, len(matchingKeys))
+
+	for _, keyBytes := range matchingKeys {
+		keyString := string(keyBytes)
+		table, err := tr.GetTable(keyString)
+		if err != nil {
+			options.Logger.Warn("Failed to get table info during prefix scan",
+				zap.String("key", keyString),
+				zap.Error(err))
+			continue
+		}
+
+		if table == nil {
+			options.Logger.Info("Table is nil for key",
+				zap.String("key", keyString))
+			continue
+		}
+
+		if table.Owner == nil {
+			options.Logger.Info("Table.Owner is nil for key",
+				zap.String("key", keyString),
+				zap.String("table_name", table.Name))
+			continue
+		}
+
+		options.Logger.Info("Checking ownership",
+			zap.String("key", keyString),
+			zap.String("table_name", table.Name),
+			zap.Int64("table_owner_id", table.Owner.Id),
+			zap.Int64("current_node_id", currentNode.Id),
+			zap.Bool("is_owner", table.Owner.Id == currentNode.Id))
+
+		if table.Owner.Id == currentNode.Id {
+			ownedKeys = append(ownedKeys, keyString)
+		}
+	}
+
+	return &PrefixScanResponse{
+		Success: true,
+		Keys:    ownedKeys,
+	}, nil
+}
+
 func (s *Server) DeleteKey(context.Context, *WriteKeyRequest) (*WriteKeyResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteKey not implemented, call WriteKey instead")
 }

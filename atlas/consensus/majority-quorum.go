@@ -317,6 +317,15 @@ func (m *majorityQuorum) PrefixScan(ctx context.Context, in *PrefixScanRequest, 
 		zap.Int("node_count", len(allNodes)),
 		zap.String("prefix", in.GetPrefix()))
 
+	// Edge case: no nodes available
+	if len(allNodes) == 0 {
+		options.Logger.Warn("No nodes available for PrefixScan")
+		return &PrefixScanResponse{
+			Success: true,
+			Keys:    []string{},
+		}, nil
+	}
+
 	allKeys := make(map[string]bool)
 	var mu sync.Mutex
 	wg := sync.WaitGroup{}

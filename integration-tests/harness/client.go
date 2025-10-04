@@ -88,7 +88,9 @@ func (sc *SocketClient) performHandshake() error {
 
 func (sc *SocketClient) Close() error {
 	if sc.conn != nil {
-		return sc.conn.Close()
+		err := sc.conn.Close()
+		sc.conn = nil
+		return err
 	}
 	return nil
 }
@@ -102,6 +104,10 @@ func (sc *SocketClient) ExecuteCommand(cmd string) (string, error) {
 
 	_, err := sc.conn.Write([]byte(cmd + "\n"))
 	if err != nil {
+		if sc.conn != nil {
+			sc.conn.Close()
+			sc.conn = nil
+		}
 		return "", fmt.Errorf("write command: %w", err)
 	}
 
@@ -111,7 +117,11 @@ func (sc *SocketClient) ExecuteCommand(cmd string) (string, error) {
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			break
+			if sc.conn != nil {
+				sc.conn.Close()
+				sc.conn = nil
+			}
+			return "", fmt.Errorf("read response: %w", err)
 		}
 
 		response.WriteString(line)

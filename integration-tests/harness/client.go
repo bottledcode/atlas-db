@@ -140,21 +140,38 @@ func (sc *SocketClient) ExecuteCommand(cmd string) (string, error) {
 			// Parse the count from "KEYS:<count>"
 			var count int
 			_, err := fmt.Sscanf(line, "KEYS:%d", &count)
-			if err == nil {
-				// Read exactly 'count' key lines
-				for i := 0; i < count; i++ {
-					nextLine, err := reader.ReadString('\n')
-					if err != nil {
-						break
-					}
-					response.WriteString(nextLine)
+			if err != nil {
+				// Failed to parse count - close connection to prevent desync
+				if sc.conn != nil {
+					sc.conn.Close()
+					sc.conn = nil
 				}
-				// Read the final OK line
-				okLine, err := reader.ReadString('\n')
-				if err == nil {
-					response.WriteString(okLine)
-				}
+				return "", fmt.Errorf("malformed KEYS response, failed to parse count: %w", err)
 			}
+
+			// Read exactly 'count' key lines
+			for i := 0; i < count; i++ {
+				nextLine, err := reader.ReadString('\n')
+				if err != nil {
+					if sc.conn != nil {
+						sc.conn.Close()
+						sc.conn = nil
+					}
+					return "", fmt.Errorf("read key line %d/%d: %w", i+1, count, err)
+				}
+				response.WriteString(nextLine)
+			}
+
+			// Read the final OK line
+			okLine, err := reader.ReadString('\n')
+			if err != nil {
+				if sc.conn != nil {
+					sc.conn.Close()
+					sc.conn = nil
+				}
+				return "", fmt.Errorf("read OK terminator: %w", err)
+			}
+			response.WriteString(okLine)
 			break
 		}
 	}

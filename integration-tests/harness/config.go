@@ -41,6 +41,7 @@ func GenerateCaddyfile(cfg NodeConfig) string {
 	caddyfile := `{
 	admin off
 	auto_https disable_redirects
+	local_certs
 }
 
 https://localhost:%d {

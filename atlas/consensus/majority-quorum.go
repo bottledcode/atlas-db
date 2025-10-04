@@ -348,9 +348,42 @@ func (m *majorityQuorum) PrefixScan(ctx context.Context, in *PrefixScanRequest, 
 
 	wg.Wait()
 
+	// Inspect errors to determine if the broadcast succeeded
+	var nonNilErrs []error
+	successCount := 0
+	for _, err := range errs {
+		if err != nil {
+			nonNilErrs = append(nonNilErrs, err)
+		} else {
+			successCount++
+		}
+	}
+
 	keys := make([]string, 0, len(allKeys))
 	for key := range allKeys {
 		keys = append(keys, key)
+	}
+
+	// If all nodes failed, return failure
+	if successCount == 0 && len(nonNilErrs) > 0 {
+		joinedErr := errors.Join(nonNilErrs...)
+		options.Logger.Error("PrefixScan failed on all nodes",
+			zap.Int("total_nodes", len(allNodes)),
+			zap.Error(joinedErr))
+		return &PrefixScanResponse{
+			Success: false,
+			Error:   joinedErr.Error(),
+		}, nil
+	}
+
+	// If some nodes failed but some succeeded, log the partial failure
+	if len(nonNilErrs) > 0 {
+		joinedErr := errors.Join(nonNilErrs...)
+		options.Logger.Warn("PrefixScan succeeded on some nodes but failed on others",
+			zap.Int("success_count", successCount),
+			zap.Int("error_count", len(nonNilErrs)),
+			zap.Int("total_nodes", len(allNodes)),
+			zap.Error(joinedErr))
 	}
 
 	return &PrefixScanResponse{

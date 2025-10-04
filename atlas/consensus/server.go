@@ -1182,47 +1182,43 @@ func (s *Server) PrefixScan(ctx context.Context, req *PrefixScanRequest) (*Prefi
 		}, nil
 	}
 
-	options.Logger.Info("PrefixScan found keys",
-		zap.String("prefix", req.GetPrefix()),
-		zap.Int("count", len(matchingKeys)))
+	// Convert keys to strings for batch lookup
+	keyStrings := make([]string, len(matchingKeys))
+	for i, keyBytes := range matchingKeys {
+		keyStrings[i] = string(keyBytes)
+	}
 
+	// Batch fetch table metadata for all keys
 	tr := NewTableRepositoryKV(ctx, metaStore)
-	ownedKeys := make([]string, 0, len(matchingKeys))
+	tables, err := tr.GetTablesBatch(keyStrings)
+	if err != nil {
+		return &PrefixScanResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to batch fetch table metadata: %v", err),
+		}, nil
+	}
 
-	for _, keyBytes := range matchingKeys {
-		keyString := string(keyBytes)
-		table, err := tr.GetTable(keyString)
-		if err != nil {
-			options.Logger.Warn("Failed to get table info during prefix scan",
-				zap.String("key", keyString),
-				zap.Error(err))
+	// Filter keys by ownership
+	ownedKeys := make([]string, 0, len(keyStrings))
+	filtered := 0
+	for i, table := range tables {
+		if table == nil || table.Owner == nil {
+			filtered++
 			continue
 		}
-
-		if table == nil {
-			options.Logger.Info("Table is nil for key",
-				zap.String("key", keyString))
-			continue
-		}
-
-		if table.Owner == nil {
-			options.Logger.Info("Table.Owner is nil for key",
-				zap.String("key", keyString),
-				zap.String("table_name", table.Name))
-			continue
-		}
-
-		options.Logger.Info("Checking ownership",
-			zap.String("key", keyString),
-			zap.String("table_name", table.Name),
-			zap.Int64("table_owner_id", table.Owner.Id),
-			zap.Int64("current_node_id", currentNode.Id),
-			zap.Bool("is_owner", table.Owner.Id == currentNode.Id))
 
 		if table.Owner.Id == currentNode.Id {
-			ownedKeys = append(ownedKeys, keyString)
+			ownedKeys = append(ownedKeys, keyStrings[i])
+		} else {
+			filtered++
 		}
 	}
+
+	options.Logger.Info("PrefixScan completed",
+		zap.String("prefix", req.GetPrefix()),
+		zap.Int("matched", len(matchingKeys)),
+		zap.Int("owned", len(ownedKeys)),
+		zap.Int("filtered", filtered))
 
 	return &PrefixScanResponse{
 		Success: true,

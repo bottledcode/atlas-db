@@ -21,6 +21,10 @@ package consensus
 type TableRepository interface {
 	// GetTable returns a table by name.
 	GetTable(name string) (*Table, error)
+	// GetTablesBatch returns multiple tables by name in a single operation.
+	// Returns a slice of tables in the same order as the input names.
+	// Nil entries indicate table not found for that name.
+	GetTablesBatch(names []string) ([]*Table, error)
 	// UpdateTable updates a table.
 	UpdateTable(*Table) error
 	// InsertTable inserts a table.

@@ -114,7 +114,7 @@ func NewCluster(t *testing.T, cfg ClusterConfig) (*Cluster, error) {
 
 		if i > 0 {
 			bootstrapNode := cluster.nodes[0]
-			nodeConfig.BootstrapURL = fmt.Sprintf("https://localhost:%d", bootstrapNode.Config.HTTPSPort)
+			nodeConfig.BootstrapURL = fmt.Sprintf("localhost:%d", bootstrapNode.Config.HTTPSPort)
 		}
 
 		node, err := NewNode(nodeConfig, cfg.CaddyBinary)
@@ -145,11 +145,7 @@ func (c *Cluster) Start() error {
 
 		c.t.Logf("Node %d started successfully", i)
 
-		if i == 0 {
-			time.Sleep(1 * time.Second)
-		} else {
-			time.Sleep(500 * time.Millisecond)
-		}
+		time.Sleep(2 * time.Second)
 	}
 
 	return nil
@@ -272,7 +268,7 @@ func (c *Cluster) AddNode(region string) (*Node, error) {
 
 	if len(c.nodes) > 0 {
 		bootstrapNode := c.nodes[0]
-		nodeConfig.BootstrapURL = fmt.Sprintf("https://localhost:%d", bootstrapNode.Config.HTTPSPort)
+		nodeConfig.BootstrapURL = fmt.Sprintf("localhost:%d", bootstrapNode.Config.HTTPSPort)
 	}
 
 	node, err := NewNode(nodeConfig, c.caddyBinary)

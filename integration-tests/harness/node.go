@@ -103,11 +103,32 @@ func (n *Node) Start() error {
 	n.started = true
 
 	if err := n.waitForSocket(); err != nil {
-		_ = n.Stop()
+		n.stopLocked()
 		return fmt.Errorf("wait for socket: %w", err)
 	}
 
 	return nil
+}
+
+func (n *Node) stopLocked() {
+	if !n.started {
+		return
+	}
+
+	if n.client != nil {
+		_ = n.client.Close()
+	}
+
+	if n.cmd != nil && n.cmd.Process != nil {
+		_ = n.cmd.Process.Kill()
+		_ = n.cmd.Wait()
+	}
+
+	if n.logFile != nil {
+		_ = n.logFile.Close()
+	}
+
+	n.started = false
 }
 
 func (n *Node) logOutput(prefix string, reader io.Reader) {
@@ -144,28 +165,7 @@ func (n *Node) waitForSocket() error {
 func (n *Node) Stop() error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-
-	if !n.started {
-		return nil
-	}
-
-	if n.client != nil {
-		_ = n.client.Close()
-	}
-
-	if n.cmd != nil && n.cmd.Process != nil {
-		if err := n.cmd.Process.Kill(); err != nil {
-			return fmt.Errorf("kill process: %w", err)
-		}
-
-		_ = n.cmd.Wait()
-	}
-
-	if n.logFile != nil {
-		_ = n.logFile.Close()
-	}
-
-	n.started = false
+	n.stopLocked()
 	return nil
 }
 

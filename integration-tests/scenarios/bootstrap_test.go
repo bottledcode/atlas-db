@@ -61,8 +61,6 @@ func TestSingleNodeStartup(t *testing.T) {
 }
 
 func TestThreeNodeClusterFormation(t *testing.T) {
-	t.Skip("Multi-node bootstrap needs investigation - bootstrap gRPC connection issue")
-
 	cluster, err := harness.NewCluster(t, harness.ClusterConfig{
 		NumNodes: 3,
 		Regions:  []string{"us-east-1", "us-west-2"},
@@ -122,8 +120,6 @@ func TestDataPersistenceAfterRestart(t *testing.T) {
 }
 
 func TestLateJoiningNode(t *testing.T) {
-	t.Skip("Multi-node bootstrap needs investigation - bootstrap gRPC connection issue")
-
 	cluster, err := harness.NewCluster(t, harness.ClusterConfig{
 		NumNodes: 2,
 		Regions:  []string{"us-east-1"},

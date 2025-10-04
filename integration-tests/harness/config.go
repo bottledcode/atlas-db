@@ -80,7 +80,7 @@ func NewNodeConfig(id int, basePort int, tempDir string, region string) NodeConf
 		ID:              id,
 		HTTPSPort:       basePort + id,
 		Region:          region,
-		Credentials:     fmt.Sprintf("test-secret-%d", id),
+		Credentials:     "integration-test-shared-secret",
 		DBPath:          filepath.Join(tempDir, fmt.Sprintf("node%d", id)),
 		SocketPath:      filepath.Join(tempDir, fmt.Sprintf("node%d", id), "socket"),
 		DevelopmentMode: true,

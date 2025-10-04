@@ -52,8 +52,8 @@ tools/bin/upx:
 release: caddy tools/bin/upx
 	@upx caddy
 
-.PHONY: test test-go test-e2e-acl
-test: test-go test-e2e-acl
+.PHONY: test test-go test-e2e-acl test-integration
+test: test-go test-e2e-acl test-integration
 
 test-go:
 	@go test -v -race ./...
@@ -61,6 +61,10 @@ test-go:
 # End-to-end ACL test using the local caddy binary and socket REPL
 test-e2e-acl: caddy
 	@bash ./test_acl_e2e.sh
+
+# Integration tests using the Go test harness
+test-integration: caddy
+	@go test -v -timeout 2m -tags=integration ./integration-tests/...
 
 .PHONY: clean
 clean:

@@ -14,24 +14,19 @@ type ScanCommand struct{ CommandString }
 func (s *ScanCommand) GetNext() (Command, error) { return s, nil }
 func (s *ScanCommand) Execute(ctx context.Context) ([]byte, error) {
 	// SCAN <prefix>
-	fmt.Println("DEBUG: ScanCommand.Execute called")
 	if err := s.CheckMinLen(2); err != nil {
 		return nil, err
 	}
 
 	// Use raw command to preserve case sensitivity for prefix matching
 	prefix := s.SelectCommand(1)
-	fmt.Printf("DEBUG: ScanCommand prefix: %s\n", prefix)
 
 	keys, err := atlas.PrefixScan(ctx, prefix)
 	if err != nil {
-		fmt.Printf("DEBUG: PrefixScan error: %v\n", err)
 		return nil, err
 	}
 
-	fmt.Printf("DEBUG: PrefixScan returned %d keys\n", len(keys))
 	if len(keys) == 0 {
-		fmt.Println("DEBUG: Returning EMPTY")
 		return []byte("EMPTY"), nil
 	}
 

@@ -130,32 +130,25 @@ func DeleteKey(ctx context.Context, builder *kv.KeyBuilder) error {
 // PrefixScan performs a distributed prefix scan across all nodes in the cluster.
 // It returns all keys matching the prefix that are owned by any node.
 func PrefixScan(ctx context.Context, prefix string) ([]string, error) {
-	fmt.Printf("atlas.PrefixScan called with prefix: %s\n", prefix)
-
 	// PrefixScan doesn't use table-based quorums since it scans across all keys/tables
 	// Instead, we need to directly call the majority quorum's PrefixScan which broadcasts to all nodes
 	// For now, use any table to get the quorum (it will use the majority quorum implementation)
 	qm := consensus.GetDefaultQuorumManager(ctx)
-	fmt.Printf("Got quorum manager\n")
 
 	// Use a non-empty table name to get a valid quorum object
 	// The majority quorum's PrefixScan will broadcast to all nodes regardless of table
 	q, err := qm.GetQuorum(ctx, "atlas.nodes")
 	if err != nil {
-		fmt.Printf("GetQuorum error: %v\n", err)
 		return nil, err
 	}
-	fmt.Printf("Got quorum object: %T\n", q)
 
 	resp, err := q.PrefixScan(ctx, &consensus.PrefixScanRequest{
 		Sender: nil,
 		Prefix: prefix,
 	})
 	if err != nil {
-		fmt.Printf("PrefixScan RPC error: %v\n", err)
 		return nil, err
 	}
-	fmt.Printf("PrefixScan response: success=%v, keys=%d\n", resp.Success, len(resp.Keys))
 
 	if resp.Success {
 		return resp.Keys, nil

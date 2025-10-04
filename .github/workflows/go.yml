@@ -50,7 +50,15 @@ jobs:
       run: make caddy
 
     - name: Trust Caddy CA
-      run: sudo ./caddy trust
+      run: |
+        # Start caddy temporarily to generate certificates
+        ./caddy start --config <(echo '{ "admin": { "listen": "localhost:2019" } }')
+        sleep 2
+        # Trust the CA
+        sudo ./caddy trust
+        # Stop caddy
+        ./caddy stop
+        sleep 1
 
     - name: Run Integration Tests
       run: go test -v -timeout 5m -tags=integration ./integration-tests/...

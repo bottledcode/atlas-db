@@ -13,6 +13,7 @@
  *
  * You should have received a copy of the GNU Affero General Public License
  * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
+ *
  */
 
 package kv
@@ -110,9 +111,11 @@ func (kb *KeyBuilder) Clone() *KeyBuilder {
 // TableName attempts to extract the table name from the builder.
 // It returns the first segment that follows a "table" prefix, if present.
 func (kb *KeyBuilder) TableName() (string, bool) {
-	for i := 0; i < len(kb.parts)-1; i++ {
+	for i := 0; i < len(kb.parts); i++ {
 		if kb.parts[i] == "table" {
-			return kb.parts[i+1], true
+			if i+1 < len(kb.parts) {
+				return kb.parts[i+1], true
+			}
 		}
 	}
 	return "", false
@@ -464,13 +467,15 @@ func VersionKey(baseKey []byte, version uint64) []byte {
 	return append(baseKey, append([]byte(":v:"), versionBytes...)...)
 }
 
-// ParseTableRowKey extracts table name and row ID from a table row key
+// ParseTableRowKey returns the given key. Key === table in atlasdb
 func ParseTableRowKey(key []byte) (tableName, rowID string, valid bool) {
 	keyStr := string(key)
 	parts := strings.Split(keyStr, ":")
 
 	if len(parts) >= 4 && parts[0] == "table" && parts[2] == "row" {
 		return parts[1], parts[3], true
+	} else if len(parts) >= 2 && parts[0] == "table" {
+		return parts[1], "", true
 	}
 
 	return "", "", false

@@ -251,6 +251,17 @@ func (q *QuorumNode) WriteKey(ctx context.Context, in *WriteKeyRequest, opts ...
 	return q.client.WriteKey(ctx, in, opts...)
 }
 
+func (q *QuorumNode) PrefixScan(ctx context.Context, in *PrefixScanRequest, opts ...grpc.CallOption) (*PrefixScanResponse, error) {
+	var err error
+	if q.client == nil {
+		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return q.client.PrefixScan(ctx, in, opts...)
+}
+
 func (q *QuorumNode) Close() {
 	if q.closer != nil {
 		q.closer()

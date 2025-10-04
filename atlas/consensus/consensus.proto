@@ -35,6 +35,7 @@ service Consensus {
   rpc ReadKey(ReadKeyRequest) returns (ReadKeyResponse) {}
   rpc WriteKey(WriteKeyRequest) returns (WriteKeyResponse) {}
   rpc DeleteKey(WriteKeyRequest) returns (WriteKeyResponse) {}
+  rpc PrefixScan(PrefixScanRequest) returns (PrefixScanResponse) {}
 }
 
 message MigrationVersion {
@@ -225,6 +226,18 @@ message ReadKeyResponse {
   bool success = 1; // Whether the read was successful
   bytes value = 2; // The value if found, empty if not found
   string error = 3; // Error message if not successful
+}
+
+// Remote prefix scan
+message PrefixScanRequest {
+  Node sender = 1;
+  string prefix = 2;
+}
+
+message PrefixScanResponse {
+  bool success = 1;
+  repeated string keys = 2;
+  string error = 3;
 }
 
 message WriteKeyRequest {

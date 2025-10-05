@@ -46,6 +46,7 @@ type CommandString struct {
 	parts      []string
 	raw        string
 	rawParts   []string
+	binaryData []byte
 }
 
 func (c *CommandString) String() string {
@@ -263,4 +264,14 @@ var EmptyCommandString *CommandString = CommandFromString("")
 // NormalizedLen returns the number of parts in the normalized command.
 func (c *CommandString) NormalizedLen() int {
 	return len(c.parts)
+}
+
+// SetBinaryData attaches binary data to this command (used for BLOB commands).
+func (c *CommandString) SetBinaryData(data []byte) {
+	c.binaryData = data
+}
+
+// GetBinaryData returns the binary data attached to this command.
+func (c *CommandString) GetBinaryData() []byte {
+	return c.binaryData
 }

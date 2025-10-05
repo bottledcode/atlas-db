@@ -75,22 +75,22 @@ func TestPrefixScanSingleNode(t *testing.T) {
 	// Allow time for consensus
 	time.Sleep(1 * time.Second)
 
-	// Scan for "table:USERS:" prefix (keys are uppercase)
-	keys, err := client.Scan("USERS:")
+	// Scan for "USERS" prefix (keys are uppercase and returned in dotted format)
+	keys, err := client.Scan("USERS")
 	require.NoError(t, err, "Failed to scan users prefix")
 	assert.Len(t, keys, 2, "Should find 2 user keys")
-	assert.Contains(t, keys, "table:USERS:row:ALICE", "Should contain users.alice")
-	assert.Contains(t, keys, "table:USERS:row:BOB", "Should contain users.bob")
+	assert.Contains(t, keys, "USERS.ALICE", "Should contain users.alice")
+	assert.Contains(t, keys, "USERS.BOB", "Should contain users.bob")
 
-	// Scan for "table:PRODUCTS:" prefix
-	keys, err = client.Scan("table:PRODUCTS:")
+	// Scan for "PRODUCTS" prefix
+	keys, err = client.Scan("PRODUCTS")
 	require.NoError(t, err, "Failed to scan products prefix")
 	assert.Len(t, keys, 2, "Should find 2 product keys")
-	assert.Contains(t, keys, "table:PRODUCTS:row:LAPTOP", "Should contain products.laptop")
-	assert.Contains(t, keys, "table:PRODUCTS:row:PHONE", "Should contain products.phone")
+	assert.Contains(t, keys, "PRODUCTS.LAPTOP", "Should contain products.laptop")
+	assert.Contains(t, keys, "PRODUCTS.PHONE", "Should contain products.phone")
 
 	// Scan for non-existent prefix
-	keys, err = client.Scan("table:NONEXISTENT:")
+	keys, err = client.Scan("NONEXISTENT")
 	require.NoError(t, err, "Failed to scan nonexistent prefix")
 	assert.Len(t, keys, 0, "Should find 0 keys for non-existent prefix")
 
@@ -139,18 +139,18 @@ func TestPrefixScanMultiNode(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	// Scan from node 0 should return all keys regardless of ownership
-	keys, err := node0.Client().Scan("table:ORDERS:")
+	keys, err := node0.Client().Scan("ORDERS")
 	require.NoError(t, err, "Failed to scan orders prefix from node 0")
 	assert.GreaterOrEqual(t, len(keys), 4, "Should find at least 4 order keys from distributed cluster")
 
-	// Verify all keys are present (keys are uppercase)
-	assert.Contains(t, keys, "table:ORDERS:row:ORDER1", "Should contain orders.order1")
-	assert.Contains(t, keys, "table:ORDERS:row:ORDER2", "Should contain orders.order2")
-	assert.Contains(t, keys, "table:ORDERS:row:ORDER3", "Should contain orders.order3")
-	assert.Contains(t, keys, "table:ORDERS:row:ORDER4", "Should contain orders.order4")
+	// Verify all keys are present (keys are uppercase and in dotted format)
+	assert.Contains(t, keys, "ORDERS.ORDER1", "Should contain orders.order1")
+	assert.Contains(t, keys, "ORDERS.ORDER2", "Should contain orders.order2")
+	assert.Contains(t, keys, "ORDERS.ORDER3", "Should contain orders.order3")
+	assert.Contains(t, keys, "ORDERS.ORDER4", "Should contain orders.order4")
 
 	// Scan from node 1 should also return all keys
-	keys, err = node1.Client().Scan("table:ORDERS:")
+	keys, err = node1.Client().Scan("ORDERS")
 	require.NoError(t, err, "Failed to scan orders prefix from node 1")
 	assert.GreaterOrEqual(t, len(keys), 4, "Should find at least 4 order keys from node 1")
 

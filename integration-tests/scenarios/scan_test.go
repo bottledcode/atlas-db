@@ -94,6 +94,15 @@ func TestPrefixScanSingleNode(t *testing.T) {
 	require.NoError(t, err, "Failed to scan nonexistent prefix")
 	assert.Len(t, keys, 0, "Should find 0 keys for non-existent prefix")
 
+	// Test protocol synchronization: After EMPTY response, next command should work correctly
+	// This ensures we're properly consuming the OK terminator after EMPTY
+	err = client.KeyPut("test.sync", "sync_data")
+	require.NoError(t, err, "Failed to put key after empty scan - protocol desync detected")
+
+	val, err := client.KeyGet("test.sync")
+	require.NoError(t, err, "Failed to get key after empty scan - protocol desync detected")
+	assert.Equal(t, "sync_data", val, "Value should match after empty scan")
+
 	t.Logf("Prefix scan single node test completed successfully")
 }
 

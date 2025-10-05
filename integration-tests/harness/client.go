@@ -127,11 +127,25 @@ func (sc *SocketClient) ExecuteCommand(cmd string) (string, error) {
 		response.WriteString(line)
 
 		if strings.Contains(line, "OK") ||
-		   strings.Contains(line, "ERROR") ||
-		   strings.Contains(line, "VALUE:") ||
+		   strings.Contains(line, "ERROR") {
+			break
+		}
+
+		// For responses that end before OK, consume the OK terminator
+		if strings.Contains(line, "VALUE:") ||
 		   strings.Contains(line, "NOT_FOUND") ||
 		   strings.Contains(line, "EMPTY") ||
 		   strings.Contains(line, "permission denied") {
+			// Read and append the mandatory OK terminator
+			okLine, err := reader.ReadString('\n')
+			if err != nil {
+				if sc.conn != nil {
+					sc.conn.Close()
+					sc.conn = nil
+				}
+				return "", fmt.Errorf("read OK terminator: %w", err)
+			}
+			response.WriteString(okLine)
 			break
 		}
 
@@ -206,9 +220,13 @@ func (sc *SocketClient) KeyGet(key string) (string, error) {
 	}
 
 	if strings.Contains(resp, "VALUE:") {
+		// Response format: VALUE:<value>\r\nOK or VALUE:<value>\nOK
+		// Extract just the value part
 		parts := strings.SplitN(resp, "VALUE:", 2)
 		if len(parts) == 2 {
-			return strings.TrimSpace(parts[1]), nil
+			// Split on newline to separate value from OK terminator
+			valuePart := strings.SplitN(parts[1], "\n", 2)[0]
+			return strings.TrimSpace(valuePart), nil
 		}
 	}
 

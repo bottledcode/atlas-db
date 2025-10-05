@@ -84,9 +84,40 @@ func (n *NodeRepositoryKV) convertNodeToStorageModel(node *Node) *NodeStorageMod
 	}
 }
 
+func getNodeKey(id int64) []byte {
+	return kv.NewKeyBuilder().Meta().Node(id).Build()
+}
+
+func getNodeIndexKey(address string, port uint) []byte {
+	return kv.NewKeyBuilder().
+		Meta().
+		Index().
+		Append("node").
+		Append("address").Append(address).
+		Append(fmt.Sprintf("%d", port)).
+		Build()
+}
+
+func getNodeRegionIndexKey(region string) []byte {
+	return kv.NewKeyBuilder().
+		Meta().
+		Index().
+		Append("node").
+		Append("region").Append(region).
+		Build()
+}
+
+func getRegionIndexKey() []byte {
+	return kv.NewKeyBuilder().Meta().Index().Append("node").Append("region").Build()
+}
+
+func getActiveNodeIndexKey() []byte {
+	return kv.NewKeyBuilder().Meta().Index().Append("node").Append("active").Append("true").Build()
+}
+
 func (n *NodeRepositoryKV) GetNodeById(id int64) (*Node, error) {
 	// Key: meta:node:{node_id}
-	key := kv.NewKeyBuilder().Meta().Append("node").Append(fmt.Sprintf("%d", id)).Build()
+	key := getNodeKey(id)
 
 	txn, err := n.store.Begin(false)
 	if err != nil {
@@ -112,12 +143,11 @@ func (n *NodeRepositoryKV) GetNodeById(id int64) (*Node, error) {
 
 func (n *NodeRepositoryKV) GetNodeByAddress(address string, port uint) (*Node, error) {
 	// Use address index: meta:index:node:address:{address}:{port} -> node_id
-	indexKey := kv.NewKeyBuilder().Meta().Append("index").Append("node").
-		Append("address").Append(address).Append(fmt.Sprintf("%d", port)).Build()
+	indexKey := getNodeIndexKey(address, port)
 
 	txn, err := n.store.Begin(false)
 	if err != nil {
-		return nil, fmt.Errorf("failed to begin read transaction: %w", err)
+		return nil, fmt.Errorf("failed to begin a read transaction: %w", err)
 	}
 	defer txn.Discard()
 
@@ -139,8 +169,7 @@ func (n *NodeRepositoryKV) GetNodeByAddress(address string, port uint) (*Node, e
 
 func (n *NodeRepositoryKV) GetNodesByRegion(region string) ([]*Node, error) {
 	// Use region index: meta:index:node:region:{region}:{node_id} -> node_id
-	prefix := kv.NewKeyBuilder().Meta().Append("index").Append("node").
-		Append("region").Append(region).Build()
+	prefix := getNodeRegionIndexKey(region)
 
 	txn, err := n.store.Begin(false)
 	if err != nil {
@@ -184,8 +213,7 @@ func (n *NodeRepositoryKV) GetNodesByRegion(region string) ([]*Node, error) {
 
 func (n *NodeRepositoryKV) GetRegions() ([]*Region, error) {
 	// Scan region index for unique regions: meta:index:node:region:{region}:{node_id}
-	prefix := kv.NewKeyBuilder().Meta().Append("index").Append("node").
-		Append("region").Build()
+	prefix := getRegionIndexKey()
 
 	txn, err := n.store.Begin(false)
 	if err != nil {
@@ -221,8 +249,7 @@ func (n *NodeRepositoryKV) GetRegions() ([]*Region, error) {
 
 func (n *NodeRepositoryKV) Iterate(fn func(*Node) error) error {
 	// Scan active nodes: meta:index:node:active:true:{node_id} -> node_id
-	prefix := kv.NewKeyBuilder().Meta().Append("index").Append("node").
-		Append("active").Append("true").Build()
+	prefix := getActiveNodeIndexKey()
 
 	txn, err := n.store.Begin(false)
 	if err != nil {
@@ -265,12 +292,11 @@ func (n *NodeRepositoryKV) Iterate(fn func(*Node) error) error {
 
 func (n *NodeRepositoryKV) TotalCount() (int64, error) {
 	// Count active nodes by scanning the active index
-	prefix := kv.NewKeyBuilder().Meta().Append("index").Append("node").
-		Append("active").Append("true").Build()
+	prefix := getActiveNodeIndexKey()
 
 	txn, err := n.store.Begin(false)
 	if err != nil {
-		return 0, fmt.Errorf("failed to begin read transaction: %w", err)
+		return 0, fmt.Errorf("failed to begin a read transaction: %w", err)
 	}
 	defer txn.Discard()
 
@@ -290,12 +316,11 @@ func (n *NodeRepositoryKV) TotalCount() (int64, error) {
 
 func (n *NodeRepositoryKV) GetRandomNodes(num int64, excluding ...int64) ([]*Node, error) {
 	// Get all active node IDs first
-	prefix := kv.NewKeyBuilder().Meta().Append("index").Append("node").
-		Append("active").Append("true").Build()
+	prefix := getActiveNodeIndexKey()
 
 	txn, err := n.store.Begin(false)
 	if err != nil {
-		return nil, fmt.Errorf("failed to begin read transaction: %w", err)
+		return nil, fmt.Errorf("failed to begin a read transaction: %w", err)
 	}
 	defer txn.Discard()
 
@@ -382,7 +407,7 @@ func (n *NodeRepositoryKV) GetRandomNodes(num int64, excluding ...int64) ([]*Nod
 // AddNode adds a new node to the repository
 func (n *NodeRepositoryKV) AddNode(node *Node) error {
 	// Key: meta:node:{node_id}
-	key := kv.NewKeyBuilder().Meta().Append("node").Append(fmt.Sprintf("%d", node.Id)).Build()
+	key := getNodeKey(node.Id)
 
 	txn, err := n.store.Begin(true)
 	if err != nil {
@@ -390,7 +415,7 @@ func (n *NodeRepositoryKV) AddNode(node *Node) error {
 	}
 	defer txn.Discard()
 
-	// Check if node already exists
+	// Check if a node already exists
 	if _, err := txn.Get(n.ctx, key); err == nil {
 		return fmt.Errorf("node with ID %d already exists", node.Id)
 	} else if !errors.Is(err, kv.ErrKeyNotFound) {
@@ -418,7 +443,7 @@ func (n *NodeRepositoryKV) AddNode(node *Node) error {
 // UpdateNode updates an existing node
 func (n *NodeRepositoryKV) UpdateNode(node *Node) error {
 	// Key: meta:node:{node_id}
-	key := kv.NewKeyBuilder().Meta().Append("node").Append(fmt.Sprintf("%d", node.Id)).Build()
+	key := getNodeKey(node.Id)
 
 	txn, err := n.store.Begin(true)
 	if err != nil {
@@ -473,8 +498,7 @@ func (n *NodeRepositoryKV) updateNodeIndexes(txn kv.Transaction, node *Node) err
 	nodeIDStr := fmt.Sprintf("%d", node.Id)
 
 	// Index by address: meta:index:node:address:{address}:{port} -> node_id
-	addressKey := kv.NewKeyBuilder().Meta().Append("index").Append("node").
-		Append("address").Append(node.Address).Append(fmt.Sprintf("%d", node.Port)).Build()
+	addressKey := getNodeIndexKey(node.Address, uint(node.Port))
 	if err := txn.Put(n.ctx, addressKey, []byte(nodeIDStr)); err != nil {
 		return err
 	}
@@ -490,7 +514,7 @@ func (n *NodeRepositoryKV) updateNodeIndexes(txn kv.Transaction, node *Node) err
 	if node.Active {
 		activeStr = "true"
 	}
-	activeKey := kv.NewKeyBuilder().Meta().Append("index").Append("node").
+	activeKey := kv.NewKeyBuilder().Meta().Index().Append("node").
 		Append("active").Append(activeStr).Append(nodeIDStr).Build()
 	if err := txn.Put(n.ctx, activeKey, []byte(nodeIDStr)); err != nil {
 		return err
@@ -503,8 +527,8 @@ func (n *NodeRepositoryKV) updateNodeIndexes(txn kv.Transaction, node *Node) err
 func (n *NodeRepositoryKV) removeNodeIndexes(txn kv.Transaction, node *Node) error {
 	nodeIDStr := fmt.Sprintf("%d", node.Id)
 
-	// Remove address index
-	addressKey := kv.NewKeyBuilder().Meta().Append("index").Append("node").
+	// Remove the address index
+	addressKey := kv.NewKeyBuilder().Meta().Index().Append("node").
 		Append("address").Append(node.Address).Append(fmt.Sprintf("%d", node.Port)).Build()
 	_ = txn.Delete(n.ctx, addressKey)
 
@@ -513,11 +537,11 @@ func (n *NodeRepositoryKV) removeNodeIndexes(txn kv.Transaction, node *Node) err
 	_ = txn.Delete(n.ctx, regionKey)
 
 	// Remove active status indexes (both true and false)
-	activeKeyTrue := kv.NewKeyBuilder().Meta().Append("index").Append("node").
+	activeKeyTrue := kv.NewKeyBuilder().Meta().Index().Append("node").
 		Append("active").Append("true").Append(nodeIDStr).Build()
 	_ = txn.Delete(n.ctx, activeKeyTrue)
 
-	activeKeyFalse := kv.NewKeyBuilder().Meta().Append("index").Append("node").
+	activeKeyFalse := kv.NewKeyBuilder().Meta().Index().Append("node").
 		Append("active").Append("false").Append(nodeIDStr).Build()
 	_ = txn.Delete(n.ctx, activeKeyFalse)
 
@@ -535,7 +559,7 @@ func (n *NodeRepositoryKV) DeleteNode(nodeID int64) error {
 		return fmt.Errorf("node with ID %d does not exist", nodeID)
 	}
 
-	key := kv.NewKeyBuilder().Meta().Append("node").Append(fmt.Sprintf("%d", nodeID)).Build()
+	key := getNodeKey(nodeID)
 
 	txn, err := n.store.Begin(true)
 	if err != nil {

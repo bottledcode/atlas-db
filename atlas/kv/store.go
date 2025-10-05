@@ -28,7 +28,7 @@ type Store interface {
 	Get(ctx context.Context, key []byte) ([]byte, error)
 	Put(ctx context.Context, key, value []byte) error
 	Delete(ctx context.Context, key []byte) error
-	PrefixScan(ctx context.Context, prefix []byte) ([][]byte, error)
+	PrefixScan(ctx context.Context, prefix []byte) (map[string][]byte, error)
 
 	// Batch operations for atomic writes
 	NewBatch() Batch

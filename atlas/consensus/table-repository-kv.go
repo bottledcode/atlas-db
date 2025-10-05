@@ -13,6 +13,7 @@
  *
  * You should have received a copy of the GNU Affero General Public License
  * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
+ *
  */
 
 package consensus
@@ -104,7 +105,7 @@ func (r *TableRepositoryKV) GetTable(name string) (*Table, error) {
 	return r.convertStorageModelToTable(&storageModel), nil
 }
 
-func (r *TableRepositoryKV) GetTablesBatch(names []string) ([]*Table, error) {
+func (r *TableRepositoryKV) GetTablesBatch(names [][]byte) ([]*Table, error) {
 	if len(names) == 0 {
 		return []*Table{}, nil
 	}
@@ -124,9 +125,7 @@ func (r *TableRepositoryKV) GetTablesBatch(names []string) ([]*Table, error) {
 	// First pass: fetch all table data
 	storageModels := make([]*TableStorageModel, len(names))
 	for i, name := range names {
-		key := kv.NewKeyBuilder().Meta().Append("table").Append(name).Build()
-
-		data, err := txn.Get(r.ctx, key)
+		data, err := txn.Get(r.ctx, name)
 		if err != nil {
 			if errors.Is(err, kv.ErrKeyNotFound) {
 				// Keep nil in results[i]

@@ -19,7 +19,6 @@
 package consensus
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -44,10 +43,43 @@ func NewMigrationRepositoryKV(ctx context.Context, store kv.Store) MigrationRepo
 	}
 }
 
+func getMigrationPrefixKey(table string) []byte {
+	return kv.NewKeyBuilder().Migration(table, -1).Build()
+}
+
+func getMigrationTablePrefixKey(table string) []byte {
+	return kv.NewKeyBuilder().Meta().Migration(table, 0).Build()
+}
+
+func getMigrationPrefixKeyWithVersion(version *MigrationVersion) []byte {
+	return kv.NewKeyBuilder().
+		Migration(version.GetTableName(), version.GetMigrationVersion()).
+		Node(version.GetNodeId()).
+		TableVersion(version.GetTableVersion()).
+		Build()
+}
+
+func getUncommittedIndexKey(version *MigrationVersion) []byte {
+	return kv.NewKeyBuilder().
+		Migration(version.GetTableName(), version.GetMigrationVersion()).
+		Index().
+		Uncommitted().
+		Node(version.GetNodeId()).
+		Build()
+}
+
+func getMigrationIndexKey(version *MigrationVersion) []byte {
+	return kv.NewKeyBuilder().
+		Index().
+		Migration(version.GetTableName(), version.GetMigrationVersion()).
+		Node(version.GetNodeId()).
+		Build()
+}
+
 func (m *MigrationRepositoryKV) GetNextVersion(table string) (int64, error) {
 	// Scan for the highest version number for this table
 	// Key pattern: meta:migration:{table}:version:{version}:node:{nodeId}
-	prefix := kv.NewKeyBuilder().Meta().Append("migration").Append(table).Append("version").Build()
+	prefix := getMigrationPrefixKey(table)
 
 	txn, err := m.store.Begin(false)
 	if err != nil {
@@ -57,20 +89,15 @@ func (m *MigrationRepositoryKV) GetNextVersion(table string) (int64, error) {
 
 	iterator := txn.NewIterator(kv.IteratorOptions{
 		PrefetchValues: false,
+		Prefix:         prefix,
 	})
 	defer func() { _ = iterator.Close() }()
 
 	maxVersion := int64(0)
 
-	// Use proper BadgerDB prefix iteration pattern
 	for iterator.Seek(prefix); iterator.Valid(); iterator.Next() {
 		item := iterator.Item()
 		key := item.Key()
-
-		// Check if key still has our prefix
-		if !bytes.HasPrefix(key, prefix) {
-			break
-		}
 
 		keyStr := string(key)
 
@@ -94,16 +121,11 @@ func (m *MigrationRepositoryKV) GetMigrationVersion(version *MigrationVersion) (
 	}
 
 	// Key: meta:migration:{table}:version:{version}:node:{nodeId}:table_version:{table_version}
-	key := kv.NewKeyBuilder().Meta().Append("migration").
-		Append(version.GetTableName()).
-		Append("version").Append(fmt.Sprintf("%d", version.GetMigrationVersion())).
-		Append("node").Append(fmt.Sprintf("%d", version.GetNodeId())).
-		Append("table_version").Append(fmt.Sprintf("%d", version.GetTableVersion())).
-		Build()
+	key := getMigrationPrefixKeyWithVersion(version)
 
 	txn, err := m.store.Begin(false)
 	if err != nil {
-		return nil, fmt.Errorf("failed to begin read transaction: %w", err)
+		return nil, fmt.Errorf("failed to read transaction: %w", err)
 	}
 	defer txn.Discard()
 
@@ -125,7 +147,7 @@ func (m *MigrationRepositoryKV) GetMigrationVersion(version *MigrationVersion) (
 
 func (m *MigrationRepositoryKV) CommitAllMigrations(table string) error {
 	// Update all migrations for this table to committed=true
-	prefix := kv.NewKeyBuilder().Meta().Append("migration").Append(table).Build()
+	prefix := getMigrationTablePrefixKey(table)
 
 	txn, err := m.store.Begin(true)
 	if err != nil {
@@ -172,11 +194,7 @@ func (m *MigrationRepositoryKV) CommitAllMigrations(table string) error {
 
 		// Remove from uncommitted index
 		version := storedBatch.Migration.GetVersion()
-		uncommittedIndexKey := kv.NewKeyBuilder().Meta().Append("index").Append("migration").
-			Append("uncommitted").Append(version.GetTableName()).
-			Append(fmt.Sprintf("%d", version.GetMigrationVersion())).
-			Append(fmt.Sprintf("%d", version.GetNodeId())).
-			Build()
+		uncommittedIndexKey := getUncommittedIndexKey(version)
 
 		if err := batch.Delete(uncommittedIndexKey); err != nil {
 			_ = iterator.Close()
@@ -196,12 +214,7 @@ func (m *MigrationRepositoryKV) CommitAllMigrations(table string) error {
 
 func (m *MigrationRepositoryKV) CommitMigrationExact(version *MigrationVersion) error {
 	// Key: meta:migration:{table}:version:{version}:node:{nodeId}:table_version:{table_version}
-	key := kv.NewKeyBuilder().Meta().Append("migration").
-		Append(version.GetTableName()).
-		Append("version").Append(fmt.Sprintf("%d", version.GetMigrationVersion())).
-		Append("node").Append(fmt.Sprintf("%d", version.GetNodeId())).
-		Append("table_version").Append(fmt.Sprintf("%d", version.GetTableVersion())).
-		Build()
+	key := getMigrationPrefixKeyWithVersion(version)
 
 	txn, err := m.store.Begin(true)
 	if err != nil {
@@ -240,11 +253,7 @@ func (m *MigrationRepositoryKV) CommitMigrationExact(version *MigrationVersion) 
 
 	// Remove from uncommitted index if it was previously uncommitted and not gossip
 	if !storedBatch.Gossip {
-		uncommittedIndexKey := kv.NewKeyBuilder().Meta().Append("index").Append("migration").
-			Append("uncommitted").Append(version.GetTableName()).
-			Append(fmt.Sprintf("%d", version.GetMigrationVersion())).
-			Append(fmt.Sprintf("%d", version.GetNodeId())).
-			Build()
+		uncommittedIndexKey := getUncommittedIndexKey(version)
 
 		if err := txn.Delete(m.ctx, uncommittedIndexKey); err != nil {
 			return fmt.Errorf("failed to delete uncommitted index entry: %w", err)
@@ -256,11 +265,11 @@ func (m *MigrationRepositoryKV) CommitMigrationExact(version *MigrationVersion) 
 
 func (m *MigrationRepositoryKV) GetUncommittedMigrations(table *Table) ([]*Migration, error) {
 	// Get all uncommitted, non-gossip migrations for this table
-	prefix := kv.NewKeyBuilder().Meta().Append("migration").Append(table.Name).Build()
+	prefix := getMigrationTablePrefixKey(table.Name)
 
 	txn, err := m.store.Begin(false)
 	if err != nil {
-		return nil, fmt.Errorf("failed to begin read transaction: %w", err)
+		return nil, fmt.Errorf("failed to begin a read transaction: %w", err)
 	}
 	defer txn.Discard()
 
@@ -307,12 +316,7 @@ func (m *MigrationRepositoryKV) addMigrationInternal(migration *Migration, gossi
 	version := migration.GetVersion()
 
 	// Key: meta:migration:{table}:version:{version}:node:{nodeId}:table_version:{table_version}
-	key := kv.NewKeyBuilder().Meta().Append("migration").
-		Append(version.GetTableName()).
-		Append("version").Append(fmt.Sprintf("%d", version.GetMigrationVersion())).
-		Append("node").Append(fmt.Sprintf("%d", version.GetNodeId())).
-		Append("table_version").Append(fmt.Sprintf("%d", version.GetTableVersion())).
-		Build()
+	key := getMigrationPrefixKeyWithVersion(version)
 
 	txn, err := m.store.Begin(true)
 	if err != nil {
@@ -328,7 +332,7 @@ func (m *MigrationRepositoryKV) addMigrationInternal(migration *Migration, gossi
 		return fmt.Errorf("failed to check migration existence: %w", err)
 	}
 
-	// Create stored migration batch with protobuf
+	// Create a stored migration batch with protobuf
 	storedBatch := &StoredMigrationBatch{
 		Migration: migration,
 		Committed: false,
@@ -357,18 +361,9 @@ func (m *MigrationRepositoryKV) updateMigrationIndexes(txn kv.Transaction, store
 	version := storedBatch.Migration.GetVersion()
 
 	// Index by table: meta:index:migration:table:{table}:{version}:{nodeId} -> migration_key
-	tableIndexKey := kv.NewKeyBuilder().Meta().Append("index").Append("migration").
-		Append("table").Append(version.GetTableName()).
-		Append(fmt.Sprintf("%d", version.GetMigrationVersion())).
-		Append(fmt.Sprintf("%d", version.GetNodeId())).
-		Build()
+	tableIndexKey := getMigrationIndexKey(version)
 
-	migrationKey := kv.NewKeyBuilder().Meta().Append("migration").
-		Append(version.GetTableName()).
-		Append("version").Append(fmt.Sprintf("%d", version.GetMigrationVersion())).
-		Append("node").Append(fmt.Sprintf("%d", version.GetNodeId())).
-		Append("table_version").Append(fmt.Sprintf("%d", version.GetTableVersion())).
-		Build()
+	migrationKey := getMigrationPrefixKeyWithVersion(version)
 
 	if err := txn.Put(m.ctx, tableIndexKey, migrationKey); err != nil {
 		return err
@@ -376,11 +371,7 @@ func (m *MigrationRepositoryKV) updateMigrationIndexes(txn kv.Transaction, store
 
 	// Index by committed status: meta:index:migration:uncommitted:{table}:{version}:{nodeId} -> migration_key
 	if !storedBatch.Committed && !storedBatch.Gossip {
-		uncommittedIndexKey := kv.NewKeyBuilder().Meta().Append("index").Append("migration").
-			Append("uncommitted").Append(version.GetTableName()).
-			Append(fmt.Sprintf("%d", version.GetMigrationVersion())).
-			Append(fmt.Sprintf("%d", version.GetNodeId())).
-			Build()
+		uncommittedIndexKey := getUncommittedIndexKey(version)
 
 		if err := txn.Put(m.ctx, uncommittedIndexKey, migrationKey); err != nil {
 			return err
@@ -392,11 +383,11 @@ func (m *MigrationRepositoryKV) updateMigrationIndexes(txn kv.Transaction, store
 
 // GetMigrationsByTable provides efficient querying of migrations by table
 func (m *MigrationRepositoryKV) GetMigrationsByTable(tableName string) ([]*Migration, error) {
-	prefix := kv.NewKeyBuilder().Meta().Append("migration").Append(tableName).Build()
+	prefix := getMigrationTablePrefixKey(tableName)
 
 	txn, err := m.store.Begin(false)
 	if err != nil {
-		return nil, fmt.Errorf("failed to begin read transaction: %w", err)
+		return nil, fmt.Errorf("failed to begin a read transaction: %w", err)
 	}
 	defer txn.Discard()
 
@@ -429,12 +420,7 @@ func (m *MigrationRepositoryKV) GetMigrationsByTable(tableName string) ([]*Migra
 // DeleteMigration removes a migration (useful for cleanup)
 func (m *MigrationRepositoryKV) DeleteMigration(version *MigrationVersion) error {
 	// Key: meta:migration:{table}:version:{version}:node:{nodeId}:table_version:{table_version}
-	key := kv.NewKeyBuilder().Meta().Append("migration").
-		Append(version.GetTableName()).
-		Append("version").Append(fmt.Sprintf("%d", version.GetMigrationVersion())).
-		Append("node").Append(fmt.Sprintf("%d", version.GetNodeId())).
-		Append("table_version").Append(fmt.Sprintf("%d", version.GetTableVersion())).
-		Build()
+	key := getMigrationPrefixKeyWithVersion(version)
 
 	txn, err := m.store.Begin(true)
 	if err != nil {
@@ -442,24 +428,16 @@ func (m *MigrationRepositoryKV) DeleteMigration(version *MigrationVersion) error
 	}
 	defer txn.Discard()
 
-	// Delete main migration record
+	// Delete the main migration record
 	if err := txn.Delete(m.ctx, key); err != nil {
 		return fmt.Errorf("failed to delete migration: %w", err)
 	}
 
 	// Delete index entries
-	tableIndexKey := kv.NewKeyBuilder().Meta().Append("index").Append("migration").
-		Append("table").Append(version.GetTableName()).
-		Append(fmt.Sprintf("%d", version.GetMigrationVersion())).
-		Append(fmt.Sprintf("%d", version.GetNodeId())).
-		Build()
+	tableIndexKey := getMigrationIndexKey(version)
 	_ = txn.Delete(m.ctx, tableIndexKey)
 
-	uncommittedIndexKey := kv.NewKeyBuilder().Meta().Append("index").Append("migration").
-		Append("uncommitted").Append(version.GetTableName()).
-		Append(fmt.Sprintf("%d", version.GetMigrationVersion())).
-		Append(fmt.Sprintf("%d", version.GetNodeId())).
-		Build()
+	uncommittedIndexKey := getUncommittedIndexKey(version)
 	_ = txn.Delete(m.ctx, uncommittedIndexKey)
 
 	return txn.Commit()

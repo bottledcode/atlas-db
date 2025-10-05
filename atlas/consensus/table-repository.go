@@ -24,7 +24,7 @@ type TableRepository interface {
 	// GetTablesBatch returns multiple tables by name in a single operation.
 	// Returns a slice of tables in the same order as the input names.
 	// Nil entries indicate table not found for that name.
-	GetTablesBatch(names []string) ([]*Table, error)
+	GetTablesBatch(names [][]byte) ([]*Table, error)
 	// UpdateTable updates a table.
 	UpdateTable(*Table) error
 	// InsertTable inserts a table.

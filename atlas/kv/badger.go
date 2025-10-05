@@ -70,11 +70,11 @@ func (s *BadgerStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 	return value, err
 }
 
-func (s *BadgerStore) PrefixScan(ctx context.Context, prefix []byte) ([][]byte, error) {
-	var keys [][]byte
+func (s *BadgerStore) PrefixScan(ctx context.Context, prefix []byte) (map[string][]byte, error) {
+	var keys = make(map[string][]byte)
 	err := s.db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
+		opts.PrefetchValues = true
 		opts.Prefix = prefix
 
 		it := txn.NewIterator(opts)
@@ -82,7 +82,12 @@ func (s *BadgerStore) PrefixScan(ctx context.Context, prefix []byte) ([][]byte, 
 
 		for it.Rewind(); it.Valid(); it.Next() {
 			item := it.Item()
-			keys = append(keys, item.KeyCopy(nil))
+			key := item.KeyCopy(nil)
+			value, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+			keys[string(key)] = value
 		}
 
 		return nil
@@ -180,8 +185,8 @@ func (t *BadgerTransaction) Delete(ctx context.Context, key []byte) error {
 	return t.txn.Delete(key)
 }
 
-func (t *BadgerTransaction) PrefixScan(ctx context.Context, prefix []byte) ([][]byte, error) {
-	var keys [][]byte
+func (t *BadgerTransaction) PrefixScan(ctx context.Context, prefix []byte) (map[string][]byte, error) {
+	var keys = make(map[string][]byte)
 
 	opts := badger.DefaultIteratorOptions
 	opts.PrefetchValues = false
@@ -191,8 +196,12 @@ func (t *BadgerTransaction) PrefixScan(ctx context.Context, prefix []byte) ([][]
 	defer it.Close()
 
 	for it.Rewind(); it.Valid(); it.Next() {
-		item := it.Item()
-		keys = append(keys, item.KeyCopy(nil))
+		key := it.Item().KeyCopy(nil)
+		value, err := it.Item().ValueCopy(nil)
+		if err != nil {
+			return nil, err
+		}
+		keys[string(key)] = value
 	}
 
 	return keys, nil

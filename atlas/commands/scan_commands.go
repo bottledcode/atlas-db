@@ -19,9 +19,18 @@ func (s *ScanCommand) Execute(ctx context.Context) ([]byte, error) {
 	}
 
 	// Use raw command to preserve case sensitivity for prefix matching
-	prefix := s.SelectCommand(1)
+	prefix, ok := s.SelectNormalizedCommand(1)
+	if !ok {
+		return nil, fmt.Errorf("expected prefix")
+	}
+	parts := strings.Split(prefix, ".")
+	tablePrefix := parts[0]
+	rowPrefix := ""
+	if len(parts) > 1 {
+		rowPrefix = parts[1]
+	}
 
-	keys, err := atlas.PrefixScan(ctx, prefix)
+	keys, err := atlas.PrefixScan(ctx, tablePrefix, rowPrefix)
 	if err != nil {
 		return nil, err
 	}

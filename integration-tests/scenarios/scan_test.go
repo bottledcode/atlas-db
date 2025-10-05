@@ -76,7 +76,7 @@ func TestPrefixScanSingleNode(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	// Scan for "table:USERS:" prefix (keys are uppercase)
-	keys, err := client.Scan("table:USERS:")
+	keys, err := client.Scan("USERS:")
 	require.NoError(t, err, "Failed to scan users prefix")
 	assert.Len(t, keys, 2, "Should find 2 user keys")
 	assert.Contains(t, keys, "table:USERS:row:ALICE", "Should contain users.alice")

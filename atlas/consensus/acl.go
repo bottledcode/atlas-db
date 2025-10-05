@@ -38,6 +38,24 @@ func DecodeACLData(b []byte) (*ACLData, error) {
 	return &aclData, nil
 }
 
+func isOwner(ctx context.Context, record *Record) bool {
+	if record.AccessControl == nil || record.AccessControl.Owners == nil {
+		return true
+	}
+	principal := getPrincipalFromContext(ctx)
+	return slices.Contains(record.AccessControl.Owners.Principals, principal)
+}
+
+func canWrite(ctx context.Context, record *Record) bool {
+	principal := getPrincipalFromContext(ctx)
+	return isOwner(ctx, record) || slices.Contains(record.AccessControl.Writers.Principals, principal)
+}
+
+func canRead(ctx context.Context, record *Record) bool {
+	principal := getPrincipalFromContext(ctx)
+	return isOwner(ctx, record) || slices.Contains(record.AccessControl.Readers.Principals, principal)
+}
+
 // HasPrincipal checks if a principal exists in the ACL data.
 func HasPrincipal(aclData *ACLData, principal string) bool {
 	return slices.Contains(aclData.Principals, principal)

@@ -19,106 +19,248 @@
 package kv
 
 import (
-	"encoding/binary"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dgraph-io/badger/v2"
 )
 
 // KeyBuilder helps construct hierarchical keys for different data types
 type KeyBuilder struct {
-	parts []string
+	isMeta bool
+	isIndex bool
+	isUncommitted bool
+	table  string
+	row    string
+	extra  [][]byte
+	migrationTable string
+	migrationVersion int64
+	tableVersion int64
+	node int64
 }
 
 // NewKeyBuilder creates a new key builder
 func NewKeyBuilder() *KeyBuilder {
-	return &KeyBuilder{parts: make([]string, 0)}
+	return &KeyBuilder{
+		isMeta: false,
+		table:  "",
+		row:    "",
+		extra:  [][]byte{},
+	}
+}
+
+const (
+	keyMeta = "m"
+	keySeparator = ":"
+	keyIndex = "i"
+	keyUncommitted = "u"
+	keyTable = "t"
+	keyRow = "r"
+	keyMigration = "m"
+	keyVersion = "v"
+	keyNode = "n"
+	keyTableVersion = "tv"
+)
+
+func NewKeyBuilderFromBytes(data []byte) *KeyBuilder {
+	parts := bytes.Split(data, []byte(keySeparator))
+	builder := NewKeyBuilder()
+	for i := 0; i < len(parts); i++ {
+		if i == 0 && string(parts[i]) == keyMeta {
+			builder.isMeta = true
+		}
+		if (i == 0 || i == 1) && string(parts[i]) == keyIndex {
+			builder.isIndex = true
+		}
+		if string(parts[i]) == keyUncommitted {
+			builder.isUncommitted = true
+		}
+		if len(parts) >= i+1 {
+			if string(parts[i]) == keyTable {
+				builder.table = string(parts[i+1])
+				i += 1
+				continue
+			}
+			if string(parts[i]) == keyRow {
+				builder.row = string(parts[i+1])
+				i += 1
+				continue
+			}
+			if string(parts[i]) == keyMigration {
+				builder.migrationTable = string(parts[i+1])
+				i += 1
+				continue
+			}
+			if string(parts[i]) == keyVersion {
+				var err error
+				builder.migrationVersion, err = strconv.ParseInt(string(parts[i+1]), 10, 64)
+				if err != nil {
+					builder.migrationVersion = -1
+				}
+				i += 1
+				continue
+			}
+			if string(parts[i]) == keyNode {
+				var err error
+				builder.node, err = strconv.ParseInt(string(parts[i+1]), 10, 64)
+				if err != nil {
+					panic("invalid node id")
+				}
+				i += 1
+				continue
+			}
+			if string(parts[i]) == keyTableVersion {
+				var err error
+				builder.tableVersion, err = strconv.ParseInt(string(parts[i+1]), 10, 64)
+				if err != nil {
+					panic("invalid table version")
+				}
+			}
+		}
+		builder.extra = append(builder.extra, parts[i])
+	}
+
+	return builder
+}
+
+func (kb *KeyBuilder) GetTable() string {
+	return kb.table
+}
+
+func (kb *KeyBuilder) GetRow() string {
+	return kb.row
 }
 
 // Table adds a table namespace to the key
 func (kb *KeyBuilder) Table(tableName string) *KeyBuilder {
-	kb.parts = append(kb.parts, "table", tableName)
+	kb.table = tableName
 	return kb
 }
 
 // Row adds a row identifier to the key
 func (kb *KeyBuilder) Row(rowID string) *KeyBuilder {
-	kb.parts = append(kb.parts, "row", rowID)
+	kb.row = rowID
 	return kb
 }
 
 // Meta adds metadata namespace to the key
 func (kb *KeyBuilder) Meta() *KeyBuilder {
-	kb.parts = append(kb.parts, "meta")
+	kb.isMeta = true
 	return kb
 }
 
-// Ownership adds ownership information to the key
-func (kb *KeyBuilder) Ownership(tableName string) *KeyBuilder {
-	kb.parts = append(kb.parts, "ownership", tableName)
+func (kb *KeyBuilder) Index() *KeyBuilder {
+	kb.isIndex = true
 	return kb
 }
 
-// Schema adds schema information to the key
-func (kb *KeyBuilder) Schema(tableName string) *KeyBuilder {
-	kb.parts = append(kb.parts, "schema", tableName)
+func (kb *KeyBuilder) Uncommitted() *KeyBuilder {
+	kb.isUncommitted = true
 	return kb
 }
 
-// Node adds node information to the key
-func (kb *KeyBuilder) Node(nodeID string) *KeyBuilder {
-	kb.parts = append(kb.parts, "nodes", nodeID)
+// Migration Pass 0 to version to omit, -1 to include the version prefix, or a version to include
+func (kb *KeyBuilder) Migration(table string, version int64) *KeyBuilder {
+	kb.isMeta = true
+	kb.migrationTable = table
+	kb.migrationVersion = version
 	return kb
 }
 
-// Migration adds migration information to the key
-func (kb *KeyBuilder) Migration(migrationID string) *KeyBuilder {
-	kb.parts = append(kb.parts, "migration", migrationID)
+func (kb *KeyBuilder) TableVersion(version int64) *KeyBuilder {
+	kb.tableVersion = version
 	return kb
 }
 
-// Index adds index information to the key
-func (kb *KeyBuilder) Index(indexName string) *KeyBuilder {
-	kb.parts = append(kb.parts, "index", indexName)
+func (kb *KeyBuilder) Node(node int64) *KeyBuilder {
+	kb.node = node
 	return kb
 }
 
 // Append adds a custom part to the key
 func (kb *KeyBuilder) Append(part string) *KeyBuilder {
-	kb.parts = append(kb.parts, part)
+	kb.extra = append(kb.extra, []byte(part))
 	return kb
 }
 
 // Build constructs the final key as bytes
 func (kb *KeyBuilder) Build() []byte {
-	return []byte(strings.Join(kb.parts, ":"))
+	parts := make([][]byte, 0)
+	if kb.isMeta {
+		parts = append(parts, []byte(keyMeta))
+	}
+	if kb.isIndex {
+		parts = append(parts, []byte(keyIndex))
+	}
+	if kb.table != "" {
+		parts = append(parts, []byte(keyTable), []byte(kb.table))
+	}
+	if kb.row != "" {
+		parts = append(parts, []byte(keyRow), []byte(kb.row))
+	}
+	if kb.migrationTable != "" {
+		parts = append(parts, []byte(keyMigration), []byte(kb.migrationTable))
+		if kb.isUncommitted {
+			parts = append(parts, []byte(keyUncommitted))
+		}
+	}
+	if kb.migrationVersion > 0 {
+		parts = append(parts, []byte(keyVersion), []byte(strconv.FormatInt(kb.migrationVersion, 10)))
+	}
+	if kb.migrationVersion < 0 {
+		parts = append(parts, []byte(keyVersion))
+	}
+	if kb.node > 0 {
+		parts = append(parts, []byte(keyNode), []byte(strconv.FormatInt(kb.node, 10)))
+	}
+	if kb.tableVersion > 0 {
+		parts = append(parts, []byte(keyTableVersion), []byte(strconv.FormatInt(kb.tableVersion, 10)))
+	}
+	if len(kb.extra) > 0 {
+		parts = append(parts, kb.extra...)
+	}
+	return bytes.Join(parts, []byte(keySeparator))
 }
 
 // String returns the key as a string (for debugging)
 func (kb *KeyBuilder) String() string {
-	return strings.Join(kb.parts, ":")
+	return string(kb.Build())
+}
+
+func (kb *KeyBuilder) DottedKey() string {
+	parts := make([]string, 0)
+	if kb.table != "" {
+		parts = append(parts, kb.table)
+	}
+	if kb.row != "" {
+		parts = append(parts, kb.row)
+	}
+	if len(kb.extra) > 0 {
+		for _, part := range kb.extra {
+			parts = append(parts, string(part))
+		}
+	}
+	return strings.Join(parts, ".")
 }
 
 // Clone creates a copy of the KeyBuilder
 func (kb *KeyBuilder) Clone() *KeyBuilder {
-	newKB := &KeyBuilder{parts: make([]string, len(kb.parts))}
-	copy(newKB.parts, kb.parts)
-	return newKB
+	return &KeyBuilder{
+		isMeta: kb.isMeta,
+		table:  kb.table,
+		row:    kb.row,
+		extra:  kb.extra,
+	}
 }
 
 // TableName attempts to extract the table name from the builder.
 // It returns the first segment that follows a "table" prefix, if present.
 func (kb *KeyBuilder) TableName() (string, bool) {
-	for i := 0; i < len(kb.parts); i++ {
-		if kb.parts[i] == "table" {
-			if i+1 < len(kb.parts) {
-				return kb.parts[i+1], true
-			}
-		}
-	}
-	return "", false
+	return kb.table, kb.table != ""
 }
 
 // FromDottedKey constructs a KeyBuilder from a logical dotted key of the form
@@ -450,21 +592,17 @@ func DecodeRecord(data []byte) (*Record, error) {
 	return &r, nil
 }
 
-// IndexKey generates keys for secondary indexes
-func IndexKey(tableName, indexName, value string, primaryKey string) []byte {
-	return NewKeyBuilder().
-		Table(tableName).
-		Index(indexName).
-		Append(value).
-		Append(primaryKey).
-		Build()
-}
-
-// VersionKey generates keys for versioned data
-func VersionKey(baseKey []byte, version uint64) []byte {
-	versionBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(versionBytes, version)
-	return append(baseKey, append([]byte(":v:"), versionBytes...)...)
+func DecodeItem(item *badger.Item) (string, *Record, error) {
+	key := string(item.KeyCopy(nil))
+	value, err := item.ValueCopy(nil)
+	if err != nil {
+		return "", nil, err
+	}
+	record, err := DecodeRecord(value)
+	if err != nil {
+		return "", nil, err
+	}
+	return key, record, nil
 }
 
 // ParseTableRowKey returns the given key. Key === table in atlasdb

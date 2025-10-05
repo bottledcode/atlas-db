@@ -295,8 +295,6 @@ func upsertTable(ctx context.Context, tr TableRepository, table *Table) error {
 }
 
 func (m *majorityQuorum) PrefixScan(ctx context.Context, in *PrefixScanRequest, opts ...grpc.CallOption) (*PrefixScanResponse, error) {
-	options.Logger.Info("MajorityQuorum PrefixScan called", zap.String("prefix", in.GetPrefix()))
-
 	nr := NewNodeRepositoryKV(ctx, kv.GetPool().MetaStore())
 	qm := GetDefaultQuorumManager(ctx)
 
@@ -312,10 +310,6 @@ func (m *majorityQuorum) PrefixScan(ctx context.Context, in *PrefixScanRequest, 
 			Error:   "failed to get nodes: " + err.Error(),
 		}, nil
 	}
-
-	options.Logger.Info("Broadcasting PrefixScan to nodes",
-		zap.Int("node_count", len(allNodes)),
-		zap.String("prefix", in.GetPrefix()))
 
 	// Edge case: no nodes available
 	if len(allNodes) == 0 {
@@ -469,7 +463,8 @@ func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts
 		}
 	}
 	mr := NewMigrationRepositoryKV(ctx, kv.GetPool().MetaStore())
-	version, err := mr.GetNextVersion(in.Key)
+
+	version, err := mr.GetNextVersion(in.GetTable())
 	if err != nil {
 		return nil, err
 	}
@@ -488,14 +483,7 @@ func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts
 				Data: &DataMigration{
 					Time: timestamppb.Now(),
 					Session: &DataMigration_Change{
-						Change: &KVChange{
-							Operation: &KVChange_Set{
-								Set: &SetChange{
-									Key:   []byte(in.Key),
-									Value: in.Value,
-								},
-							},
-						},
+						Change: in.GetValue(),
 					},
 				},
 			},
@@ -588,7 +576,7 @@ func (m *majorityQuorum) DeleteKey(ctx context.Context, in *WriteKeyRequest, opt
 		}
 	}
 	mr := NewMigrationRepositoryKV(ctx, kv.GetPool().MetaStore())
-	version, err := mr.GetNextVersion(in.Key)
+	version, err := mr.GetNextVersion(in.GetTable())
 	if err != nil {
 		return nil, err
 	}
@@ -607,11 +595,7 @@ func (m *majorityQuorum) DeleteKey(ctx context.Context, in *WriteKeyRequest, opt
 				Data: &DataMigration{
 					Time: timestamppb.Now(),
 					Session: &DataMigration_Change{
-						Change: &KVChange{
-							Operation: &KVChange_Del{
-								Del: &DelChange{Key: []byte(in.Key)},
-							},
-						},
+						Change: in.GetValue(),
 					},
 				},
 			},

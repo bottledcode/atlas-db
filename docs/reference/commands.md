@@ -176,6 +176,47 @@ rules.
    ```
    Fetches a specific number of rows from a stream identified by `StreamID`.
 
+10. **Scan Command:**
+   ```
+   SCAN [prefix]\r\n
+   ```
+   Performs a distributed prefix scan across all nodes in the cluster, returning all keys that match the specified prefix and are owned by any node. The results are returned in sorted lexicographic order.
+
+   **Response Format:**
+   - Empty result:
+     ```
+     EMPTY\r\n
+     OK\r\n
+     ```
+   - With results:
+     ```
+     KEYS:<count>\r\n
+     <key1>\r\n
+     <key2>\r\n
+     ...\r\n
+     OK\r\n
+     ```
+
+   **Example:**
+   ```
+   Client: SCAN table:USERS:\r\n
+   Server: KEYS:2\r\n
+           table:USERS:row:ALICE\r\n
+           table:USERS:row:BOB\r\n
+           OK\r\n
+   ```
+
+   **Behavior:**
+   - Broadcasts request to all cluster nodes
+   - Each node scans its local data store for matching keys
+   - Ownership filtering ensures only keys owned by each node are returned
+   - Results are aggregated, deduplicated, and sorted before returning to client
+   - Returns empty set if no matching keys are found or all nodes fail
+
+   **Error Handling:**
+   - If all nodes fail to respond: `ERROR <combined error messages>`
+   - Partial failures are logged but do not affect the response if any nodes succeed
+
 ---
 
 ## 5. Response Frames

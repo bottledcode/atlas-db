@@ -63,13 +63,32 @@ message SchemaMigration {
   repeated string commands = 1; // The commands to be executed
 }
 
+message ACL {
+  ACLData owners = 1;
+  ACLData readers = 2;
+  ACLData writers = 3;
+}
+
+message Record {
+  RawData value = 1;
+  ACL accessControl = 2;
+}
+
 message RawData {
   bytes data = 1;
 }
 
 message SetChange {
   bytes key = 1;
-  bytes value = 2;
+  Record data = 2;
+}
+
+message AclChange {
+  bytes key = 1;
+  oneof change {
+    ACL addition = 2;
+    ACL deletion = 3;
+  }
 }
 
 message DelChange {
@@ -80,13 +99,14 @@ message KVChange {
   oneof operation {
     SetChange set = 1;
     DelChange del = 2;
+    RawData data = 3;
+    AclChange acl = 4;
   }
 }
 
 message DataMigration {
   google.protobuf.Timestamp time = 3;
   oneof session {
-    RawData rawData = 1;
     KVChange change = 2;
   }
 }
@@ -167,6 +187,7 @@ message StealTableOwnershipSuccess {
 enum StealReason {
   queryReason = 0; // The table was stolen due to a readonly
   writeReason = 1; // The table was stolen due to a write
+  discoveryReason = 2; // We only care about this for discovery
 }
 
 message StealTableOwnershipRequest {
@@ -231,7 +252,8 @@ message ReadKeyResponse {
 // Remote prefix scan
 message PrefixScanRequest {
   Node sender = 1;
-  string prefix = 2;
+  string tablePrefix = 2;
+  string rowPrefix = 3;
 }
 
 message PrefixScanResponse {
@@ -242,9 +264,8 @@ message PrefixScanResponse {
 
 message WriteKeyRequest {
   Node sender = 1; // The node requesting the write
-  string key = 2; // The key to write
   string table = 3; // The table the key belongs to
-  bytes value = 4; // The value to write
+  KVChange value = 4; // The value to write
 }
 
 message WriteKeyResponse {

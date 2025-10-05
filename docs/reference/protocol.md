@@ -1,243 +1,165 @@
-# Protocol
+# Atlas Socket Protocol
 
-The protocol is a simple text-based protocol used to communicate with the Atlas server over a Unix socket.
+This document describes the line-oriented control protocol implemented in `atlas/socket`. It is the canonical reference
+for client authors and operators building tooling against Atlas’ interactive socket.
 
-## Overview
+## 1. Scope and audience
 
-The protocol is designed to be simple and easy to implement. It is a line-based protocol, with each line representing a
-command or response.
+- **Audience**: client programmers, SREs operating Atlas clusters, and contributors maintaining the socket layer.
+- **Out of scope**: the gRPC APIs exposed through the Caddy module (bootstrap/consensus) and the HTTP surface of Caddy
+  itself.
+- **Versioning**: protocol frames advertise version `1.0`. All information here reflects the behaviour of
+  `atlas/socket` at commit `6ee5319` and later.
 
-## Responses
+## 2. Transport assumptions
 
-The server responds with `OK` if the command was successful or `ERROR` followed by a code and message if the command
-failed.
+- **Endpoint**: a Unix domain socket whose location is configured through `atlas/options.Options.SocketPath`
+  (`atlas.sock` by default). The Caddy module ensures the containing directory exists and sets appropriate permissions.
+- **Concurrency**: every accepted connection is handled on its own goroutine; reads and writes are multiplexed using a
+  scanner goroutine plus a guarded writer with a `sync.Mutex`.
+- **Timeouts**: write operations inherit a five minute deadline (`Socket.timeout`). Read deadlines are not set so long
+  running operations (e.g. large scans) do not fail spuriously.
+- **Maximum frame size**: individual command lines are limited to 128 MiB (`maxScannerLength`). Exceeding this limit
+  terminates the connection with `ERROR FATAL command exceeded maximum length`.
 
-### Query responses
+## 3. Connection lifecycle
 
-Query results are returned in the following form:
+Atlas connections progress through the following states:
 
-```
-META COLUMN_COUNT <N>
-META COLUMN_NAME <N[x]> <NAME>
-ROW <N[x]> <TYPE> <VALUE>
-META LAST_INSERT_ID <ID>
-META ROWS AFFECTED <N>
-```
+| State         | Trigger                                            | Server behaviour                                                              |
+|---------------|----------------------------------------------------|-------------------------------------------------------------------------------|
+| `Greeting`    | TCP/Unix accept                                    | Immediately write `WELCOME 1.0 Chronalys/1.0\r\n`.                            |
+| `Handshake`   | Client responds                                    | Validate first frame equals `HELLO 1.0 <token>` (token may be any printable). |
+| `Ready`       | Handshake accepted                                 | Emit `READY\r\n` and start streaming commands to the executor.                |
+| `Operational` | Commands flowing                                   | Process synchronously or asynchronously depending on request ID tagging.      |
+| `Closing`     | Context cancelled, fatal error, or socket teardown | Flush pending writes, close connection, release resources.                    |
 
-For example, for the following results:
+Failure to send a correctly formatted `HELLO` leads to `ERROR FATAL invalid handshake` and an immediate close. Atlas
+ignores the client identifier today but reserves it for future feature negotiation.
 
-| id | name |
-|----|------|
-| 1  | John |
-| 2  | NULL |
+## 4. Frame grammar
 
-The response would be:
-
-```
-META COLUMN_COUNT 2
-META COLUMN_NAME 0 id
-META COLUMN_NAME 1 name
-ROW 0 INT 1
-ROW 0 STRING John
-ROW 1 INT 2
-ROW 1 NULL
-```
-
-## Types
-
-The following types are supported:
-
-- `INT` where the value is a base-10 integer in ascii form.
-- `FLOAT` where the value is a base-10 float in ascii form.
-- `TEXT` where the value is a string.
-- `NULL` where the value is not sent.
-- `BLOB` where the value is a base64 encoded string.
-
-## Commands
-
-> Note: in the syntax below, `<...>` denotes a required parameter, `[...]` denotes an optional parameter. UPPERCASE
-> denotes case-insensitivity and lowercase denotes case-sensitivity.
-
-### Prepare
-
-#### Syntax
+All requests and textual responses are ASCII frames terminated by carriage-return/newline. Binary payloads are the only
+exception (see §7).
 
 ```
-PREPARE <ID> <sql>
+frame        := tagged-frame | command-line
+command-line := token *(SP token) CR LF
+Tagged       := "[ID:" 1*VCHAR "]"                ; request identifier (no closing bracket)
+tagged-frame := Tagged SP command-line
 ```
 
-#### Description
+- Tokens are split by ASCII whitespace. The server stores an uppercase copy for dispatch while retaining the raw tokens
+  for value parsing.
+- Multiple spaces are preserved in the raw view so commands such as `KEY PUT foo.bar   padded value` retain the intended
+  value payload.
+- Empty lines are ignored.
 
-The `PREPARE` command is used to prepare a query for execution.
-The ID is a case-insensitive and unique identifier for the query.
-The SQL is the query to prepare and may contain placeholders.
+## 5. Request identifiers and concurrency
 
-#### Example
+Any command prefixed with `[ID:<token>]` is executed asynchronously:
 
-```
-PREPARE 1 SELECT * FROM table WHERE id = ?\r\n
-PREPARE USERS SELECT * FROM users WHERE id = :id\r\n
-```
+1. `CommandFromString` extracts the ID and removes it from the raw command passed to the command dispatcher.
+2. The dispatcher spins up a goroutine that calls `Socket.executeCommandAsync` with the captured ID and the principal in
+   effect at submission time.
+3. Responses emitted from the command include the same prefix:
+    - Data frames become `[ID:<token>] <payload>`.
+    - Binary headers become `[ID:<token>] BLOB <n>`.
+    - Terminal acknowledgements become `[ID:<token>] OK`.
+4. Errors use `ERROR WARN`/`ERROR FATAL` but still carry the prefix.
 
-### Execute
+Commands without an ID execute synchronously and block the read loop until they finish.
 
-#### Syntax
+## 6. Error semantics
 
-```
-EXECUTE <ID>
-```
+Errors propagate through `socket.formatCommandError` which maps Go/ gRPC errors to protocol levels:
 
-#### Description
+| Level   | Meaning                                      | Connection state                 |
+|---------|----------------------------------------------|----------------------------------|
+| `WARN`  | Command failed but connection remains usable | Continue reading next command    |
+| `INFO`  | Reserved for streaming hints (unused today)  | Continue                         |
+| `FATAL` | Non-recoverable protocol violation           | Connection is closed immediately |
 
-Executes the prepared query and clears any bound parameters.
+The formatter sanitises control characters to prevent frame injection. Permission failures include the active
+principal (`permission denied for principal 'alice': ...`) when available.
 
-#### Example
+## 7. Binary transfers
 
-```
-EXECUTE USERS\r\n
-```
+Binary support exists exclusively for `KEY BLOB` operations.
 
-### FINALIZE
+- **Upload (`KEY BLOB SET`)**
+    1. Client sends `KEY BLOB SET <key> <length>\r\n`.
+    2. Scanner reads the declared number of bytes directly from the socket (`io.ReadFull`). No trailing newline is
+       expected; the next byte after the payload is treated as the first byte of the next frame.
+    3. Command executes synchronously or asynchronously (depending on request ID) and replies just with `OK`.
+- **Download (`KEY BLOB GET`)**
+    1. Command execution returns raw bytes from the key/value store.
+    2. The socket layer writes `BLOB <length>\r\n` (with the optional `[ID:...]` prefix) and streams the payload
+       verbatim.
+    3. A terminal `OK\r\n` frame acknowledges completion. `nil` payloads produce `EMPTY\r\nOK\r\n` instead.
 
-#### Syntax
+Binary size is bounded by the same 128 MiB guard used for command lines.
 
-```
-FINALIZE <ID>
-```
+## 8. Principals and metadata propagation
 
-#### Description
+Atlas propagates caller identity through per-connection principals:
 
-Finalizes the prepared query and removes it from the server.
+- `PRINCIPAL ASSUME <name>` validates the supplied name (trimmed, 1–256 runes, no control characters) and stores it on
+  the `Socket`.
+- The current value is injected into gRPC outgoing metadata as key `atlas-principal` for all subsequent commands.
+- `PRINCIPAL WHOAMI` reports the stored principal, defaulting to `(none)` when unset.
+- Principals interact with ACL enforcement and appear in audit logs emitted by key commands.
 
-#### Example
+## 9. Flow-control considerations
 
-```
-FINALIZE 1\r\n
-```
+- Atlas does not currently implement server-initiated flow control. Clients should not pipeline multiple `KEY BLOB SET`
+  bodies; wait for the `OK` frame before streaming the next payload.
+- For asynchronous commands, clients must keep track of outstanding IDs and handle out-of-order responses. The server
+  does
+  not limit concurrency beyond resource limits in the command implementations.
+- Long-running commands (e.g. `SCAN` across the cluster) stream their result lines before the terminating `OK`. Use
+  `[ID:...]` if you want other commands to proceed while a scan executes.
 
-### BIND
+## 10. Connection termination
 
-#### Syntax
+A connection closes when:
 
-```
-BIND <ID> <param> <TYPE> [value]
-```
+- The server writes `ERROR FATAL ...` (e.g. handshake failure, malformed command).
+- The underlying context is cancelled (service shutdown) or the client disconnects.
+- An I/O error occurs when writing responses.
 
-#### Description
+Clients should treat EOF as an implicit failure of the in-flight command and retry as appropriate.
 
-Binds a value to a prepared query. The param can be either a positional parameter (number) or a named parameter (starting with ':'). 
-The value must match the specified type. For NULL values, omit the value parameter.
-#### Example
-
-```
-BIND 1 INT 1\r\n
-BIND :name TEXT \r\n
-```
-
-### BEGIN
-
-#### Syntax
-
-```
-BEGIN [IMMEDIATE|DEFERRED|EXCLUSIVE]
-```
-
-#### Description
-
-Starts a new transaction.
-
-#### Example
-
-```
-BEGIN IMMEDIATE\r\n
-```
-
-### COMMIT
-
-#### Syntax
+## 11. Example transcript
 
 ```
-COMMIT
+# 1. Handshake
+S: WELCOME 1.0 Chronalys/1.0\r\n
+C: HELLO 1.0 cli=atlasctl\r\n
+S: READY\r\n
+
+# 2. Set principal and seed text value
+C: PRINCIPAL ASSUME analytics\r\n
+S: OK\r\n
+C: KEY PUT demo.row value with spaces\r\n
+S: OK\r\n
+
+# 3. Concurrent blob downloads using request IDs
+C: [ID:a] KEY BLOB GET log.archive\r\n
+C: [ID:b] KEY BLOB GET asset.raw\r\n
+S: [ID:b] BLOB 2048\r\n<2048 bytes>
+S: [ID:b] OK\r\n
+S: [ID:a] EMPTY\r\n
+S: [ID:a] OK\r\n
+
+# 4. Cluster inspection
+C: NODE LIST\r\n
+S: NODE id=1 region=local status=ACTIVE rtt_ms=3 addr=localhost port=4444\r\n
+S: NODE id=2 region=iad status=ACTIVE rtt_ms=42 addr=iad.example port=4444\r\n
+S: OK\r\n
 ```
 
-#### Description
+## 12. Related documents
 
-Commits the current transaction.
-
-#### Example
-
-```
-COMMIT\r\n
-```
-
-### ROLLBACK
-
-#### Syntax
-
-```
-ROLLBACK [TO <SAVEPOINT>]
-```
-
-#### Description
-
-Rolls back the current transaction or to a savepoint.
-
-#### Example
-
-```
-ROLLBACK TO savepoint\r\n
-```
-
-### SAVEPOINT
-
-#### Syntax
-
-```
-SAVEPOINT <name>
-```
-
-#### Description
-
-Creates a new savepoint.
-
-#### Example
-
-```
-SAVEPOINT savepoint\r\n
-```
-
-### RELEASE
-
-#### Syntax
-
-```
-RELEASE <savepoint>
-```
-
-#### Description
-
-Releases a savepoint.
-
-#### Example
-
-```
-RELEASE savepoint\r\n
-```
-
-### PRAGMA
-
-#### Syntax
-
-```
-PRAGMA <name> [value]
-```
-
-#### Description
-
-Sets a pragma value.
-
-#### Example
-
-```
-PRAGMA ATLAS_CONSISTENCY strong\r\n
-```
+- `docs/reference/commands.md` — detailed semantics for each command accepted by the socket.
+- `docs/reference/consensus.md` — explains how socket commands map onto the WPaxos-based replication layer.

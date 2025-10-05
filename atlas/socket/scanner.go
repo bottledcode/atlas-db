@@ -22,6 +22,8 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"io"
+	"strconv"
 	"strings"
 
 	"github.com/bottledcode/atlas-db/atlas/commands"
@@ -67,12 +69,64 @@ func (s *Scanner) Scan(ctx context.Context) (chan *commands.CommandString, chan 
 				}
 
 				if !isPrefix {
-					out <- commands.CommandFromString(buf.String())
+					cmdStr := buf.String()
+					cmd := commands.CommandFromString(cmdStr)
 					buf.Reset()
+
+					if isBlobSetCommand(cmd) {
+						binaryData, err := s.readBinaryData(cmd)
+						if err != nil {
+							errs <- err
+							return
+						}
+						cmd.SetBinaryData(binaryData)
+					}
+
+					out <- cmd
 				}
 			}
 		}
 	}()
 
 	return out, errs
+}
+
+// isBlobSetCommand checks if the command is "KEY BLOB SET <key> <length>"
+func isBlobSetCommand(cmd *commands.CommandString) bool {
+	if cmd.NormalizedLen() < 5 {
+		return false
+	}
+	p0, ok0 := cmd.SelectNormalizedCommand(0)
+	p1, ok1 := cmd.SelectNormalizedCommand(1)
+	p2, ok2 := cmd.SelectNormalizedCommand(2)
+	return ok0 && ok1 && ok2 && p0 == "KEY" && p1 == "BLOB" && p2 == "SET"
+}
+
+// readBinaryData reads exactly <length> bytes of binary data for BLOB commands
+func (s *Scanner) readBinaryData(cmd *commands.CommandString) ([]byte, error) {
+	if cmd.NormalizedLen() < 5 {
+		return nil, errors.New("KEY BLOB SET requires <key> and <length>")
+	}
+
+	lengthStr := cmd.SelectCommand(4)
+	length, err := strconv.ParseInt(lengthStr, 10, 64)
+	if err != nil {
+		return nil, errors.New("invalid length in KEY BLOB SET: " + err.Error())
+	}
+
+	if length < 0 {
+		return nil, errors.New("negative length not allowed")
+	}
+
+	if length > maxScannerLength {
+		return nil, errors.New("binary data exceeds maximum length")
+	}
+
+	data := make([]byte, length)
+	_, err = io.ReadFull(s.reader, data)
+	if err != nil {
+		return nil, errors.New("failed to read binary data: " + err.Error())
+	}
+
+	return data, nil
 }

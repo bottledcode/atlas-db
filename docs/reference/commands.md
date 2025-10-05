@@ -217,6 +217,66 @@ rules.
    - If all nodes fail to respond: `ERROR <combined error messages>`
    - Partial failures are logged but do not affect the response if any nodes succeed
 
+11. **Binary Data Commands:**
+
+   **Set Binary Data:**
+   ```
+   KEY BLOB SET [key] [length]\r\n
+   [binary-data-exactly-length-bytes]
+   ```
+   Stores binary data under the specified key. The `[length]` parameter specifies the exact number of bytes to read following the command line. Binary data may contain any bytes, including newlines (`\r\n`), null bytes, or other control characters, without affecting protocol parsing.
+
+   **Example:**
+   ```
+   Client: KEY BLOB SET user:avatar:alice 1024\r\n
+           [1024 bytes of binary image data]\r\n
+   Server: OK\r\n
+   ```
+
+   **Get Binary Data:**
+   ```
+   KEY BLOB GET [key]\r\n
+   ```
+   Retrieves binary data stored under the specified key.
+
+   **Response Format:**
+   - Empty result (key not found):
+     ```
+     EMPTY\r\n
+     OK\r\n
+     ```
+   - With data:
+     ```
+     BLOB [length]\r\n
+     [binary-data-exactly-length-bytes]
+     OK\r\n
+     ```
+
+   **Example:**
+   ```
+   Client: KEY BLOB GET user:avatar:alice\r\n
+   Server: BLOB 1024\r\n
+           [1024 bytes of binary image data]
+           OK\r\n
+   ```
+
+   **Behavior:**
+   - Maximum binary data size is 128MB (configurable via `maxScannerLength`)
+   - Binary data is read/written using exact byte counts, independent of content
+   - No encoding or escaping is performed on binary data
+   - Protocol remains line-based for commands, with binary payload following
+
+   **Use Cases:**
+   - Storing images, documents, or other binary files
+   - Encrypted data that may contain arbitrary byte sequences
+   - Serialized protocol buffers or other binary formats
+   - Any data containing newlines or control characters
+
+   **Error Handling:**
+   - Invalid length (negative, non-numeric, or exceeds maximum): `ERROR <error message>`
+   - Insufficient data available: `ERROR failed to read binary data`
+   - General storage errors follow standard error response format
+
 ---
 
 ## 5. Response Frames
@@ -373,9 +433,10 @@ shard by principle during creation.
 
 ## 9. Future Work
 
-1. Incorporating binary encoding for enhanced throughput.
+1. ~~Incorporating binary encoding for enhanced throughput.~~ ✓ Implemented via `KEY BLOB SET/GET` commands
 2. Expanding protocol negotiation capabilities.
 3. Introducing advanced query planning optimizations.
+4. Implementing automatic chunking at the driver level for data exceeding size limits.
 
 ---
 

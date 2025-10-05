@@ -23,9 +23,11 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/bottledcode/atlas-db/atlas/commands"
 	"github.com/bottledcode/atlas-db/atlas/kv"
 	"github.com/bottledcode/atlas-db/atlas/options"
 	"go.uber.org/zap"
@@ -311,11 +313,21 @@ ready:
 				}
 				continue
 			}
-			err = s.writeMessage(resp)
-			if err != nil {
-				options.Logger.Error("Error writing response", zap.Error(err))
-				return
+
+			if isBlobGetCommand(cmd) {
+				err = s.writeBlobResponse(resp)
+				if err != nil {
+					options.Logger.Error("Error writing blob response", zap.Error(err))
+					return
+				}
+			} else {
+				err = s.writeMessage(resp)
+				if err != nil {
+					options.Logger.Error("Error writing response", zap.Error(err))
+					return
+				}
 			}
+
 			err = s.writeOk(OK)
 			if err != nil {
 				options.Logger.Error("Error writing OK response", zap.Error(err))
@@ -323,4 +335,38 @@ ready:
 			}
 		}
 	}
+}
+
+func isBlobGetCommand(cmd *commands.CommandString) bool {
+	if cmd.NormalizedLen() < 3 {
+		return false
+	}
+	p0, ok0 := cmd.SelectNormalizedCommand(0)
+	p1, ok1 := cmd.SelectNormalizedCommand(1)
+	p2, ok2 := cmd.SelectNormalizedCommand(2)
+	return ok0 && ok1 && ok2 && p0 == "KEY" && p1 == "BLOB" && p2 == "GET"
+}
+
+func (s *Socket) writeBlobResponse(binaryData []byte) error {
+	if len(binaryData) == 0 {
+		return s.writeMessage([]byte("EMPTY"))
+	}
+
+	err := s.setWriteTimeout(s.timeout)
+	if err != nil {
+		return err
+	}
+
+	header := []byte("BLOB " + strconv.Itoa(len(binaryData)))
+	err = s.writeRawMessage(header, []byte(EOL))
+	if err != nil {
+		return err
+	}
+
+	err = s.writeRawMessage(binaryData)
+	if err != nil {
+		return err
+	}
+
+	return s.writer.Flush()
 }

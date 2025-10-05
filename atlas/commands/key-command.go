@@ -21,6 +21,7 @@ package commands
 import (
 	"bytes"
 	"context"
+	"errors"
 	"time"
 
 	"github.com/bottledcode/atlas-db/atlas"
@@ -51,6 +52,15 @@ func (c *KeyCommand) GetNext() (Command, error) {
 			return &KeyPutCommand{*c}, nil
 		case "DEL":
 			return &KeyDelCommand{*c}, nil
+		case "BLOB":
+			if blobOp, ok := c.SelectNormalizedCommand(2); ok {
+				switch blobOp {
+				case "SET":
+					return &KeyBlobSetCommand{*c}, nil
+				case "GET":
+					return &KeyBlobGetCommand{*c}, nil
+				}
+			}
 		}
 	}
 	return EmptyCommandString, nil
@@ -229,4 +239,54 @@ func (k *KeyDelCommand) Execute(ctx context.Context) ([]byte, error) {
 		return nil, err
 	}
 	return nil, nil
+}
+
+type KeyBlobSetCommand struct {
+	KeyCommand
+}
+
+func (k *KeyBlobSetCommand) GetNext() (Command, error) {
+	return k, nil
+}
+
+func (k *KeyBlobSetCommand) Execute(ctx context.Context) ([]byte, error) {
+	if err := k.CheckMinLen(5); err != nil {
+		return nil, err
+	}
+	key, _ := k.SelectNormalizedCommand(3)
+	binaryData := k.GetBinaryData()
+	if binaryData == nil {
+		return nil, errors.New("binary data not attached to command")
+	}
+
+	builder := k.FromKey(key)
+	if err := atlas.WriteKey(ctx, builder, binaryData); err != nil {
+		return nil, err
+	}
+
+	options.Logger.Info("wrote blob", zap.String("key", key), zap.Int("size", len(binaryData)))
+	return nil, nil
+}
+
+type KeyBlobGetCommand struct {
+	KeyCommand
+}
+
+func (k *KeyBlobGetCommand) GetNext() (Command, error) {
+	return k, nil
+}
+
+func (k *KeyBlobGetCommand) Execute(ctx context.Context) ([]byte, error) {
+	if err := k.CheckMinLen(4); err != nil {
+		return nil, err
+	}
+	key, _ := k.SelectNormalizedCommand(3)
+
+	builder := k.FromKey(key)
+	value, err := atlas.GetKey(ctx, builder)
+	if err != nil {
+		return nil, err
+	}
+
+	return value, nil
 }

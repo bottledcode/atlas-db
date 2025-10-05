@@ -41,6 +41,31 @@ Artifacts are copied into the repository root:
    This creates data in `/tmp/atlas2/` and exposes the Unix socket at `/tmp/atlas2/socket`.
 3. (Optional) Start an additional node with `atlas/caddy/Caddyfile`, pointing its `connect` directive at the first node.
 
+### Example Caddyfile
+The bundled templates in `atlas/caddy/` are a good starting point. A minimal single-node configuration looks like this:
+
+```caddyfile
+{
+    admin off
+    auto_https disable_redirects
+}
+
+https://localhost:4444 {
+    atlas {
+        advertise localhost:4444
+        region local
+        credentials mySecret
+        db_path /tmp/atlas-demo/
+        socket /tmp/atlas-demo/socket
+        # connect https://bootstrap-host:port   # uncomment to join an existing cluster
+    }
+    tls internal
+}
+```
+
+Adjust the `db_path`/`socket` locations to suit your environment. When joining a cluster, replace the commented `connect`
+line with the bootstrap node address and ensure `credentials` matches the remote node’s expectation.
+
 ## Talking to the socket
 Use the bundled REPL:
 

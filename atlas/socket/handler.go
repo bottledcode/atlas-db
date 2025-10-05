@@ -329,11 +329,13 @@ ready:
 			// Check if this is an async command (has request ID)
 			requestID := cmd.GetRequestID()
 			if requestID != "" {
-				// Execute asynchronously in a goroutine
-				go s.executeCommandAsync(ctx, cmd, command, requestID)
+				// Capture principal at time of command submission
+				principal := s.principal
+				// Execute asynchronously in a goroutine with captured principal
+				go s.executeCommandAsync(ctx, cmd, command, requestID, principal)
 			} else {
 				// Execute synchronously (backward compatible)
-				if err := s.executeCommand(ctx, cmd, command, ""); err != nil {
+				if err := s.executeCommand(ctx, cmd, command, "", s.principal); err != nil {
 					options.Logger.Error("Error in synchronous command execution", zap.Error(err))
 					return
 				}
@@ -344,10 +346,11 @@ ready:
 
 // executeCommand executes a command and writes the response.
 // Returns an error if writing fails (connection should close).
-func (s *Socket) executeCommand(ctx context.Context, cmd *commands.CommandString, command commands.Command, requestID string) error {
+// The principal parameter should be the principal value captured at command submission time.
+func (s *Socket) executeCommand(ctx context.Context, cmd *commands.CommandString, command commands.Command, requestID string, principal string) error {
 	execCtx := ctx
-	if s.principal != "" {
-		execCtx = metadata.NewOutgoingContext(ctx, metadata.Pairs(atlasPrincipalKey, s.principal))
+	if principal != "" {
+		execCtx = metadata.NewOutgoingContext(ctx, metadata.Pairs(atlasPrincipalKey, principal))
 	}
 
 	resp, err := command.Execute(execCtx)
@@ -383,10 +386,12 @@ func (s *Socket) executeCommand(ctx context.Context, cmd *commands.CommandString
 
 // executeCommandAsync executes a command asynchronously.
 // Errors are logged but don't close the connection.
-func (s *Socket) executeCommandAsync(ctx context.Context, cmd *commands.CommandString, command commands.Command, requestID string) {
-	if err := s.executeCommand(ctx, cmd, command, requestID); err != nil {
+// The principal parameter should be captured at command submission time to avoid race conditions.
+func (s *Socket) executeCommandAsync(ctx context.Context, cmd *commands.CommandString, command commands.Command, requestID string, principal string) {
+	if err := s.executeCommand(ctx, cmd, command, requestID, principal); err != nil {
 		options.Logger.Error("Error in async command execution",
 			zap.String("requestID", requestID),
+			zap.String("principal", principal),
 			zap.Error(err))
 	}
 }

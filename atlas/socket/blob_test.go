@@ -22,6 +22,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"net"
 	"testing"
 	"time"
 
@@ -237,3 +238,66 @@ func TestBlobGetCommand_Detection(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteBlobResponse_NilVsEmpty(t *testing.T) {
+	tests := []struct {
+		name           string
+		binaryData     []byte
+		expectedOutput string
+	}{
+		{
+			name:           "Nil data returns EMPTY",
+			binaryData:     nil,
+			expectedOutput: "EMPTY\r\n",
+		},
+		{
+			name:           "Empty slice returns BLOB 0",
+			binaryData:     []byte{},
+			expectedOutput: "BLOB 0\r\n",
+		},
+		{
+			name:           "Non-empty data returns BLOB with length",
+			binaryData:     []byte{0x01, 0x02, 0x03},
+			expectedOutput: "BLOB 3\r\n\x01\x02\x03",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var writeBuf bytes.Buffer
+			var readBuf bytes.Buffer
+
+			reader := bufio.NewReader(&readBuf)
+			writer := bufio.NewWriter(&writeBuf)
+			rw := bufio.NewReadWriter(reader, writer)
+
+			socket := &Socket{
+				writer:  rw,
+				conn:    &mockConn{},
+				timeout: 1 * time.Second,
+			}
+
+			err := socket.writeBlobResponse(tt.binaryData)
+			if err != nil {
+				t.Fatalf("writeBlobResponse failed: %v", err)
+			}
+
+			output := writeBuf.String()
+			if output != tt.expectedOutput {
+				t.Errorf("output mismatch:\ngot:  %q\nwant: %q", output, tt.expectedOutput)
+			}
+		})
+	}
+}
+
+// mockConn implements net.Conn for testing
+type mockConn struct{}
+
+func (m *mockConn) Read(b []byte) (n int, err error)   { return 0, nil }
+func (m *mockConn) Write(b []byte) (n int, err error)  { return len(b), nil }
+func (m *mockConn) Close() error                       { return nil }
+func (m *mockConn) LocalAddr() net.Addr                { return nil }
+func (m *mockConn) RemoteAddr() net.Addr               { return nil }
+func (m *mockConn) SetDeadline(t time.Time) error      { return nil }
+func (m *mockConn) SetReadDeadline(t time.Time) error  { return nil }
+func (m *mockConn) SetWriteDeadline(t time.Time) error { return nil }

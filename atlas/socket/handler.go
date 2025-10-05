@@ -348,7 +348,7 @@ func isBlobGetCommand(cmd *commands.CommandString) bool {
 }
 
 func (s *Socket) writeBlobResponse(binaryData []byte) error {
-	if len(binaryData) == 0 {
+	if binaryData == nil {
 		return s.writeMessage([]byte("EMPTY"))
 	}
 

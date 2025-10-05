@@ -240,17 +240,19 @@ rules.
    Retrieves binary data stored under the specified key.
 
    **Response Format:**
-   - Empty result (key not found):
+   - Missing key (key not found):
      ```
      EMPTY\r\n
      OK\r\n
      ```
-   - With data:
+   - With data (including zero-length blobs):
      ```
      BLOB [length]\r\n
      [binary-data-exactly-length-bytes]
      OK\r\n
      ```
+
+   **Note:** A zero-length blob (`BLOB 0\r\n`) is distinct from a missing key (`EMPTY\r\n`). This allows clients to differentiate between "key exists with empty data" and "key does not exist".
 
    **Example:**
    ```

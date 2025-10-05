@@ -611,11 +611,11 @@ func DecodeItem(item *badger.Item) (string, *Record, error) {
 // ParseTableRowKey returns the given key. Key === table in atlasdb
 func ParseTableRowKey(key []byte) (tableName, rowID string, valid bool) {
 	keyStr := string(key)
-	parts := strings.Split(keyStr, ":")
+	parts := strings.Split(keyStr, keySeparator)
 
-	if len(parts) >= 4 && parts[0] == "table" && parts[2] == "row" {
+	if len(parts) >= 4 && parts[0] == keyTable && parts[2] == keyRow {
 		return parts[1], parts[3], true
-	} else if len(parts) >= 2 && parts[0] == "table" {
+	} else if len(parts) >= 2 && parts[0] == keyTable {
 		return parts[1], "", true
 	}
 

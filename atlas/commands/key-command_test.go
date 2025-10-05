@@ -88,7 +88,7 @@ func TestKeyGet_FromKey_Mapping(t *testing.T) {
 	// Normalized() uppercases tokens, so SelectNormalizedCommand(2) yields "TABLE.ROW"
 	key, _ := kgc.SelectNormalizedCommand(2)
 	builder := kgc.FromKey(key)
-	if got := builder.String(); got != "table:TABLE:row:ROW" {
+	if got := builder.String(); got != "t:TABLE:r:ROW" {
 		t.Fatalf("unexpected key mapping, got %q", got)
 	}
 }
@@ -105,7 +105,7 @@ func TestKeyGet_FromKey_Mapping_MultiPart(t *testing.T) {
 	}
 	key, _ := kgc.SelectNormalizedCommand(2)
 	builder := kgc.FromKey(key)
-	if got := builder.String(); got != "table:TABLE:row:ROW:ATTR.MORE" {
+	if got := builder.String(); got != "t:TABLE:r:ROW:ATTR.MORE" {
 		t.Fatalf("unexpected key mapping, got %q", got)
 	}
 }
@@ -122,7 +122,7 @@ func TestKeyDel_FromKey_Mapping(t *testing.T) {
 	}
 	key, _ := kd.SelectNormalizedCommand(2)
 	builder := kd.FromKey(key)
-	if got := builder.String(); got != "table:TABLE:row:ROW:ATTR.MORE" {
+	if got := builder.String(); got != "t:TABLE:r:ROW:ATTR.MORE" {
 		t.Fatalf("unexpected key mapping, got %q", got)
 	}
 }

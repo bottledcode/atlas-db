@@ -34,31 +34,31 @@ func TestBuildNodeRegionKey(t *testing.T) {
 			name:     "Simple region and node",
 			region:   "us-east-1",
 			nodeID:   123,
-			expected: "meta:index:node:region:us-east-1:123",
+			expected: "m:index:node:region:us-east-1:123",
 		},
 		{
 			name:     "Region with dashes",
 			region:   "eu-west-2",
 			nodeID:   456,
-			expected: "meta:index:node:region:eu-west-2:456",
+			expected: "m:index:node:region:eu-west-2:456",
 		},
 		{
 			name:     "Single character region",
 			region:   "a",
 			nodeID:   1,
-			expected: "meta:index:node:region:a:1",
+			expected: "m:index:node:region:a:1",
 		},
 		{
 			name:     "Large node ID",
 			region:   "global",
 			nodeID:   999999,
-			expected: "meta:index:node:region:global:999999",
+			expected: "m:index:node:region:global:999999",
 		},
 		{
 			name:     "Zero node ID",
 			region:   "local",
 			nodeID:   0,
-			expected: "meta:index:node:region:local:0",
+			expected: "m:index:node:region:local:0",
 		},
 	}
 

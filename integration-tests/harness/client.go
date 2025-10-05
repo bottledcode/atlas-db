@@ -127,10 +127,65 @@ func (sc *SocketClient) ExecuteCommand(cmd string) (string, error) {
 		response.WriteString(line)
 
 		if strings.Contains(line, "OK") ||
-		   strings.Contains(line, "ERROR") ||
-		   strings.Contains(line, "VALUE:") ||
+		   strings.Contains(line, "ERROR") {
+			break
+		}
+
+		// For responses that end before OK, consume the OK terminator
+		if strings.Contains(line, "VALUE:") ||
 		   strings.Contains(line, "NOT_FOUND") ||
+		   strings.Contains(line, "EMPTY") ||
 		   strings.Contains(line, "permission denied") {
+			// Read and append the mandatory OK terminator
+			okLine, err := reader.ReadString('\n')
+			if err != nil {
+				if sc.conn != nil {
+					sc.conn.Close()
+					sc.conn = nil
+				}
+				return "", fmt.Errorf("read OK terminator: %w", err)
+			}
+			response.WriteString(okLine)
+			break
+		}
+
+		// For KEYS: response, parse count and read exact number of key lines, then expect OK
+		if strings.HasPrefix(line, "KEYS:") {
+			// Parse the count from "KEYS:<count>"
+			var count int
+			_, err := fmt.Sscanf(line, "KEYS:%d", &count)
+			if err != nil {
+				// Failed to parse count - close connection to prevent desync
+				if sc.conn != nil {
+					sc.conn.Close()
+					sc.conn = nil
+				}
+				return "", fmt.Errorf("malformed KEYS response, failed to parse count: %w", err)
+			}
+
+			// Read exactly 'count' key lines
+			for i := 0; i < count; i++ {
+				nextLine, err := reader.ReadString('\n')
+				if err != nil {
+					if sc.conn != nil {
+						sc.conn.Close()
+						sc.conn = nil
+					}
+					return "", fmt.Errorf("read key line %d/%d: %w", i+1, count, err)
+				}
+				response.WriteString(nextLine)
+			}
+
+			// Read the final OK line
+			okLine, err := reader.ReadString('\n')
+			if err != nil {
+				if sc.conn != nil {
+					sc.conn.Close()
+					sc.conn = nil
+				}
+				return "", fmt.Errorf("read OK terminator: %w", err)
+			}
+			response.WriteString(okLine)
 			break
 		}
 	}
@@ -165,9 +220,13 @@ func (sc *SocketClient) KeyGet(key string) (string, error) {
 	}
 
 	if strings.Contains(resp, "VALUE:") {
+		// Response format: VALUE:<value>\r\nOK or VALUE:<value>\nOK
+		// Extract just the value part
 		parts := strings.SplitN(resp, "VALUE:", 2)
 		if len(parts) == 2 {
-			return strings.TrimSpace(parts[1]), nil
+			// Split on newline to separate value from OK terminator
+			valuePart := strings.SplitN(parts[1], "\n", 2)[0]
+			return strings.TrimSpace(valuePart), nil
 		}
 	}
 
@@ -185,6 +244,40 @@ func (sc *SocketClient) KeyPut(key, value string) error {
 	}
 
 	return nil
+}
+
+func (sc *SocketClient) Scan(prefix string) ([]string, error) {
+	resp, err := sc.ExecuteCommand(fmt.Sprintf("SCAN %s", prefix))
+	if err != nil {
+		return nil, err
+	}
+
+	if strings.HasPrefix(resp, "EMPTY") {
+		return []string{}, nil
+	}
+
+	// Parse response: KEYS:<count>\n<key1>\n<key2>\n...
+	lines := strings.Split(resp, "\n")
+
+	if len(lines) < 1 || !strings.HasPrefix(lines[0], "KEYS:") {
+		return nil, fmt.Errorf("unexpected response format: %s", resp)
+	}
+
+	// Skip the first line (KEYS:<count>) and return the rest
+	if len(lines) == 1 {
+		return []string{}, nil
+	}
+
+	// Filter out empty lines and the OK terminator
+	keys := make([]string, 0, len(lines)-1)
+	for i := 1; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed != "" && trimmed != "OK" {
+			keys = append(keys, trimmed)
+		}
+	}
+
+	return keys, nil
 }
 
 func (sc *SocketClient) AssumeIdentity(principal string) error {

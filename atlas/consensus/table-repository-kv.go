@@ -13,6 +13,7 @@
  *
  * You should have received a copy of the GNU Affero General Public License
  * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
+ *
  */
 
 package consensus
@@ -102,6 +103,75 @@ func (r *TableRepositoryKV) GetTable(name string) (*Table, error) {
 	}
 
 	return r.convertStorageModelToTable(&storageModel), nil
+}
+
+func (r *TableRepositoryKV) GetTablesBatch(names [][]byte) ([]*Table, error) {
+	if len(names) == 0 {
+		return []*Table{}, nil
+	}
+
+	txn, err := r.store.Begin(false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin read transaction: %w", err)
+	}
+	defer txn.Discard()
+
+	// Build result slice with same length as input, pre-filled with nil
+	results := make([]*Table, len(names))
+
+	// Track unique node IDs we need to fetch
+	nodeIDs := make(map[int64]bool)
+
+	// First pass: fetch all table data
+	storageModels := make([]*TableStorageModel, len(names))
+	for i, name := range names {
+		data, err := txn.Get(r.ctx, name)
+		if err != nil {
+			if errors.Is(err, kv.ErrKeyNotFound) {
+				// Keep nil in results[i]
+				continue
+			}
+			return nil, fmt.Errorf("failed to get table %s: %w", name, err)
+		}
+
+		var storageModel TableStorageModel
+		if err := json.Unmarshal(data, &storageModel); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal table data for %s: %w", name, err)
+		}
+
+		storageModels[i] = &storageModel
+
+		// Track node ID if present
+		if storageModel.OwnerNodeID != nil {
+			nodeIDs[*storageModel.OwnerNodeID] = true
+		}
+	}
+
+	// Batch fetch all unique owner nodes
+	nodeCache := make(map[int64]*NodeStorageModel)
+	for nodeID := range nodeIDs {
+		nodeData, err := r.getNodeByID(nodeID)
+		if err == nil && nodeData != nil {
+			nodeCache[nodeID] = nodeData
+		}
+	}
+
+	// Second pass: attach owner data and convert to Table objects
+	for i, storageModel := range storageModels {
+		if storageModel == nil {
+			continue
+		}
+
+		if storageModel.OwnerNodeID != nil {
+			if nodeData, found := nodeCache[*storageModel.OwnerNodeID]; found {
+				storageModel.Owner = nodeData
+			}
+		}
+
+		results[i] = r.convertStorageModelToTable(storageModel)
+	}
+
+	return results, nil
 }
 
 func (r *TableRepositoryKV) getNodeByID(nodeID int64) (*NodeStorageModel, error) {

@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -41,6 +43,10 @@ const NodeTable = "atlas.nodes"
 
 type Server struct {
 	UnimplementedConsensusServer
+}
+
+func NewServer() *Server {
+	return &Server{}
 }
 
 func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnershipRequest) (*StealTableOwnershipResponse, error) {
@@ -88,7 +94,7 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 
 			// a new group must be empty
 			if len(group.GetTables()) > 0 {
-				err = errors.New("new group must be empty")
+				err = errors.New("the new group must be empty")
 				return nil, err
 			}
 		}
@@ -104,7 +110,7 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 		}, nil
 	}
 
-	if req.GetReason() == StealReason_queryReason {
+	if req.GetReason() == StealReason_queryReason || req.GetReason() == StealReason_discoveryReason {
 		return &StealTableOwnershipResponse{
 			Promised: false,
 			Response: &StealTableOwnershipResponse_Failure{
@@ -232,7 +238,7 @@ func (s *Server) WriteMigration(ctx context.Context, req *WriteMigrationRequest)
 	}
 
 	if existingTable == nil {
-		options.Logger.Warn("table not found, but expected", zap.String("table", req.GetMigration().GetVersion().GetTableName()))
+		options.Logger.Warn("the table isn't found, but expected", zap.String("table", req.GetMigration().GetVersion().GetTableName()))
 
 		return &WriteMigrationResponse{
 			Success: false,
@@ -298,166 +304,9 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 		return nil, err
 	}
 
-	// Enforce ACL for write/delete operations using session principal
-	principal := getPrincipalFromContext(ctx)
-	for _, mig := range migrations {
-		if d := mig.GetData(); d != nil {
-			if ch := d.GetChange(); ch != nil {
-				switch op := ch.GetOperation().(type) {
-				case *KVChange_Set:
-					// Check per-key ACL; missing ACL allows write (public)
-					if metaStore != nil {
-						haveAny := false
-						// First, check OWNER ACL (implies full access)
-						if aclVal, err := metaStore.Get(ctx, []byte(CreateACLKey(string(op.Set.Key)))); err == nil {
-							haveAny = true
-							if aclData, decErr := DecodeACLData(aclVal); decErr != nil {
-								return nil, status.Errorf(codes.Internal, "ACL decode failed")
-							} else if checkACLAccess(aclData, principal) {
-								// Allowed by OWNER ACL
-								break
-							}
-						} else if !errors.Is(err, kv.ErrKeyNotFound) {
-							return nil, status.Errorf(codes.Internal, "ACL check failed: %v", err)
-						}
-
-						// Then, check WRITE-specific ACL
-						if aclVal, err := metaStore.Get(ctx, []byte(CreateWriteACLKey(string(op.Set.Key)))); err == nil {
-							haveAny = true
-							if aclData, decErr := DecodeACLData(aclVal); decErr != nil {
-								return nil, status.Errorf(codes.Internal, "ACL decode failed")
-							} else if checkACLAccess(aclData, principal) {
-								// Allowed by WRITE ACL
-								break
-							}
-						} else if !errors.Is(err, kv.ErrKeyNotFound) {
-							return nil, status.Errorf(codes.Internal, "ACL check failed: %v", err)
-						}
-
-						// If any ACLs existed but none allowed this principal, deny
-						if haveAny {
-							return nil, status.Errorf(codes.PermissionDenied, "write access denied")
-						}
-						// If no ACLs exist, allow (public)
-					}
-				case *KVChange_Del:
-					// Check per-key ACL; missing ACL allows delete (public)
-					if metaStore != nil {
-						haveAny := false
-						// First, check OWNER ACL
-						if aclVal, err := metaStore.Get(ctx, []byte(CreateACLKey(string(op.Del.Key)))); err == nil {
-							haveAny = true
-							if aclData, decErr := DecodeACLData(aclVal); decErr != nil {
-								return nil, status.Errorf(codes.Internal, "ACL decode failed")
-							} else if checkACLAccess(aclData, principal) {
-								break
-							}
-						} else if !errors.Is(err, kv.ErrKeyNotFound) {
-							return nil, status.Errorf(codes.Internal, "ACL check failed: %v", err)
-						}
-
-						// Then, check WRITE-specific ACL (delete is a write)
-						if aclVal, err := metaStore.Get(ctx, []byte(CreateWriteACLKey(string(op.Del.Key)))); err == nil {
-							haveAny = true
-							if aclData, decErr := DecodeACLData(aclVal); decErr != nil {
-								return nil, status.Errorf(codes.Internal, "ACL decode failed")
-							} else if checkACLAccess(aclData, principal) {
-								break
-							}
-						} else if !errors.Is(err, kv.ErrKeyNotFound) {
-							return nil, status.Errorf(codes.Internal, "ACL check failed: %v", err)
-						}
-
-						if haveAny {
-							return nil, status.Errorf(codes.PermissionDenied, "delete access denied")
-						}
-					}
-				}
-			}
-		}
-	}
-
 	err = s.applyMigration(migrations, kvStore)
 	if err != nil {
 		return nil, err
-	}
-
-	// After applying, set or clear ACL entries as needed
-	for _, mig := range migrations {
-		if d := mig.GetData(); d != nil {
-			if ch := d.GetChange(); ch != nil {
-				switch op := ch.GetOperation().(type) {
-				case *KVChange_Set:
-					if metaStore != nil && principal != "" {
-						// Only set ACL if not present (creation) - use new multi-principal format
-						aclKey := CreateACLKey(string(op.Set.Key))
-						_, e := metaStore.Get(ctx, []byte(aclKey))
-						if errors.Is(e, kv.ErrKeyNotFound) {
-							// ACL not found - create initial ACL for this principal
-							aclData, err := encodeACLData([]string{principal})
-							if err != nil {
-								options.Logger.Warn("Failed to encode ACL data after successful write",
-									zap.String("key", string(op.Set.Key)),
-									zap.String("principal", principal),
-									zap.Error(err))
-							} else if err := metaStore.Put(ctx, []byte(aclKey), aclData); err != nil {
-								// Log error but don't fail the migration since data was already applied
-								options.Logger.Warn("Failed to set ACL after successful write",
-									zap.String("key", string(op.Set.Key)),
-									zap.String("principal", principal),
-									zap.Error(err))
-							} else if options.CurrentOptions.DevelopmentMode {
-								mv := mig.GetVersion()
-								options.Logger.Info("ACL SET alongside migration",
-									zap.String("data_key", string(op.Set.Key)),
-									zap.String("acl_key", aclKey),
-									zap.Strings("principals", []string{principal}),
-									zap.Int64("table_version", mv.GetTableVersion()),
-									zap.Int64("migration_version", mv.GetMigrationVersion()),
-									zap.Int64("node_id", mv.GetNodeId()),
-									zap.String("table", mv.GetTableName()),
-								)
-							}
-						} else if e != nil {
-							// Unexpected error checking ACL existence - log but don't fail since data was already applied
-							options.Logger.Warn("Failed to check ACL existence after successful write",
-								zap.String("key", string(op.Set.Key)),
-								zap.Error(e))
-						}
-					}
-				case *KVChange_Del:
-					if metaStore != nil {
-						// Delete all ACL entries (owner, read, write) for this key
-						keys := []string{
-							CreateACLKey(string(op.Del.Key)),
-							CreateReadACLKey(string(op.Del.Key)),
-							CreateWriteACLKey(string(op.Del.Key)),
-						}
-						for _, aclKey := range keys {
-							if err := metaStore.Delete(ctx, []byte(aclKey)); err != nil {
-								if errors.Is(err, kv.ErrKeyNotFound) {
-									// Not found is fine; continue deleting remaining ACL keys
-									continue
-								}
-								// Propagate other errors so callers can handle appropriately
-								return nil, status.Errorf(codes.Internal, "failed to delete ACL key %s: %v", aclKey, err)
-							}
-							if options.CurrentOptions.DevelopmentMode {
-								mv := mig.GetVersion()
-								options.Logger.Info("ACL DEL alongside migration",
-									zap.String("data_key", string(op.Del.Key)),
-									zap.String("acl_key", aclKey),
-									zap.Int64("table_version", mv.GetTableVersion()),
-									zap.Int64("migration_version", mv.GetMigrationVersion()),
-									zap.Int64("node_id", mv.GetNodeId()),
-									zap.String("table", mv.GetTableName()),
-								)
-							}
-						}
-					}
-				}
-			}
-		}
 	}
 
 	err = mr.CommitMigrationExact(req.GetMigration().GetVersion())
@@ -496,13 +345,18 @@ func (s *Server) applyKVDataMigration(migration *Migration, kvStore kv.Store) er
 	case *DataMigration_Change:
 		switch op := migrationType.Change.GetOperation().(type) {
 		case *KVChange_Set:
-			err := kvStore.Put(ctx, op.Set.Key, op.Set.Value)
+			record := op.Set.Data
+			value, err := proto.Marshal(record)
+			if err != nil {
+				return fmt.Errorf("failed to marshal KV record: %w", err)
+			}
+			err = kvStore.Put(ctx, op.Set.Key, value)
 			if err != nil {
 				return fmt.Errorf("failed to SET key %s: %w", op.Set.Key, err)
 			}
 			options.Logger.Info("Applied KV SET migration",
 				zap.String("key", string(op.Set.Key)),
-				zap.Int("value_size", len(op.Set.Value)),
+				zap.Int("value_size", len(value)),
 				zap.Int64("table_version", mv.GetTableVersion()),
 				zap.Int64("migration_version", mv.GetMigrationVersion()),
 				zap.Int64("node_id", mv.GetNodeId()),
@@ -520,30 +374,171 @@ func (s *Server) applyKVDataMigration(migration *Migration, kvStore kv.Store) er
 				zap.Int64("node_id", mv.GetNodeId()),
 				zap.String("table", mv.GetTableName()),
 			)
+		case *KVChange_Data:
+			sessionData := op.Data.GetData()
+			var operationCheck map[string]any
+			err := json.Unmarshal(sessionData, &operationCheck)
+			if err != nil {
+				return fmt.Errorf("failed to unmarshal operation data: %w", err)
+			}
+			operation, ok := operationCheck["operation"].(string)
+			if !ok {
+				return fmt.Errorf("missing or invalid operation field")
+			}
+			switch operation {
+			case "ADD_NODE":
+				err := s.applyAddNodeOperation(ctx, sessionData, kvStore)
+				if err != nil {
+					return fmt.Errorf("failed to apply the ADD_NODE operation: %w", err)
+				}
+			default:
+				return fmt.Errorf("unknown KV operation: %s", operation)
+			}
+		case *KVChange_Acl:
+			switch change := op.Acl.GetChange().(type) {
+			case *AclChange_Addition:
+				var record Record
+				val, err := kvStore.Get(ctx, op.Acl.GetKey())
+				if err != nil && !errors.Is(err, kv.ErrKeyNotFound) {
+					return fmt.Errorf("failed to GET key %s: %w", op.Acl.GetKey(), err)
+				}
+				if err == nil {
+					// Key exists - unmarshal existing record
+					err = proto.Unmarshal(val, &record)
+					if err != nil {
+						return fmt.Errorf("failed to unmarshal ACL record: %w", err)
+					}
+				}
+				// If key doesn't exist, record remains zero-value (empty record with ACL to be added)
+
+				// Initialize AccessControl if it doesn't exist
+				if record.AccessControl == nil {
+					record.AccessControl = &ACL{}
+				}
+				now := timestamppb.Now()
+
+				// Handle Owners
+				if change.Addition.Owners != nil {
+					if record.AccessControl.Owners == nil {
+						record.AccessControl.Owners = &ACLData{
+							Principals: []string{},
+							CreatedAt:  now,
+							UpdatedAt:  now,
+						}
+					}
+					for _, r := range change.Addition.Owners.GetPrincipals() {
+						if !slices.Contains(record.AccessControl.Owners.Principals, r) {
+							record.AccessControl.Owners.Principals = append(record.AccessControl.Owners.Principals, r)
+							record.AccessControl.Owners.UpdatedAt = now
+						}
+					}
+				}
+
+				// Handle Readers
+				if change.Addition.Readers != nil {
+					if record.AccessControl.Readers == nil {
+						record.AccessControl.Readers = &ACLData{
+							Principals: []string{},
+							CreatedAt:  now,
+							UpdatedAt:  now,
+						}
+					}
+					for _, r := range change.Addition.Readers.GetPrincipals() {
+						if !slices.Contains(record.AccessControl.Readers.Principals, r) {
+							record.AccessControl.Readers.Principals = append(record.AccessControl.Readers.Principals, r)
+							record.AccessControl.Readers.UpdatedAt = now
+						}
+					}
+				}
+
+				// Handle Writers
+				if change.Addition.Writers != nil {
+					if record.AccessControl.Writers == nil {
+						record.AccessControl.Writers = &ACLData{
+							Principals: []string{},
+							CreatedAt:  now,
+							UpdatedAt:  now,
+						}
+					}
+					for _, r := range change.Addition.Writers.GetPrincipals() {
+						if !slices.Contains(record.AccessControl.Writers.Principals, r) {
+							record.AccessControl.Writers.Principals = append(record.AccessControl.Writers.Principals, r)
+							record.AccessControl.Writers.UpdatedAt = now
+						}
+					}
+				}
+				value, err := proto.Marshal(&record)
+				if err != nil {
+					return fmt.Errorf("failed to marshal ACL record: %w", err)
+				}
+				err = kvStore.Put(ctx, op.Acl.GetKey(), value)
+				if err != nil {
+					return fmt.Errorf("failed to SET key %s: %w", op.Acl.GetKey(), err)
+				}
+			case *AclChange_Deletion:
+				var record Record
+				val, err := kvStore.Get(ctx, op.Acl.GetKey())
+				if err != nil {
+					return fmt.Errorf("failed to GET key %s: %w", op.Acl.GetKey(), err)
+				}
+				err = proto.Unmarshal(val, &record)
+				if err != nil {
+					return fmt.Errorf("failed to unmarshal ACL record: %w", err)
+				}
+
+				// Only process deletion if AccessControl exists
+				if record.AccessControl != nil {
+					// Handle Owners deletion
+					if change.Deletion.Owners != nil && record.AccessControl.Owners != nil {
+						var next []string
+						for _, r := range record.AccessControl.Owners.Principals {
+							if !slices.Contains(change.Deletion.Owners.GetPrincipals(), r) {
+								next = append(next, r)
+							}
+						}
+						record.AccessControl.Owners.Principals = next
+					}
+
+					// Handle Readers deletion
+					if change.Deletion.Readers != nil && record.AccessControl.Readers != nil {
+						var nextRead []string
+						for _, r := range record.AccessControl.Readers.Principals {
+							if !slices.Contains(change.Deletion.Readers.GetPrincipals(), r) {
+								nextRead = append(nextRead, r)
+							}
+						}
+						record.AccessControl.Readers.Principals = nextRead
+					}
+
+					// Handle Writers deletion
+					if change.Deletion.Writers != nil && record.AccessControl.Writers != nil {
+						var nextWrite []string
+						for _, r := range record.AccessControl.Writers.Principals {
+							if !slices.Contains(change.Deletion.Writers.GetPrincipals(), r) {
+								nextWrite = append(nextWrite, r)
+							}
+						}
+						record.AccessControl.Writers.Principals = nextWrite
+					}
+
+					// If Owners is empty, check if we should remove entire ACL
+					ownersEmpty := record.AccessControl.Owners == nil || len(record.AccessControl.Owners.Principals) == 0
+					if ownersEmpty {
+						// No owners means the record becomes public (remove entire ACL)
+						record.AccessControl = nil
+					}
+				}
+				value, err := proto.Marshal(&record)
+				if err != nil {
+					return fmt.Errorf("failed to marshal ACL record: %w", err)
+				}
+				err = kvStore.Put(ctx, op.Acl.GetKey(), value)
+				if err != nil {
+					return fmt.Errorf("failed to SET key %s: %w", op.Acl.GetKey(), err)
+				}
+			}
 		default:
 			return fmt.Errorf("unknown KV operation: %s", op)
-		}
-	case *DataMigration_RawData:
-		sessionData := migrationType.RawData.GetData()
-		var operationCheck map[string]any
-		err := json.Unmarshal(sessionData, &operationCheck)
-		if err != nil {
-			return fmt.Errorf("failed to unmarshal operation data: %w", err)
-		}
-		operation, ok := operationCheck["operation"].(string)
-		if !ok {
-			return fmt.Errorf("missing or invalid operation field")
-		}
-		switch operation {
-		case "ADD_NODE":
-			// Parse as node data structure
-			err := s.applyAddNodeOperation(ctx, sessionData, kvStore)
-			if err != nil {
-				return fmt.Errorf("failed to apply ADD_NODE operation: %w", err)
-			}
-
-		default:
-			return fmt.Errorf("unknown KV raw operation: %s", operation)
 		}
 	}
 
@@ -560,7 +555,7 @@ func (s *Server) applyAddNodeOperation(ctx context.Context, sessionData []byte, 
 	}
 
 	// Extract node information from the operation data
-	id, ok := nodeData["id"].(float64) // JSON unmarshals numbers as float64
+	id, ok := nodeData["id"].(float64) // JSON unmarshal numbers as float64
 	if !ok {
 		return fmt.Errorf("missing or invalid node ID")
 	}
@@ -701,9 +696,13 @@ func (s *Server) JoinCluster(ctx context.Context, req *Node) (*JoinClusterRespon
 		},
 		Migration: &Migration_Data{
 			Data: &DataMigration{
-				Session: &DataMigration_RawData{
-					RawData: &RawData{
-						Data: migrationData,
+				Session: &DataMigration_Change{
+					Change: &KVChange{
+						Operation: &KVChange_Data{
+							Data: &RawData{
+								Data: migrationData,
+							},
+						},
 					},
 				},
 			},
@@ -1058,55 +1057,6 @@ func (s *Server) ReadKey(ctx context.Context, req *ReadKeyRequest) (*ReadKeyResp
 	}
 
 	keyBytes := []byte(req.GetKey())
-	// Check per-key ACL; missing ACL means public read allowed
-	if metaStore != nil {
-		principal := getPrincipalFromContext(ctx)
-		haveAny := false
-		allowed := false
-		// Check OWNER ACL first (implies full access)
-		if aclVal, err := metaStore.Get(ctx, []byte(CreateACLKey(req.GetKey()))); err == nil {
-			haveAny = true
-			if aclData, decErr := DecodeACLData(aclVal); decErr != nil {
-				return &ReadKeyResponse{Success: false, Error: "ACL decode failed"}, nil
-			} else if checkACLAccess(aclData, principal) {
-				allowed = true
-				if options.CurrentOptions.DevelopmentMode {
-					options.Logger.Info("ACL allow (owner)", zap.String("key", req.GetKey()), zap.String("principal", principal))
-				}
-			} else if options.CurrentOptions.DevelopmentMode {
-				options.Logger.Info("ACL miss (owner)", zap.String("key", req.GetKey()), zap.String("principal", principal))
-			}
-		} else if !errors.Is(err, kv.ErrKeyNotFound) {
-			return &ReadKeyResponse{Success: false, Error: "ACL check failed"}, nil
-		}
-
-		// Then check READ-specific ACL only if not already allowed by owner
-		if !allowed {
-			if aclVal, err := metaStore.Get(ctx, []byte(CreateReadACLKey(req.GetKey()))); err == nil {
-				haveAny = true
-				if aclData, decErr := DecodeACLData(aclVal); decErr != nil {
-					return &ReadKeyResponse{Success: false, Error: "ACL decode failed"}, nil
-				} else if checkACLAccess(aclData, principal) {
-					allowed = true
-					if options.CurrentOptions.DevelopmentMode {
-						options.Logger.Info("ACL allow (read)", zap.String("key", req.GetKey()), zap.String("principal", principal))
-					}
-				} else if options.CurrentOptions.DevelopmentMode {
-					options.Logger.Info("ACL miss (read)", zap.String("key", req.GetKey()), zap.String("principal", principal))
-				}
-			} else if !errors.Is(err, kv.ErrKeyNotFound) {
-				return &ReadKeyResponse{Success: false, Error: "ACL check failed"}, nil
-			}
-		}
-
-		if haveAny && !allowed {
-			if options.CurrentOptions.DevelopmentMode {
-				options.Logger.Info("ACL deny (read)", zap.String("key", req.GetKey()), zap.String("principal", principal))
-			}
-			return &ReadKeyResponse{Success: false, Error: "access denied"}, nil
-		}
-		// If no ACLs found at all, allow public access
-	}
 
 	// Read the key from local store
 	value, err := dataStore.Get(ctx, keyBytes)
@@ -1124,9 +1074,122 @@ func (s *Server) ReadKey(ctx context.Context, req *ReadKeyRequest) (*ReadKeyResp
 		}, nil
 	}
 
+	var record Record
+	err = proto.Unmarshal(value, &record)
+	if err != nil {
+		return &ReadKeyResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to unmarshal record: %v", err),
+		}, nil
+	}
+
+	if !canRead(ctx, &record) {
+		return &ReadKeyResponse{
+			Success: false,
+			Error:   "principal isn't allowed to read this key",
+		}, nil
+	}
+
 	return &ReadKeyResponse{
 		Success: true,
-		Value:   value,
+		Value:   record.Value.Data,
+	}, nil
+}
+
+func (s *Server) PrefixScan(ctx context.Context, req *PrefixScanRequest) (*PrefixScanResponse, error) {
+	if req.GetTablePrefix() == "" && req.GetRowPrefix() != "" {
+		return &PrefixScanResponse{
+			Success: false,
+			Error:   "row prefix must be specified with the table prefix",
+		}, nil
+	}
+
+	kvPool := kv.GetPool()
+	if kvPool == nil {
+		return &PrefixScanResponse{
+			Success: false,
+			Error:   "KV pool not initialized",
+		}, nil
+	}
+
+	metaStore := kvPool.MetaStore()
+	if metaStore == nil {
+		return &PrefixScanResponse{
+			Success: false,
+			Error:   "metadata store is not available",
+		}, nil
+	}
+
+	dataStore := kvPool.DataStore()
+	if dataStore == nil {
+		return &PrefixScanResponse{
+			Success: false,
+			Error:   "data store is not available",
+		}, nil
+	}
+
+	nr := NewNodeRepositoryKV(ctx, metaStore)
+	currentNode, err := nr.GetNodeById(options.CurrentOptions.ServerId)
+	if err != nil {
+		return &PrefixScanResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get the current node: %v", err),
+		}, nil
+	}
+	if currentNode == nil {
+		return &PrefixScanResponse{
+			Success: false,
+			Error:   "node not yet part of a cluster",
+		}, nil
+	}
+
+	options.Logger.Info("PrefixScan request",
+		zap.String("table prefix", req.GetTablePrefix()),
+		zap.String("row prefix", req.GetRowPrefix()),
+		zap.Int64("node_id", currentNode.Id))
+
+	keyPrefix := kv.NewKeyBuilder().Table(req.GetTablePrefix())
+	if req.GetRowPrefix() != "" {
+		keyPrefix = keyPrefix.Row(req.GetRowPrefix())
+	}
+
+	matchingKeys, err := dataStore.PrefixScan(ctx, keyPrefix.Build())
+	if err != nil {
+		return &PrefixScanResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to scan prefix: %v", err),
+		}, nil
+	}
+
+	// check ACL across matching keys
+	txn, err := dataStore.Begin(false)
+	if err != nil {
+		return nil, err
+	}
+	defer txn.Discard()
+
+	var ownedKeys []string
+	var record Record
+	for key, val := range matchingKeys {
+		err = proto.Unmarshal(val, &record)
+		if err != nil {
+			return nil, err
+		}
+		if canRead(ctx, &record) {
+			kb := kv.NewKeyBuilderFromBytes([]byte(key))
+			ownedKeys = append(ownedKeys, kb.DottedKey())
+		}
+	}
+
+	options.Logger.Info("PrefixScan completed",
+		zap.String("table prefix", req.GetTablePrefix()),
+		zap.String("row prefix", req.GetRowPrefix()),
+		zap.Int("matched", len(matchingKeys)),
+		zap.Int("owned", len(ownedKeys)))
+
+	return &PrefixScanResponse{
+		Success: true,
+		Keys:    ownedKeys,
 	}, nil
 }
 
@@ -1185,13 +1248,13 @@ func (s *Server) WriteKey(ctx context.Context, req *WriteKeyRequest) (*WriteKeyR
 	if err != nil {
 		return &WriteKeyResponse{
 			Success: false,
-			Error:   fmt.Sprintf("failed to get current node: %v", err),
+			Error:   fmt.Sprintf("failed to get the current node: %v", err),
 		}, nil
 	}
 	if currentNode == nil {
 		return &WriteKeyResponse{
 			Success: false,
-			Error:   "node not yet part of cluster",
+			Error:   "node not yet part of a cluster",
 		}, nil
 	}
 
@@ -1229,7 +1292,115 @@ func (s *Server) WriteKey(ctx context.Context, req *WriteKeyRequest) (*WriteKeyR
 	if err != nil {
 		return &WriteKeyResponse{
 			Success: false,
-			Error:   fmt.Sprintf("failed to get next version: %v", err),
+			Error:   fmt.Sprintf("failed to get the next version: %v", err),
+		}, nil
+	}
+
+	principal := getPrincipalFromContext(ctx)
+	now := timestamppb.Now()
+
+	store := kvPool.DataStore()
+	txn, err := store.Begin(false)
+	defer txn.Discard()
+	if err != nil {
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to begin transaction: %v", err),
+		}, nil
+	}
+	switch op := req.GetValue().Operation.(type) {
+	case *KVChange_Set:
+		key := op.Set.GetKey()
+		var record Record
+		val, err := txn.Get(ctx, key)
+		if err != nil && errors.Is(err, kv.ErrKeyNotFound) {
+			options.Logger.Info("WriteKey creating new key",
+				zap.String("key", string(key)),
+				zap.String("principal", principal),
+			)
+			if op.Set.Data.AccessControl == nil && principal != "" {
+				op.Set.Data.AccessControl = &ACL{
+					Owners: &ACLData{
+						Principals: []string{principal},
+						CreatedAt:  now,
+						UpdatedAt:  now,
+					},
+				}
+			}
+			break
+		}
+		if err != nil {
+			return &WriteKeyResponse{
+				Success: false,
+				Error:   fmt.Sprintf("failed to get key: %v", err),
+			}, nil
+		}
+		err = proto.Unmarshal(val, &record)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal record: %v", err)
+		}
+		options.Logger.Info("WriteKey ACL check",
+			zap.String("key", string(key)),
+			zap.String("principal", principal),
+			zap.Bool("has_acl", record.AccessControl != nil),
+			zap.Bool("can_write", canWrite(ctx, &record)),
+		)
+		if canWrite(ctx, &record) {
+			// copy the previous acl to the current operation
+			op.Set.Data.AccessControl = record.GetAccessControl()
+			break
+		}
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   "permission denied: principal isn't allowed to write to this key",
+		}, nil
+	case *KVChange_Del:
+		key := op.Del.GetKey()
+		var record Record
+		val, err := txn.Get(ctx, key)
+		if err != nil && errors.Is(err, kv.ErrKeyNotFound) {
+			break
+		}
+		if err != nil {
+			return &WriteKeyResponse{
+				Success: false,
+				Error:   fmt.Sprintf("failed to get key: %v", err),
+			}, nil
+		}
+		err = proto.Unmarshal(val, &record)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal record: %v", err)
+		}
+		if canWrite(ctx, &record) {
+			break
+		}
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   "principal isn't allowed to delete this key",
+		}, nil
+	case *KVChange_Acl:
+		key := op.Acl.GetKey()
+		var record Record
+		val, err := txn.Get(ctx, key)
+		if err != nil && errors.Is(err, kv.ErrKeyNotFound) {
+			break
+		}
+		if err != nil {
+			return &WriteKeyResponse{
+				Success: false,
+				Error:   fmt.Sprintf("failed to get key: %v", err),
+			}, nil
+		}
+		err = proto.Unmarshal(val, &record)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal record: %v", err)
+		}
+		if isOwner(ctx, &record) {
+			break
+		}
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   "principal isn't allowed to modify ACLs for this key",
 		}, nil
 	}
 
@@ -1245,14 +1416,7 @@ func (s *Server) WriteKey(ctx context.Context, req *WriteKeyRequest) (*WriteKeyR
 			Migration: &Migration_Data{
 				Data: &DataMigration{
 					Session: &DataMigration_Change{
-						Change: &KVChange{
-							Operation: &KVChange_Set{
-								Set: &SetChange{
-									Key:   []byte(req.GetKey()),
-									Value: req.GetValue(),
-								},
-							},
-						},
+						Change: req.GetValue(),
 					},
 				},
 			},

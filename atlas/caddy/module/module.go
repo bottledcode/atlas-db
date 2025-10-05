@@ -110,7 +110,7 @@ func (m *Module) Provision(ctx caddy.Context) (err error) {
 	// Start gRPC servers for bootstrap and consensus
 	m.bootstrapServer = grpc.NewServer()
 	bootstrap.RegisterBootstrapServer(m.bootstrapServer, &bootstrap.Server{})
-	consensus.RegisterConsensusServer(m.bootstrapServer, &consensus.Server{})
+	consensus.RegisterConsensusServer(m.bootstrapServer, consensus.NewServer())
 
 	// Start socket interface
 	m.destroySocket, err = socket.ServeSocket(ctx)

@@ -453,8 +453,8 @@ func TestKVChangeProtobuf(t *testing.T) {
 	change := &consensus.KVChange{
 		Operation: &consensus.KVChange_Set{
 			Set: &consensus.SetChange{
-				Key:   []byte("test-key"),
-				Value: []byte("test-value"),
+				Key:  []byte("test-key"),
+				Data: &consensus.Record{Value: &consensus.RawData{Data: []byte("test-value")}},
 			},
 		},
 	}
@@ -479,7 +479,7 @@ func TestKVChangeProtobuf(t *testing.T) {
 	if string(decodedSet.GetKey()) != string(originalSet.GetKey()) {
 		t.Errorf("Key mismatch: expected %s, got %s", string(originalSet.GetKey()), string(decodedSet.GetKey()))
 	}
-	if string(decodedSet.GetValue()) != string(originalSet.GetValue()) {
-		t.Errorf("Value mismatch: expected %s, got %s", string(originalSet.GetValue()), string(decodedSet.GetValue()))
+	if string(decodedSet.GetData().GetValue().GetData()) != string(originalSet.GetData().GetValue().GetData()) {
+		t.Errorf("Value mismatch: expected %s, got %s", string(originalSet.GetData().GetValue().GetData()), string(decodedSet.GetData().GetValue().GetData()))
 	}
 }

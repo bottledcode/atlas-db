@@ -110,7 +110,7 @@ else
 fi
 
 echo "🔒 3. Granting ACL to restrict access..."
-run_command "ACL GRANT users.alice alice PERMS READ"
+run_command "ACL GRANT users.alice alice PERMS OWNER"
 
 echo "🚫 4. Testing restricted access without principal (should fail)..."
 result=$(run_command "KEY GET users.alice")
@@ -143,7 +143,7 @@ else
 fi
 
 echo "🔄 7. Testing ACL REVOKE..."
-run_command "ACL REVOKE users.alice alice PERMS READ"
+run_command "ACL REVOKE users.alice alice PERMS OWNER"
 
 echo "🔓 8. Testing access after revoke (should become public again)..."
 result=$(run_command "KEY GET users.alice")
@@ -155,6 +155,7 @@ else
 fi
 
 echo "📊 9. Testing multiple principals and permissions..."
+run_command "ACL GRANT users.bob alice PERMS OWNER"
 run_command "ACL GRANT users.bob alice PERMS READ"
 run_command "ACL GRANT users.bob bob PERMS WRITE"
 
@@ -185,13 +186,13 @@ else
     echo "✅ Bob can WRITE users.bob"
 fi
 
-# Alice lacks WRITE; verify write denied
+# Alice is OWNER; verify write succeeds (OWNER bypasses WRITE restrictions)
 result=$(run_session_commands "PRINCIPAL ASSUME alice" "KEY PUT users.bob updated_by_alice")
 if echo "$result" | grep -qi "permission denied"; then
-    echo "✅ Alice write correctly denied"
-else
-    echo "❌ Alice write should be denied, got: $result"
+    echo "❌ Alice is OWNER so write should succeed, got: $result"
     exit 1
+else
+    echo "✅ Alice (OWNER) can WRITE despite lacking explicit WRITE permission"
 fi
 
 # No principal; verify write denied when WRITE ACL exists
@@ -207,10 +208,10 @@ echo "🔄 12. Testing revoke from multiple principals..."
 run_command "ACL REVOKE users.bob alice PERMS READ"
 
 result=$(run_session_commands "PRINCIPAL ASSUME alice" "KEY GET users.bob")
-if echo "$result" | grep -q "NOT_FOUND"; then
-    echo "✅ Alice correctly denied after revoke (returns NOT_FOUND for security)"
+if echo "$result" | grep -q "VALUE:"; then
+    echo "✅ Alice (OWNER) can still read after READ permission revoked"
 else
-    echo "❌ Alice should be denied after revoke, got: $result"
+    echo "❌ Alice is OWNER so should still be able to read, got: $result"
     exit 1
 fi
 

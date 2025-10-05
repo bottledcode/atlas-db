@@ -18,7 +18,6 @@ func (s *ScanCommand) Execute(ctx context.Context) ([]byte, error) {
 		return nil, err
 	}
 
-	// Use raw command to preserve case sensitivity for prefix matching
 	prefix, ok := s.SelectNormalizedCommand(1)
 	if !ok {
 		return nil, fmt.Errorf("expected prefix")

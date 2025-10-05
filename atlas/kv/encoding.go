@@ -72,12 +72,15 @@ func NewKeyBuilderFromBytes(data []byte) *KeyBuilder {
 	for i := 0; i < len(parts); i++ {
 		if i == 0 && string(parts[i]) == keyMeta {
 			builder.isMeta = true
+			continue
 		}
 		if (i == 0 || i == 1) && string(parts[i]) == keyIndex {
 			builder.isIndex = true
+			continue
 		}
 		if string(parts[i]) == keyUncommitted {
 			builder.isUncommitted = true
+			continue
 		}
 		if len(parts) >= i+1 {
 			if string(parts[i]) == keyTable {

@@ -21,12 +21,14 @@ package consensus
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/bottledcode/atlas-db/atlas/kv"
 	"github.com/bottledcode/atlas-db/atlas/options"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -469,6 +471,56 @@ func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts
 		return nil, err
 	}
 
+	// Check ACLs before creating migration
+	principal := getPrincipalFromContext(ctx)
+	now := timestamppb.Now()
+	switch op := in.GetValue().Operation.(type) {
+	case *KVChange_Set:
+		store := kv.GetPool().DataStore()
+		var record Record
+		val, err := store.Get(ctx, op.Set.GetKey())
+		if err == nil {
+			// Key exists - check ACLs
+			err = proto.Unmarshal(val, &record)
+			if err != nil {
+				return &WriteKeyResponse{Success: false, Error: fmt.Sprintf("failed to unmarshal record: %v", err)}, nil
+			}
+			if !canWrite(ctx, &record) {
+				return &WriteKeyResponse{Success: false, Error: "permission denied: principal isn't allowed to write to this key"}, nil
+			}
+			// Copy existing ACLs to the new operation
+			op.Set.Data.AccessControl = record.GetAccessControl()
+		} else if !errors.Is(err, kv.ErrKeyNotFound) {
+			return &WriteKeyResponse{Success: false, Error: fmt.Sprintf("failed to check key: %v", err)}, nil
+		} else {
+			// New key - set owner if principal provided
+			if op.Set.Data.AccessControl == nil && principal != "" {
+				op.Set.Data.AccessControl = &ACL{
+					Owners: &ACLData{
+						Principals: []string{principal},
+						CreatedAt:  now,
+						UpdatedAt:  now,
+					},
+				}
+			}
+		}
+	case *KVChange_Del:
+		store := kv.GetPool().DataStore()
+		var record Record
+		val, err := store.Get(ctx, op.Del.GetKey())
+		if err == nil {
+			err = proto.Unmarshal(val, &record)
+			if err != nil {
+				return &WriteKeyResponse{Success: false, Error: fmt.Sprintf("failed to unmarshal record: %v", err)}, nil
+			}
+			if !canWrite(ctx, &record) {
+				return &WriteKeyResponse{Success: false, Error: "permission denied: principal isn't allowed to delete this key"}, nil
+			}
+		} else if !errors.Is(err, kv.ErrKeyNotFound) {
+			return &WriteKeyResponse{Success: false, Error: fmt.Sprintf("failed to check key: %v", err)}, nil
+		}
+	}
+
 	// we have completed phase 1, now we move on to phase 2
 	p2r := &WriteMigrationRequest{
 		Sender: currentNode,
@@ -579,6 +631,26 @@ func (m *majorityQuorum) DeleteKey(ctx context.Context, in *WriteKeyRequest, opt
 	version, err := mr.GetNextVersion(in.GetTable())
 	if err != nil {
 		return nil, err
+	}
+
+	// Check ACLs before creating delete migration
+	switch op := in.GetValue().Operation.(type) {
+	case *KVChange_Del:
+		store := kv.GetPool().DataStore()
+		var record Record
+		val, err := store.Get(ctx, op.Del.GetKey())
+		if err == nil {
+			err = proto.Unmarshal(val, &record)
+			if err != nil {
+				return &WriteKeyResponse{Success: false, Error: fmt.Sprintf("failed to unmarshal record: %v", err)}, nil
+			}
+			if !canWrite(ctx, &record) {
+				return &WriteKeyResponse{Success: false, Error: "permission denied: principal isn't allowed to delete this key"}, nil
+			}
+		} else if !errors.Is(err, kv.ErrKeyNotFound) {
+			return &WriteKeyResponse{Success: false, Error: fmt.Sprintf("failed to check key: %v", err)}, nil
+		}
+		// If key doesn't exist, allow delete to succeed (idempotent)
 	}
 
 	// phase 2: broadcast delete migration

@@ -47,11 +47,17 @@ func isOwner(ctx context.Context, record *Record) bool {
 }
 
 func canWrite(ctx context.Context, record *Record) bool {
+	if record.AccessControl == nil || record.AccessControl.Writers == nil {
+		return isOwner(ctx, record)
+	}
 	principal := getPrincipalFromContext(ctx)
 	return isOwner(ctx, record) || slices.Contains(record.AccessControl.Writers.Principals, principal)
 }
 
 func canRead(ctx context.Context, record *Record) bool {
+	if record.AccessControl == nil || record.AccessControl.Readers == nil {
+		return isOwner(ctx, record)
+	}
 	principal := getPrincipalFromContext(ctx)
 	return isOwner(ctx, record) || slices.Contains(record.AccessControl.Readers.Principals, principal)
 }

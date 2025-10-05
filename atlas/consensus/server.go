@@ -399,35 +399,73 @@ func (s *Server) applyKVDataMigration(migration *Migration, kvStore kv.Store) er
 			case *AclChange_Addition:
 				var record Record
 				val, err := kvStore.Get(ctx, op.Acl.GetKey())
-				if err != nil {
+				if err != nil && !errors.Is(err, kv.ErrKeyNotFound) {
 					return fmt.Errorf("failed to GET key %s: %w", op.Acl.GetKey(), err)
 				}
-				err = proto.Unmarshal(val, &record)
-				if err != nil {
-					return fmt.Errorf("failed to unmarshal ACL record: %w", err)
+				if err == nil {
+					// Key exists - unmarshal existing record
+					err = proto.Unmarshal(val, &record)
+					if err != nil {
+						return fmt.Errorf("failed to unmarshal ACL record: %w", err)
+					}
+				}
+				// If key doesn't exist, record remains zero-value (empty record with ACL to be added)
+
+				// Initialize AccessControl if it doesn't exist
+				if record.AccessControl == nil {
+					record.AccessControl = &ACL{}
+				}
+				now := timestamppb.Now()
+
+				// Handle Owners
+				if change.Addition.Owners != nil {
+					if record.AccessControl.Owners == nil {
+						record.AccessControl.Owners = &ACLData{
+							Principals: []string{},
+							CreatedAt:  now,
+							UpdatedAt:  now,
+						}
+					}
+					for _, r := range change.Addition.Owners.GetPrincipals() {
+						if !slices.Contains(record.AccessControl.Owners.Principals, r) {
+							record.AccessControl.Owners.Principals = append(record.AccessControl.Owners.Principals, r)
+							record.AccessControl.Owners.UpdatedAt = now
+						}
+					}
 				}
 
-				now := timestamppb.Now()
-				for _, r := range change.Addition.Owners.GetPrincipals() {
-					if slices.Contains(record.GetAccessControl().Owners.GetPrincipals(), r) {
-						continue
+				// Handle Readers
+				if change.Addition.Readers != nil {
+					if record.AccessControl.Readers == nil {
+						record.AccessControl.Readers = &ACLData{
+							Principals: []string{},
+							CreatedAt:  now,
+							UpdatedAt:  now,
+						}
 					}
-					record.AccessControl.Owners.Principals = append(record.AccessControl.Owners.Principals, r)
-					record.AccessControl.Owners.UpdatedAt = now
+					for _, r := range change.Addition.Readers.GetPrincipals() {
+						if !slices.Contains(record.AccessControl.Readers.Principals, r) {
+							record.AccessControl.Readers.Principals = append(record.AccessControl.Readers.Principals, r)
+							record.AccessControl.Readers.UpdatedAt = now
+						}
+					}
 				}
-				for _, r := range change.Addition.Readers.GetPrincipals() {
-					if slices.Contains(record.GetAccessControl().Readers.GetPrincipals(), r) {
-						continue
+
+				// Handle Writers
+				if change.Addition.Writers != nil {
+					if record.AccessControl.Writers == nil {
+						record.AccessControl.Writers = &ACLData{
+							Principals: []string{},
+							CreatedAt:  now,
+							UpdatedAt:  now,
+						}
 					}
-					record.AccessControl.Readers.Principals = append(record.AccessControl.Readers.Principals, r)
-					record.AccessControl.Readers.UpdatedAt = now
-				}
-				for _, r := range change.Addition.Writers.GetPrincipals() {
-					if slices.Contains(record.GetAccessControl().Writers.GetPrincipals(), r) {
-						continue
+					for _, r := range change.Addition.Writers.GetPrincipals() {
+						if !slices.Contains(record.AccessControl.Writers.Principals, r) {
+							record.AccessControl.Writers.Principals = append(record.AccessControl.Writers.Principals, r)
+							record.AccessControl.Writers.UpdatedAt = now
+						}
 					}
-					record.AccessControl.Writers.Principals = append(record.AccessControl.Writers.Principals, r)
-					record.AccessControl.Writers.UpdatedAt = now
 				}
 				value, err := proto.Marshal(&record)
 				if err != nil {
@@ -447,30 +485,49 @@ func (s *Server) applyKVDataMigration(migration *Migration, kvStore kv.Store) er
 				if err != nil {
 					return fmt.Errorf("failed to unmarshal ACL record: %w", err)
 				}
-				var next []string
-				for _, r := range record.AccessControl.Owners.GetPrincipals() {
-					if slices.Contains(change.Deletion.Owners.GetPrincipals(), r) {
-						continue
+
+				// Only process deletion if AccessControl exists
+				if record.AccessControl != nil {
+					// Handle Owners deletion
+					if change.Deletion.Owners != nil && record.AccessControl.Owners != nil {
+						var next []string
+						for _, r := range record.AccessControl.Owners.Principals {
+							if !slices.Contains(change.Deletion.Owners.GetPrincipals(), r) {
+								next = append(next, r)
+							}
+						}
+						record.AccessControl.Owners.Principals = next
 					}
-					next = append(next, r)
-				}
-				record.AccessControl.Owners.Principals = next
-				var nextRead []string
-				for _, r := range record.AccessControl.Readers.GetPrincipals() {
-					if slices.Contains(change.Deletion.Readers.GetPrincipals(), r) {
-						continue
+
+					// Handle Readers deletion
+					if change.Deletion.Readers != nil && record.AccessControl.Readers != nil {
+						var nextRead []string
+						for _, r := range record.AccessControl.Readers.Principals {
+							if !slices.Contains(change.Deletion.Readers.GetPrincipals(), r) {
+								nextRead = append(nextRead, r)
+							}
+						}
+						record.AccessControl.Readers.Principals = nextRead
 					}
-					nextRead = append(nextRead, r)
-				}
-				record.AccessControl.Readers.Principals = nextRead
-				var nextWrite []string
-				for _, r := range record.AccessControl.Writers.GetPrincipals() {
-					if slices.Contains(change.Deletion.Writers.GetPrincipals(), r) {
-						continue
+
+					// Handle Writers deletion
+					if change.Deletion.Writers != nil && record.AccessControl.Writers != nil {
+						var nextWrite []string
+						for _, r := range record.AccessControl.Writers.Principals {
+							if !slices.Contains(change.Deletion.Writers.GetPrincipals(), r) {
+								nextWrite = append(nextWrite, r)
+							}
+						}
+						record.AccessControl.Writers.Principals = nextWrite
 					}
-					nextWrite = append(nextWrite, r)
+
+					// If Owners is empty, check if we should remove entire ACL
+					ownersEmpty := record.AccessControl.Owners == nil || len(record.AccessControl.Owners.Principals) == 0
+					if ownersEmpty {
+						// No owners means the record becomes public (remove entire ACL)
+						record.AccessControl = nil
+					}
 				}
-				record.AccessControl.Writers.Principals = nextWrite
 				value, err := proto.Marshal(&record)
 				if err != nil {
 					return fmt.Errorf("failed to marshal ACL record: %w", err)
@@ -1029,7 +1086,7 @@ func (s *Server) ReadKey(ctx context.Context, req *ReadKeyRequest) (*ReadKeyResp
 	if !canRead(ctx, &record) {
 		return &ReadKeyResponse{
 			Success: false,
-			Error:   fmt.Sprintf("principal isn't allowed to read this key"),
+			Error:   "principal isn't allowed to read this key",
 		}, nil
 	}
 
@@ -1239,6 +1296,9 @@ func (s *Server) WriteKey(ctx context.Context, req *WriteKeyRequest) (*WriteKeyR
 		}, nil
 	}
 
+	principal := getPrincipalFromContext(ctx)
+	now := timestamppb.Now()
+
 	store := kvPool.DataStore()
 	txn, err := store.Begin(false)
 	defer txn.Discard()
@@ -1254,6 +1314,19 @@ func (s *Server) WriteKey(ctx context.Context, req *WriteKeyRequest) (*WriteKeyR
 		var record Record
 		val, err := txn.Get(ctx, key)
 		if err != nil && errors.Is(err, kv.ErrKeyNotFound) {
+			options.Logger.Info("WriteKey creating new key",
+				zap.String("key", string(key)),
+				zap.String("principal", principal),
+			)
+			if op.Set.Data.AccessControl == nil && principal != "" {
+				op.Set.Data.AccessControl = &ACL{
+					Owners: &ACLData{
+						Principals: []string{principal},
+						CreatedAt:  now,
+						UpdatedAt:  now,
+					},
+				}
+			}
 			break
 		}
 		if err != nil {
@@ -1266,12 +1339,20 @@ func (s *Server) WriteKey(ctx context.Context, req *WriteKeyRequest) (*WriteKeyR
 		if err != nil {
 			return nil, fmt.Errorf("failed to unmarshal record: %v", err)
 		}
+		options.Logger.Info("WriteKey ACL check",
+			zap.String("key", string(key)),
+			zap.String("principal", principal),
+			zap.Bool("has_acl", record.AccessControl != nil),
+			zap.Bool("can_write", canWrite(ctx, &record)),
+		)
 		if canWrite(ctx, &record) {
+			// copy the previous acl to the current operation
+			op.Set.Data.AccessControl = record.GetAccessControl()
 			break
 		}
 		return &WriteKeyResponse{
 			Success: false,
-			Error:   "principal isn't allowed to write to this key",
+			Error:   "permission denied: principal isn't allowed to write to this key",
 		}, nil
 	case *KVChange_Del:
 		key := op.Del.GetKey()

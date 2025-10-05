@@ -141,9 +141,13 @@ func TestMigrationRepositoryKV_DataMigration(t *testing.T) {
 		},
 		Migration: &Migration_Data{
 			Data: &DataMigration{
-				Session: &DataMigration_RawData{
-					RawData: &RawData{
-						Data: sessionData1,
+				Session: &DataMigration_Change{
+					Change: &KVChange{
+						Operation: &KVChange_Data{
+							Data: &RawData{
+								Data: sessionData1,
+							},
+						},
 					},
 				},
 			},
@@ -162,7 +166,7 @@ func TestMigrationRepositoryKV_DataMigration(t *testing.T) {
 	assert.Equal(t, dataMigration.Version.TableName, retrievedMigration.Version.TableName)
 
 	// Check data session
-	rawData := retrievedMigration.GetData().GetRawData()
+	rawData := retrievedMigration.GetData().GetChange().GetData()
 	assert.NotNil(t, rawData)
 	assert.Equal(t, sessionData1, rawData.GetData())
 }

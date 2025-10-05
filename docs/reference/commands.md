@@ -57,7 +57,47 @@ extended functionality without compromising simplicity.
 
 ## 3. Communication Model
 
-### 3.1 Session Establishment
+### 3.1 Asynchronous Processing
+
+The protocol supports both synchronous and asynchronous command execution to maximize throughput and handle multiple concurrent operations.
+
+**Request ID Tagging:**
+- Commands can include an optional request ID prefix: `[ID:xxx] COMMAND`
+- All responses for that command will include the same ID: `[ID:xxx] RESPONSE`
+- Commands without request IDs are processed synchronously (backward compatible)
+- Commands with request IDs are processed asynchronously in separate goroutines
+
+**Benefits:**
+- **Concurrent Execution**: Multiple commands can execute simultaneously
+- **Response Correlation**: Clients can match responses to requests even when out-of-order
+- **Interleaved Streaming**: Large data streams from different commands don't block each other
+- **Backward Compatible**: Existing clients without request IDs work unchanged
+
+**Example:**
+```
+Client: [ID:1] KEY BLOB GET large_file_1\r\n
+Client: [ID:2] KEY BLOB GET large_file_2\r\n
+Client: [ID:3] SCAN table:USERS:\r\n
+Server: [ID:3] KEYS:2\r\n
+        table:USERS:row:ALICE\r\n
+        table:USERS:row:BOB\r\n
+        [ID:3] OK\r\n
+Server: [ID:1] BLOB 1048576\r\n
+        [1MB of binary data]
+        [ID:1] OK\r\n
+Server: [ID:2] BLOB 2097152\r\n
+        [2MB of binary data]
+        [ID:2] OK\r\n
+```
+
+**Implementation Notes:**
+- Request IDs are arbitrary strings (avoid `]` character)
+- Responses may arrive in any order
+- Clients must track outstanding requests
+- Server processes tagged commands concurrently
+- Thread-safe write operations ensure response integrity
+
+### 3.2 Session Establishment
 
 1. **Handshake**:
 
@@ -91,14 +131,24 @@ extended functionality without compromising simplicity.
    Server: READY\r\n
    ```
 
-### 3.2 Command Execution
+### 3.3 Command Execution
 
-Commands issued by clients are processed by the server in real-time. The server returns responses immediately unless the
-command specifies a deferred operation. Communication remains stateless unless explicitly required by the application
-context.
+Commands issued by clients are processed by the server in real-time. The execution model depends on whether the command includes a request ID:
 
-The protocol ensures that commands and their responses are tightly coupled, reducing ambiguity and simplifying
-troubleshooting. By leveraging structured error handling, clients can quickly identify and address issues.
+**Synchronous Mode (No Request ID):**
+- Server processes one command at a time
+- Response guaranteed to arrive before next command is processed
+- Backward compatible with existing clients
+- Commands and responses are tightly coupled in order
+
+**Asynchronous Mode (With Request ID):**
+- Server spawns a goroutine for each tagged command
+- Multiple commands execute concurrently
+- Responses may arrive in any order
+- Client must correlate responses using request IDs
+- Ideal for I/O-bound operations and bulk transfers
+
+The protocol ensures clear command-response correlation through request ID tagging, reducing ambiguity even when responses arrive out-of-order. By leveraging structured error handling and thread-safe writes, clients can quickly identify and address issues while maintaining high throughput.
 
 ---
 

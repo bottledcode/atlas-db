@@ -31,16 +31,16 @@ import (
 
 // KeyBuilder helps construct hierarchical keys for different data types
 type KeyBuilder struct {
-	isMeta bool
-	isIndex bool
-	isUncommitted bool
-	table  string
-	row    string
-	extra  [][]byte
-	migrationTable string
+	isMeta           bool
+	isIndex          bool
+	isUncommitted    bool
+	table            string
+	row              string
+	extra            [][]byte
+	migrationTable   string
 	migrationVersion int64
-	tableVersion int64
-	node int64
+	tableVersion     int64
+	node             int64
 }
 
 // NewKeyBuilder creates a new key builder
@@ -54,15 +54,15 @@ func NewKeyBuilder() *KeyBuilder {
 }
 
 const (
-	keyMeta = "m"
-	keySeparator = ":"
-	keyIndex = "i"
-	keyUncommitted = "u"
-	keyTable = "t"
-	keyRow = "r"
-	keyMigration = "m"
-	keyVersion = "v"
-	keyNode = "n"
+	keyMeta         = "m"
+	keySeparator    = ":"
+	keyIndex        = "i"
+	keyUncommitted  = "u"
+	keyTable        = "t"
+	keyRow          = "r"
+	keyMigration    = "m"
+	keyVersion      = "v"
+	keyNode         = "n"
 	keyTableVersion = "tv"
 )
 

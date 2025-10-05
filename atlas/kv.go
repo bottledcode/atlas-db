@@ -81,10 +81,10 @@ func AddOwner(ctx context.Context, builder *kv.KeyBuilder, owner string) error {
 	op := &consensus.KVChange{
 		Operation: &consensus.KVChange_Acl{
 			Acl: &consensus.AclChange{
-				Key:    builder.Build(),
+				Key: builder.Build(),
 				Change: &consensus.AclChange_Addition{
 					Addition: &consensus.ACL{
-						Owners:  &consensus.ACLData{
+						Owners: &consensus.ACLData{
 							Principals: []string{owner},
 						},
 					},
@@ -99,10 +99,10 @@ func RevokeOwner(ctx context.Context, builder *kv.KeyBuilder, owner string) erro
 	op := &consensus.KVChange{
 		Operation: &consensus.KVChange_Acl{
 			Acl: &consensus.AclChange{
-				Key:    builder.Build(),
+				Key: builder.Build(),
 				Change: &consensus.AclChange_Deletion{
 					Deletion: &consensus.ACL{
-						Owners:  &consensus.ACLData{
+						Owners: &consensus.ACLData{
 							Principals: []string{owner},
 						},
 					},
@@ -117,10 +117,10 @@ func AddWriter(ctx context.Context, builder *kv.KeyBuilder, writer string) error
 	op := &consensus.KVChange{
 		Operation: &consensus.KVChange_Acl{
 			Acl: &consensus.AclChange{
-				Key:    builder.Build(),
+				Key: builder.Build(),
 				Change: &consensus.AclChange_Addition{
 					Addition: &consensus.ACL{
-						Writers:  &consensus.ACLData{
+						Writers: &consensus.ACLData{
 							Principals: []string{writer},
 						},
 					},
@@ -135,10 +135,10 @@ func RevokeWriter(ctx context.Context, builder *kv.KeyBuilder, writer string) er
 	op := &consensus.KVChange{
 		Operation: &consensus.KVChange_Acl{
 			Acl: &consensus.AclChange{
-				Key:    builder.Build(),
+				Key: builder.Build(),
 				Change: &consensus.AclChange_Deletion{
 					Deletion: &consensus.ACL{
-						Writers:  &consensus.ACLData{
+						Writers: &consensus.ACLData{
 							Principals: []string{writer},
 						},
 					},
@@ -154,10 +154,10 @@ func AddReader(ctx context.Context, builder *kv.KeyBuilder, reader string) error
 	op := &consensus.KVChange{
 		Operation: &consensus.KVChange_Acl{
 			Acl: &consensus.AclChange{
-				Key:    builder.Build(),
+				Key: builder.Build(),
 				Change: &consensus.AclChange_Addition{
 					Addition: &consensus.ACL{
-						Readers:  &consensus.ACLData{
+						Readers: &consensus.ACLData{
 							Principals: []string{reader},
 						},
 					},
@@ -173,10 +173,10 @@ func RevokeReader(ctx context.Context, builder *kv.KeyBuilder, reader string) er
 	op := &consensus.KVChange{
 		Operation: &consensus.KVChange_Acl{
 			Acl: &consensus.AclChange{
-				Key:    builder.Build(),
+				Key: builder.Build(),
 				Change: &consensus.AclChange_Deletion{
 					Deletion: &consensus.ACL{
-						Readers:  &consensus.ACLData{
+						Readers: &consensus.ACLData{
 							Principals: []string{reader},
 						},
 					},

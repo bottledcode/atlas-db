@@ -81,8 +81,8 @@ Client: [ID:1] KEY BLOB GET large_file_1\r\n
 Client: [ID:2] KEY BLOB GET large_file_2\r\n
 Client: [ID:3] SCAN table:USERS:\r\n
 Server: [ID:3] KEYS:2\r\n
-        table:USERS:row:ALICE\r\n
-        table:USERS:row:BOB\r\n
+        USERS.ALICE\r\n
+        USERS.BOB\r\n
         [ID:3] OK\r\n
 Server: [ID:1] BLOB 1048576\r\n
         [1MB of binary data]

@@ -1,190 +1,89 @@
 # Consensus
 
-Atlas works through distributed consensus based upon the [WPaxos algorithm](https://arxiv.org/abs/1703.08905). This
-algorithm is a variant of the [Paxos algorithm](https://en.wikipedia.org/wiki/Paxos_(computer_science)) designed to
-operate efficiently over wide-area networks (WANs).
+Atlas relies on a wide-area variant of WPaxos to coordinate ownership and replication. Consensus code lives in
+`atlas/consensus` and is exposed through the `Consensus` gRPC service that the Caddy module registers for each node.
+Every node maintains two Badger databases: one for application data and one for cluster metadata. Metadata stores
+representations of nodes, tables, ownership, migrations, and ACL state.
 
----
+## Architecture overview
 
-## Overview
+- **Bootstrap & Caddy integration**: the `atlas/caddy` module initialises the local Badger stores, joins or seeds the
+  cluster through the bootstrap service, starts the gRPC server, and exposes the Unix socket protocol.
+- **Repositories**: `NodeRepositoryKV`, `TableRepositoryKV`, and `MigrationRepositoryKV` encapsulate metadata access.
+  They track nodes by ID and region, table configuration (including allowed or restricted regions), and the migration
+  log.
+- **Connection manager**: `NodeConnectionManager` maintains pooled gRPC clients with health checks and RTT sampling used
+  for quorum hints and `NODE PING`.
+- **Quorum manager**: `defaultQuorumManager` caches known nodes per region and computes quorums per table on demand.
 
-Atlas is an edge database deployed in a distributed manner, designed to work across a wide-area network. The system
-operates at the granularity of individual tables, with a single node owning each table’s schema and data. Ownership can
-transfer dynamically to optimize locality, load balance, or recover from faults.
+## Consensus service surface
 
----
+The gRPC service defined in `consensus.proto` powers the control plane:
 
-## Ownership
+- `JoinCluster` – registers or refreshes a node. Node metadata is validated and stored, and the quorum manager is
+  updated so that the node can participate in future quorums.
+- `Ping` – lightweight reachability probe written by `NODE PING` and health monitoring.
+- `StealTableOwnership` – Phase 1 of WPaxos. A requester proposes a higher ballot for a table. The server checks
+  existing ownership, compares versions and node IDs, and, when successful, returns missing migrations that the new
+  owner must apply.
+- `WriteMigration` / `AcceptMigration` – Phase 2 commit helpers that apply mutations to storage. Mutations are described
+  as `KVChange` operations (`SET`, `DEL`, `ACL_SET`, `ACL_DEL`, and `ADD_NODE`).
+- `GossipMigration` – propagates committed migrations to random peers to reduce staleness.
+- `PrefixScan` – broadcasts prefix scans across the cluster and merges results from all nodes.
 
-### Ownership Transfer
+## Quorum selection
 
-A single node owns each table in Atlas.
-Ownership is essential for maintaining consistency, as all Writes must be
-directed to the table’s owner. A table’s ownership can be transferred to another node when:
+Two quorums are maintained per table:
 
-- **Load balancing**: The current owner is overloaded.
-- **Locality optimization**: Moving ownership closer to frequent accessors reduces latency.
-- **Fault recovery**: The current owner becomes unreachable.
+- **Q1** (phase 1) protects leadership changes such as ownership steals.
+- **Q2** (phase 2) covers replication commits.
 
-#### Ownership Transfer Process
+Runtime options `Fn` (nodes tolerated per zone) and `Fz` (zones tolerated) come from `atlas/options`. The quorum manager
+filters nodes by table policy, prunes unhealthy endpoints using the connection manager, then chooses regions:
 
-1. A new owner proposes a transfer with a valid reason.
-2. Cluster nodes vote on the proposal based on the current state.
-3. If the majority agrees, ownership is transferred to the new owner.
-4. Future writes are redirected to the new owner.
+1. Calculate eligible regions for Q1 and Q2 with the configured failure budgets.
+2. Prefer farthest regions for Q1 to maximise availability and closest regions for Q2 to minimise latency.
+3. If quorum constraints cannot be met the manager reduces `Fn`/`Fz` progressively; failure to find a quorum raises an
+   error surfaced to callers such as `QUORUM INFO` or `KEY` operations.
 
----
+## Table ownership & groups
 
-## Replication
+Tables are versioned entities stored in the metadata repository. Each table records an owner node and optional
+allowed/restricted regions. When a table represents a **group**, `StealTableOwnership` ensures every member of the group
+moves together so that grouped tables stay colocated.
 
-Atlas supports table-level replication, with all nodes replicating table schemas, even if the data itself is not
-replicated.
-A node can register an "interest" in a table, triggering data replication for that table.
+Ownership transitions:
 
-### Replication Types
+1. Requester calls `StealTableOwnership` with an incremented version.
+2. The current owner (or replicas) validate the ballot, returning missing migrations if the new owner wins.
+3. The requester applies migrations, writes them via `WriteMigration`, and gossip propagates the changes.
 
-1. **Global Replication**:
-    - Data is replicated to all regions in the cluster.
-    - Updates are batched based on time (default: 30 seconds) or count (default: 100 updates).
-    - Replication is performed using flexible quorums.
+## Migrations and ACL propagation
 
-2. **Regional Replication**:
-    - Each region has a unique copy of the data stored durably.
-    - Enables region-specific caches for performance.
+Migrations describe deterministic updates applied to either the metadata store (`atlas.*` keys) or the data store.
+`applyMigration` handles the following operations:
 
-3. **Local Replication**:
-    - Data is not replicated beyond a single node.
-    - Useful for development, testing, or node-level caches.
+- `SET` – write bytes to the key/value store.
+- `DEL` – delete a key.
+- `ACL_SET` / `ACL_DEL` – manage access control lists in metadata, removing the ACL when the owner list becomes empty.
+- `ADD_NODE` – add or update a node entry and feed it into the quorum manager.
 
-Once configured, a table’s replication type cannot be changed. However, data can be copied into a new table with a
-different replication type.
+Committed migrations are recorded with monotonically increasing `(table, table_version, migration_version, node_id)`
+keys so that nodes can reconcile divergent histories and resume gossip safely.
 
----
+## Prefix scanning and discovery
 
-## Quorum Selection and Management
+`PrefixScan` requests originate from the socket `SCAN` command. The quorum manager selects a majority quorum, broadcasts
+`PrefixScanRequest` to every member, and merges the returned key lists. Errors surfaced by any node yield `ERROR WARN`
+to clients, while partial success is logged for operators.
 
-### Quorum Definitions
+## Failure handling
 
-1. **Phase-1 Quorum (Q1)**:
-    - Used for leader election or table stealing.
-    - Spans multiple regions and ensures intersection with Q2.
+- `Fn`/`Fz` can be tuned at runtime through `atlas/options` to reflect deployment shape (regions and zones).
+- When quorum selection fails the manager reduces the failure budgets until it either finds a valid configuration or
+  reports `unable to form a quorum`.
+- Gossip maintains eventual consistency: migrations that arrive out-of-order are queued until their predecessors appear,
+  preventing gaps in the log.
 
-   **Formula**:
-
-```
-Cardinality(Q1) = (fn + 1) x (Z - fz)
-```
-
-Where:
-
-- `fn`: Nodes allowed to fail in each region.
-- `fz`: Regions allowed to fail.
-- `Z`: Total number of regions.
-
-2. **Phase-2 Quorum (Q2)**:
-
-- Used for committing Writes during normal operation.
-- Optimized for latency and fault tolerance.
-
-**Formula**:
-
-```
-Cardinality(Q2) = (l - fn) x (fz + 1)
-```
-
-Where:
-
-- `l`: Total nodes in a region.
-
-### Quorum Selection Process
-
-1. **Current Owner Anchoring**:
-
-- Always include the current owner in Q1 to ensure consistency and avoid "lost" writes.
-- Always include the new owner in both Q1 and Q2 to ensure future data consistency.
-
-2. **RTT-Based Region Selection**:
-
-- Select regions dynamically based on recent RTT measurements for low-latency quorum formation.
-- Fallback to deterministic rules (e.g., node IDs) in cases of conflict.
-
-3. **Fallback for Owner Unavailability**:
-
-- If the owner is unavailable:
-    - Temporarily set `fz = 0` and `fn = 0`, requiring all nodes to form Q1.
-    - Recover state and elect a new owner.
-
----
-
-### Example
-
-#### Scenario
-
-- **Regions**:
-- Region A: 2 nodes.
-- Region B: 5 nodes (leader).
-- Region C: 3 nodes.
-- **Parameters**: `fz = 1`, `fn = 1`.
-
-#### Q1 Selection
-
-1. Include the leader (Region B).
-2. Select:
-
-```
-(fn + 1) * (Z - fz) = (1 + 1) * (3 - 1) = 4 nodes
-```
-
-- 2 nodes from Region B (leader + another).
-- 2 nodes from Region C (RTT-based).
-
-#### Q2 Selection
-
-1. Include the leader (Region B).
-2. Select:
-
-```
-(l - fn) * (fz + 1) = (5 - 1) * (1 + 1) = 5 nodes
-```
-
-- 4 nodes from Region B.
-- 1 node from Region A (closest RTT).
-
-#### Validation
-
-- **Intersection**: The leader is in both Q1 and Q2.
-- **Fault Tolerance**:
-
-```
-Fmin = min(Cardinality(Q1), Cardinality(Q2)) - 1 Fmin = 4
-Fmax = N - Cardinality(Q1) - Cardinality(Q2) + (fz + 1) * (fn + 1) Fmax = 10 - 4 - 5 + (1 + 1) * (1 + 1) = 5
-```
-
----
-
-### Handling Failures
-
-#### Owner Down
-
-1. Detect owner unavailability.
-2. Increase quorum size (`fz = 0, fn = 0`) to recover state.
-3. Elect a new owner from the recovered quorum.
-4. Revert to normal operation once the new owner is established.
-
-#### Quorum Adjustments
-
-- Dynamically adjust quorums as nodes or regions join or leave.
-- Ensure intersection between old and new quorums during transitions.
-
----
-
-## Summary
-
-Atlas ensures fault tolerance and performance through flexible quorum selection and ownership anchoring:
-
-1. Anchors quorums to the current and future owner.
-2. Optimize quorums for latency while guaranteeing intersection.
-3. Adjust dynamically during failures to recover state.
-4. Validate configurations to avoid data loss.
-
-These strategies enable Atlas to remain resilient and performant in wide-area, distributed environments.
+This consensus layer underpins every command that touches replicated state (`KEY`, `ACL`, `SCAN`, `NODE`, and
+`QUORUM INFO`) and is the authoritative source of truth for cluster membership.

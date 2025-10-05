@@ -1,243 +1,81 @@
-# Protocol
+# Atlas Socket Protocol
 
-The protocol is a simple text-based protocol used to communicate with the Atlas server over a Unix socket.
+Atlas exposes a text-based control channel over a Unix domain socket. The protocol is intentionally minimal so it can
+be used from shell scripts, the embedded REPL (`caddy atlas`), or custom clients.
 
-## Overview
+## Connection lifecycle
 
-The protocol is designed to be simple and easy to implement. It is a line-based protocol, with each line representing a
-command or response.
+- **Transport**: Unix domain socket chosen through `atlas/options` (default: `atlas.sock`). Each accepted connection is
+  served by `atlas/socket` with a five minute write deadline.
+- **Handshake**:
+    1. Server sends `WELCOME 1.0 Chronalys/1.0\r\n` immediately after accept.
+    2. Client must reply with `HELLO 1.0 <client-id>\r\n`.
+    3. Server responds `READY\r\n` and begins processing commands.
+       If the client omits the handshake or sends an unsupported version, the server replies with
+       `ERROR FATAL <message>\r\n` and closes the socket.
+- **Authentication**: not yet implemented. The Atlas Caddy module relies on gRPC authentication in front of the socket
+  when the node is exposed remotely.
+
+## Frame format
+
+- Commands and responses are ASCII text frames terminated with a carriage return and newline (`\r\n`).
+- Tokens are separated by ASCII whitespace. The server normalises tokens to uppercase for routing but preserves the raw
+  token stream for values.
+- Empty lines are ignored; control characters are not permitted.
+
+### Request identifiers
+
+- Prefixing a command with `[ID:<token>]` turns it into an asynchronous request. `<token>` may contain any characters
+  except `]`.
+- Asynchronous commands execute concurrently. Every textual response line emitted by the server (including `OK`,
+  `ERROR …`, and `BLOB …` headers) is prefixed with the same `[ID:<token>]` so clients can correlate out-of-order
+  replies.
+- Commands without a request identifier are processed synchronously; Atlas replies before reading the next command from
+  that client.
 
 ## Responses
 
-The server responds with `OK` if the command was successful or `ERROR` followed by a code and message if the command
-failed.
+Atlas follows a consistent response pattern:
 
-### Query responses
+- **Successful command**: zero or more data frames followed by `OK\r\n` (e.g. `KEYS:3`, `PRINCIPAL alice`,
+  `PONG node=2 rtt_ms=15`).
+- **Error**: a single frame `ERROR <LEVEL> <message>\r\n`. The server never sends `OK` after an error. `LEVEL` is one
+  of:
+    - `WARN` – recoverable issue; the connection remains open.
+    - `INFO` – informational streaming hint (reserved for future multi-part responses).
+    - `FATAL` – unrecoverable error; the server closes the connection immediately after sending the frame.
+- **Binary responses**: `BLOB <length>\r\n` (prefixed with the request ID when present) followed by `<length>` raw
+  bytes,
+  then `OK\r\n`. If no value exists the server emits `EMPTY\r\nOK\r\n` instead.
 
-Query results are returned in the following form:
+Error messages are sanitised so that control characters cannot inject extra frames.
 
-```
-META COLUMN_COUNT <N>
-META COLUMN_NAME <N[x]> <NAME>
-ROW <N[x]> <TYPE> <VALUE>
-META LAST_INSERT_ID <ID>
-META ROWS AFFECTED <N>
-```
+## Binary payloads
 
-For example, for the following results:
+`KEY BLOB SET` commands must be followed immediately by a binary payload whose size matches the declared length. No
+terminating newline is required. The server writes the payload directly to storage and then responds with `OK`. Clients
+should not pipeline additional commands until the payload has been transmitted.
 
-| id | name |
-|----|------|
-| 1  | John |
-| 2  | NULL |
+## Principals and metadata propagation
 
-The response would be:
+`PRINCIPAL ASSUME <name>` updates the session principal. The name is trimmed, validated to be 1–256 runes, and stripped
+of control characters. Subsequent commands run with gRPC metadata key `atlas-principal=<name>`, allowing downstream
+services to enforce ACLs or perform auditing. `PRINCIPAL WHOAMI` reports the current value.
 
-```
-META COLUMN_COUNT 2
-META COLUMN_NAME 0 id
-META COLUMN_NAME 1 name
-ROW 0 INT 1
-ROW 0 STRING John
-ROW 1 INT 2
-ROW 1 NULL
-```
-
-## Types
-
-The following types are supported:
-
-- `INT` where the value is a base-10 integer in ascii form.
-- `FLOAT` where the value is a base-10 float in ascii form.
-- `TEXT` where the value is a string.
-- `NULL` where the value is not sent.
-- `BLOB` where the value is a base64 encoded string.
-
-## Commands
-
-> Note: in the syntax below, `<...>` denotes a required parameter, `[...]` denotes an optional parameter. UPPERCASE
-> denotes case-insensitivity and lowercase denotes case-sensitivity.
-
-### Prepare
-
-#### Syntax
+## Example interaction
 
 ```
-PREPARE <ID> <sql>
+Server: WELCOME 1.0 Chronalys/1.0\r\n
+Client: HELLO 1.0 clientId=example\r\n
+Server: READY\r\n
+Client: PRINCIPAL ASSUME alice\r\n
+Server: OK\r\n
+Client: [ID:req-1] KEY GET table.row\r\n
+Server: [ID:req-1] VALUE:payload\r\n
+Server: [ID:req-1] OK\r\n
+Client: KEY BLOB SET table.row 3\r\n<0x000102>
+Server: OK\r\n
 ```
 
-#### Description
-
-The `PREPARE` command is used to prepare a query for execution.
-The ID is a case-insensitive and unique identifier for the query.
-The SQL is the query to prepare and may contain placeholders.
-
-#### Example
-
-```
-PREPARE 1 SELECT * FROM table WHERE id = ?\r\n
-PREPARE USERS SELECT * FROM users WHERE id = :id\r\n
-```
-
-### Execute
-
-#### Syntax
-
-```
-EXECUTE <ID>
-```
-
-#### Description
-
-Executes the prepared query and clears any bound parameters.
-
-#### Example
-
-```
-EXECUTE USERS\r\n
-```
-
-### FINALIZE
-
-#### Syntax
-
-```
-FINALIZE <ID>
-```
-
-#### Description
-
-Finalizes the prepared query and removes it from the server.
-
-#### Example
-
-```
-FINALIZE 1\r\n
-```
-
-### BIND
-
-#### Syntax
-
-```
-BIND <ID> <param> <TYPE> [value]
-```
-
-#### Description
-
-Binds a value to a prepared query. The param can be either a positional parameter (number) or a named parameter (starting with ':'). 
-The value must match the specified type. For NULL values, omit the value parameter.
-#### Example
-
-```
-BIND 1 INT 1\r\n
-BIND :name TEXT \r\n
-```
-
-### BEGIN
-
-#### Syntax
-
-```
-BEGIN [IMMEDIATE|DEFERRED|EXCLUSIVE]
-```
-
-#### Description
-
-Starts a new transaction.
-
-#### Example
-
-```
-BEGIN IMMEDIATE\r\n
-```
-
-### COMMIT
-
-#### Syntax
-
-```
-COMMIT
-```
-
-#### Description
-
-Commits the current transaction.
-
-#### Example
-
-```
-COMMIT\r\n
-```
-
-### ROLLBACK
-
-#### Syntax
-
-```
-ROLLBACK [TO <SAVEPOINT>]
-```
-
-#### Description
-
-Rolls back the current transaction or to a savepoint.
-
-#### Example
-
-```
-ROLLBACK TO savepoint\r\n
-```
-
-### SAVEPOINT
-
-#### Syntax
-
-```
-SAVEPOINT <name>
-```
-
-#### Description
-
-Creates a new savepoint.
-
-#### Example
-
-```
-SAVEPOINT savepoint\r\n
-```
-
-### RELEASE
-
-#### Syntax
-
-```
-RELEASE <savepoint>
-```
-
-#### Description
-
-Releases a savepoint.
-
-#### Example
-
-```
-RELEASE savepoint\r\n
-```
-
-### PRAGMA
-
-#### Syntax
-
-```
-PRAGMA <name> [value]
-```
-
-#### Description
-
-Sets a pragma value.
-
-#### Example
-
-```
-PRAGMA ATLAS_CONSISTENCY strong\r\n
-```
+The REPL started via `./caddy atlas /path/to/socket` implements the handshake and maintains this framing behaviour. The
+same framing applies to automated clients.

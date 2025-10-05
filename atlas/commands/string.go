@@ -47,6 +47,7 @@ type CommandString struct {
 	raw        string
 	rawParts   []string
 	binaryData []byte
+	requestID  string // Optional request ID for async processing
 }
 
 func (c *CommandString) String() string {
@@ -101,8 +102,22 @@ func countWhitespace(str string) int {
 }
 
 // CommandFromString creates a CommandString from a string,
-// normalizing it while still allowing access to the raw command
+// normalizing it while still allowing access to the raw command.
+// Supports optional request ID prefix: [ID:123] COMMAND
 func CommandFromString(command string) *CommandString {
+	var requestID string
+	originalCommand := command
+
+	// Check for request ID prefix: [ID:xxx]
+	if strings.HasPrefix(command, "[ID:") {
+		endIdx := strings.Index(command, "]")
+		if endIdx > 4 {
+			requestID = command[4:endIdx]
+			// Skip past the ID and any whitespace
+			command = strings.TrimSpace(command[endIdx+1:])
+		}
+	}
+
 	normalized := strings.ToUpper(command)
 	parts := strings.Fields(normalized)
 	normalized = strings.Join(parts, " ")
@@ -119,8 +134,9 @@ func CommandFromString(command string) *CommandString {
 	return &CommandString{
 		normalized: normalized,
 		parts:      parts,
-		raw:        command,
+		raw:        originalCommand,
 		rawParts:   rawParts,
+		requestID:  requestID,
 	}
 }
 
@@ -274,4 +290,19 @@ func (c *CommandString) SetBinaryData(data []byte) {
 // GetBinaryData returns the binary data attached to this command.
 func (c *CommandString) GetBinaryData() []byte {
 	return c.binaryData
+}
+
+// SetRequestID sets the request ID for this command (used for async processing).
+func (c *CommandString) SetRequestID(id string) {
+	c.requestID = id
+}
+
+// GetRequestID returns the request ID attached to this command.
+func (c *CommandString) GetRequestID() string {
+	return c.requestID
+}
+
+// HasRequestID returns true if this command has a request ID.
+func (c *CommandString) HasRequestID() bool {
+	return c.requestID != ""
 }

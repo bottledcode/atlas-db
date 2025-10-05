@@ -25,6 +25,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bottledcode/atlas-db/atlas/commands"
@@ -42,6 +43,7 @@ type Socket struct {
 	conn      net.Conn
 	timeout   time.Duration
 	principal string
+	writeMu   sync.Mutex // protects concurrent writes to writer
 }
 
 // validatePrincipal ensures the provided principal name is safe for use in the
@@ -92,6 +94,9 @@ func (s *Socket) writeRawMessage(msg ...[]byte) error {
 const EOL = "\r\n"
 
 func (s *Socket) writeMessage(msg []byte) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	err := s.setWriteTimeout(s.timeout)
 	if err != nil {
 		return err
@@ -109,6 +114,27 @@ func (s *Socket) writeError(code ErrorCode, err error) error {
 
 func (s *Socket) writeOk(code ErrorCode) error {
 	return s.writeMessage([]byte(code))
+}
+
+// writeTaggedMessage writes a message with an optional request ID prefix.
+// Format: [ID:123] MESSAGE
+func (s *Socket) writeTaggedMessage(requestID string, msg []byte) error {
+	if requestID != "" {
+		tagged := append([]byte("[ID:"+requestID+"] "), msg...)
+		return s.writeMessage(tagged)
+	}
+	return s.writeMessage(msg)
+}
+
+// writeTaggedError writes an error with an optional request ID prefix.
+func (s *Socket) writeTaggedError(requestID string, code ErrorCode, err error) error {
+	msg := []byte("ERROR " + string(code) + " " + err.Error())
+	return s.writeTaggedMessage(requestID, msg)
+}
+
+// writeTaggedOk writes an OK response with an optional request ID prefix.
+func (s *Socket) writeTaggedOk(requestID string, code ErrorCode) error {
+	return s.writeTaggedMessage(requestID, []byte(code))
 }
 
 const ProtoVersion = "1.0"
@@ -291,22 +317,8 @@ ready:
 			command, err := cmd.GetNext()
 			if err != nil {
 				options.Logger.Error("Error reading command", zap.Error(err))
-				err = s.writeError(Warning, err)
-				if err != nil {
-					options.Logger.Error("Error writing error message", zap.Error(err))
-					return
-				}
-				continue
-			}
-			execCtx := ctx
-			if s.principal != "" {
-				execCtx = metadata.NewOutgoingContext(ctx, metadata.Pairs(atlasPrincipalKey, s.principal))
-			}
-			resp, err := command.Execute(execCtx)
-			if err != nil {
-				options.Logger.Error("Error executing command", zap.Error(err))
-				code, msg := formatCommandError(err, s.principal)
-				err = s.writeError(code, errors.New(msg))
+				requestID := cmd.GetRequestID()
+				err = s.writeTaggedError(requestID, Warning, err)
 				if err != nil {
 					options.Logger.Error("Error writing error message", zap.Error(err))
 					return
@@ -314,26 +326,68 @@ ready:
 				continue
 			}
 
-			if isBlobGetCommand(cmd) {
-				err = s.writeBlobResponse(resp)
-				if err != nil {
-					options.Logger.Error("Error writing blob response", zap.Error(err))
-					return
-				}
+			// Check if this is an async command (has request ID)
+			requestID := cmd.GetRequestID()
+			if requestID != "" {
+				// Execute asynchronously in a goroutine
+				go s.executeCommandAsync(ctx, cmd, command, requestID)
 			} else {
-				err = s.writeMessage(resp)
-				if err != nil {
-					options.Logger.Error("Error writing response", zap.Error(err))
+				// Execute synchronously (backward compatible)
+				if err := s.executeCommand(ctx, cmd, command, ""); err != nil {
+					options.Logger.Error("Error in synchronous command execution", zap.Error(err))
 					return
 				}
-			}
-
-			err = s.writeOk(OK)
-			if err != nil {
-				options.Logger.Error("Error writing OK response", zap.Error(err))
-				return
 			}
 		}
+	}
+}
+
+// executeCommand executes a command and writes the response.
+// Returns an error if writing fails (connection should close).
+func (s *Socket) executeCommand(ctx context.Context, cmd *commands.CommandString, command commands.Command, requestID string) error {
+	execCtx := ctx
+	if s.principal != "" {
+		execCtx = metadata.NewOutgoingContext(ctx, metadata.Pairs(atlasPrincipalKey, s.principal))
+	}
+
+	resp, err := command.Execute(execCtx)
+	if err != nil {
+		options.Logger.Error("Error executing command", zap.Error(err))
+		code, msg := formatCommandError(err, s.principal)
+		err = s.writeTaggedError(requestID, code, errors.New(msg))
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
+	if isBlobGetCommand(cmd) {
+		err = s.writeTaggedBlobResponse(requestID, resp)
+		if err != nil {
+			return err
+		}
+	} else {
+		err = s.writeTaggedMessage(requestID, resp)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = s.writeTaggedOk(requestID, OK)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// executeCommandAsync executes a command asynchronously.
+// Errors are logged but don't close the connection.
+func (s *Socket) executeCommandAsync(ctx context.Context, cmd *commands.CommandString, command commands.Command, requestID string) {
+	if err := s.executeCommand(ctx, cmd, command, requestID); err != nil {
+		options.Logger.Error("Error in async command execution",
+			zap.String("requestID", requestID),
+			zap.Error(err))
 	}
 }
 
@@ -348,9 +402,17 @@ func isBlobGetCommand(cmd *commands.CommandString) bool {
 }
 
 func (s *Socket) writeBlobResponse(binaryData []byte) error {
+	return s.writeTaggedBlobResponse("", binaryData)
+}
+
+// writeTaggedBlobResponse writes a blob response with an optional request ID prefix.
+func (s *Socket) writeTaggedBlobResponse(requestID string, binaryData []byte) error {
 	if binaryData == nil {
-		return s.writeMessage([]byte("EMPTY"))
+		return s.writeTaggedMessage(requestID, []byte("EMPTY"))
 	}
+
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 
 	err := s.setWriteTimeout(s.timeout)
 	if err != nil {
@@ -358,6 +420,10 @@ func (s *Socket) writeBlobResponse(binaryData []byte) error {
 	}
 
 	header := []byte("BLOB " + strconv.Itoa(len(binaryData)))
+	if requestID != "" {
+		header = append([]byte("[ID:"+requestID+"] "), header...)
+	}
+
 	err = s.writeRawMessage(header, []byte(EOL))
 	if err != nil {
 		return err

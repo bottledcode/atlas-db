@@ -26,7 +26,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dgraph-io/badger/v2"
+	"github.com/dgraph-io/badger/v4"
 )
 
 // KeyBuilder helps construct hierarchical keys for different data types

@@ -455,3 +455,70 @@ func TestNodeRepository_MultipleOperations(t *testing.T) {
 		t.Errorf("Expected 1 active node after deletion, got %d", count)
 	}
 }
+
+func TestNodeRepository_UpdateAddressAndRegion(t *testing.T) {
+	repo, cleanup := setupTestRepository(t)
+	defer cleanup()
+
+	node := createTestNodeWithActive(1, "192.168.1.100", 8080, "us-west-1", true)
+	err := repo.AddNode(node)
+	if err != nil {
+		t.Fatalf("Failed to add node: %v", err)
+	}
+
+	retrieved, err := repo.GetNodeByAddress("192.168.1.100", 8080)
+	if err != nil {
+		t.Fatalf("Failed to get node by original address: %v", err)
+	}
+	if retrieved.GetId() != 1 {
+		t.Errorf("Expected node ID 1, got %d", retrieved.GetId())
+	}
+
+	westNodes, err := repo.GetNodesByRegion("us-west-1")
+	if err != nil {
+		t.Fatalf("Failed to get nodes by original region: %v", err)
+	}
+	if len(westNodes) != 1 {
+		t.Fatalf("Expected 1 node in us-west-1, got %d", len(westNodes))
+	}
+
+	node.Address = "192.168.2.200"
+	node.Port = 9090
+	node.Region.Name = "us-east-1"
+	err = repo.UpdateNode(node)
+	if err != nil {
+		t.Fatalf("Failed to update node: %v", err)
+	}
+
+	oldAddrNode, err := repo.GetNodeByAddress("192.168.1.100", 8080)
+	if err == nil && oldAddrNode != nil {
+		t.Errorf("Expected error when getting node by old address, but got node: %+v", oldAddrNode)
+	}
+
+	retrieved, err = repo.GetNodeByAddress("192.168.2.200", 9090)
+	if err != nil {
+		t.Fatalf("Failed to get node by new address: %v", err)
+	}
+	if retrieved.GetId() != 1 {
+		t.Errorf("Expected node ID 1, got %d", retrieved.GetId())
+	}
+
+	westNodes, err = repo.GetNodesByRegion("us-west-1")
+	if err != nil {
+		t.Fatalf("Failed to get nodes by old region: %v", err)
+	}
+	if len(westNodes) != 0 {
+		t.Errorf("Expected 0 nodes in us-west-1 after update, got %d", len(westNodes))
+	}
+
+	eastNodes, err := repo.GetNodesByRegion("us-east-1")
+	if err != nil {
+		t.Fatalf("Failed to get nodes by new region: %v", err)
+	}
+	if len(eastNodes) != 1 {
+		t.Errorf("Expected 1 node in us-east-1, got %d", len(eastNodes))
+	}
+	if eastNodes[0].GetId() != 1 {
+		t.Errorf("Expected node ID 1 in us-east-1, got %d", eastNodes[0].GetId())
+	}
+}

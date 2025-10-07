@@ -107,13 +107,49 @@ func (r *BaseRepository[M, K]) Put(obj M) (err error) {
 	if err != nil {
 		return err
 	}
-	batch := r.store.NewBatch()
+	txn, err := r.store.Begin(true)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			txn.Discard()
+		}
+	}()
+
+	existing, err := txn.Get(r.ctx, keys.PrimaryKey)
+	if err != nil && !errors.Is(err, kv.ErrKeyNotFound) {
+		return err
+	}
+
+	batch := txn.NewBatch()
 	defer func() {
 		if err != nil {
 			batch.Reset()
 		}
 	}()
+
+	if existing != nil {
+		var m M
+		msgType := reflect.TypeOf(m).Elem()
+		m = reflect.New(msgType).Interface().(M)
+		err = proto.Unmarshal(existing, m)
+		if err != nil {
+			return err
+		}
+		delKeys := r.repo.GetKeys(m)
+		for _, key := range delKeys.IndexKeys {
+			err = batch.Delete(key)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
 	err = batch.Set(keys.PrimaryKey, val)
+	if err != nil {
+		return err
+	}
 	for _, key := range keys.IndexKeys {
 		err = batch.Set(key, keys.PrimaryKey)
 		if err != nil {
@@ -126,7 +162,11 @@ func (r *BaseRepository[M, K]) Put(obj M) (err error) {
 			return err
 		}
 	}
-	return batch.Flush()
+	err = batch.Flush()
+	if err != nil {
+		return err
+	}
+	return txn.Commit()
 }
 
 func (r *BaseRepository[M, K]) Delete(obj M) (err error) {

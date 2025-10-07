@@ -48,7 +48,7 @@ func (n *NodeListCommand) Execute(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("meta store not available")
 	}
 
-	repo := consensus.NewNodeRepositoryKV(ctx, store)
+	repo := consensus.NewNodeRepository(ctx, store)
 	var lines []string
 	err := repo.Iterate(func(node *consensus.Node) error {
 		lines = append(lines, formatNodeSummary(node))
@@ -81,7 +81,7 @@ func (n *NodeInfoCommand) Execute(ctx context.Context) ([]byte, error) {
 	if store == nil {
 		return nil, fmt.Errorf("meta store not available")
 	}
-	repo := consensus.NewNodeRepositoryKV(ctx, store)
+	repo := consensus.NewNodeRepository(ctx, store)
 	node, err := repo.GetNodeById(id)
 	if err != nil {
 		return nil, err

@@ -160,7 +160,7 @@ func GetNodeConnectionManager(ctx context.Context) *NodeConnectionManager {
 		if kvPool != nil {
 			metaStore := kvPool.MetaStore()
 			if metaStore != nil {
-				storage := NewNodeRepositoryKV(ctx, metaStore)
+				storage := NewNodeRepository(ctx, metaStore)
 
 				// Create context with cancellation for cleanup
 				managerCtx, cancel := context.WithCancel(ctx)

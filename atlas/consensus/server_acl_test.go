@@ -31,7 +31,7 @@ func setupKVForACL(t *testing.T) (cleanup func()) {
 
 	// Insert current node and a table owned by it
 	pool := kv.GetPool()
-	nr := NewNodeRepositoryKV(context.Background(), pool.MetaStore()).(*NodeRepositoryKV)
+	nr := NewNodeRepository(context.Background(), pool.MetaStore())
 	node := &Node{Id: options.CurrentOptions.ServerId, Address: options.CurrentOptions.AdvertiseAddress, Port: int64(options.CurrentOptions.AdvertisePort), Region: &Region{Name: options.CurrentOptions.Region}, Active: true, Rtt: durationpb.New(0)}
 	if err := nr.AddNode(node); err != nil {
 		t.Fatalf("AddNode: %v", err)

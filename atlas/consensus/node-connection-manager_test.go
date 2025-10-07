@@ -48,12 +48,31 @@ func (m *MockNodeRepository) AddTestNode(node *Node) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.nodes[node.Id] = node
-	region := node.Region.Name
-	if m.regions[region] == nil {
-		m.regions[region] = make([]*Node, 0)
+	// Check if node already exists and remove from old region
+	if existingNode, exists := m.nodes[node.Id]; exists {
+		oldRegion := existingNode.Region.Name
+		// Remove from old region slice
+		if nodes, ok := m.regions[oldRegion]; ok {
+			filtered := make([]*Node, 0, len(nodes)-1)
+			for _, n := range nodes {
+				if n.Id != node.Id {
+					filtered = append(filtered, n)
+				}
+			}
+			if len(filtered) == 0 {
+				delete(m.regions, oldRegion)
+			} else {
+				m.regions[oldRegion] = filtered
+			}
+		}
 	}
-	m.regions[region] = append(m.regions[region], node)
+
+	m.nodes[node.Id] = node
+	newRegion := node.Region.Name
+	if m.regions[newRegion] == nil {
+		m.regions[newRegion] = make([]*Node, 0, 1)
+	}
+	m.regions[newRegion] = append(m.regions[newRegion], node)
 }
 
 func (m *MockNodeRepository) GetNodeById(id int64) (*Node, error) {
@@ -159,6 +178,29 @@ func (m *MockNodeRepository) UpdateNode(node *Node) error {
 func (m *MockNodeRepository) DeleteNode(nodeID int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// Get the node to find its region before deleting
+	node, exists := m.nodes[nodeID]
+	if !exists {
+		return nil
+	}
+
+	// Remove from region slice
+	region := node.Region.Name
+	if nodes, ok := m.regions[region]; ok {
+		filtered := make([]*Node, 0, len(nodes)-1)
+		for _, n := range nodes {
+			if n.Id != nodeID {
+				filtered = append(filtered, n)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(m.regions, region)
+		} else {
+			m.regions[region] = filtered
+		}
+	}
+
 	delete(m.nodes, nodeID)
 	return nil
 }

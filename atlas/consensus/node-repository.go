@@ -35,8 +35,22 @@ type NodeRepository interface {
 	Iterate(fn func(*Node) error) error
 	TotalCount() (int64, error)
 	GetRandomNodes(num int64, excluding ...int64) ([]*Node, error)
+	AddNode(node *Node) error
+	UpdateNode(node *Node) error
+	DeleteNode(nodeID int64) error
 }
 
+// NewNodeRepository creates a new KV-based node repository
+func NewNodeRepository(ctx context.Context, store kv.Store) NodeRepository {
+	repo := &NodeR{
+		BaseRepository: BaseRepository[*Node, NodeKey]{
+			store: store,
+			ctx:   ctx,
+		},
+	}
+	repo.repo = repo
+	return repo
+}
 
 type NodeKey struct {
 	GenericKey
@@ -44,19 +58,6 @@ type NodeKey struct {
 
 type NodeR struct {
 	BaseRepository[*Node, NodeKey]
-}
-
-// NewNodeRepository creates a new NodeRepository with proper initialization
-func NewNodeRepository(store kv.Store, ctx context.Context) *NodeR {
-	repo := &NodeR{
-		BaseRepository: BaseRepository[*Node, NodeKey]{
-			store: store,
-			ctx:   ctx,
-		},
-	}
-	// Set the repo field to enable polymorphic method dispatch
-	repo.BaseRepository.repo = repo
-	return repo
 }
 
 func (n *NodeR) CreateKey(k []byte) NodeKey {
@@ -246,4 +247,17 @@ func (n *NodeR) GetRandomNodes(num int64, excluding ...int64) ([]*Node, error) {
 	}
 
 	return selectedNodes, nil
+}
+
+func (n *NodeR) AddNode(node *Node) error {
+	return n.Put(node)
+}
+
+func (n *NodeR) UpdateNode(node *Node) error {
+	return n.Put(node)
+}
+
+func (n *NodeR) DeleteNode(nodeID int64) error {
+	key := n.getNodeKey(nodeID)
+	return n.DeleteByKey(key)
 }

@@ -224,7 +224,7 @@ func (m *majorityQuorum) Ping(ctx context.Context, in *PingRequest, opts ...grpc
 
 func (m *majorityQuorum) ReadKey(ctx context.Context, in *ReadKeyRequest, opts ...grpc.CallOption) (*ReadKeyResponse, error) {
 	tr := NewTableRepositoryKV(ctx, kv.GetPool().MetaStore())
-	nr := NewNodeRepositoryKV(ctx, kv.GetPool().MetaStore())
+	nr := NewNodeRepository(ctx, kv.GetPool().MetaStore())
 
 	currentNode, err := nr.GetNodeById(options.CurrentOptions.ServerId)
 	if err != nil {
@@ -297,7 +297,7 @@ func upsertTable(ctx context.Context, tr TableRepository, table *Table) error {
 }
 
 func (m *majorityQuorum) PrefixScan(ctx context.Context, in *PrefixScanRequest, opts ...grpc.CallOption) (*PrefixScanResponse, error) {
-	nr := NewNodeRepositoryKV(ctx, kv.GetPool().MetaStore())
+	nr := NewNodeRepository(ctx, kv.GetPool().MetaStore())
 	qm := GetDefaultQuorumManager(ctx)
 
 	var allNodes []*Node
@@ -399,7 +399,7 @@ func (m *majorityQuorum) PrefixScan(ctx context.Context, in *PrefixScanRequest, 
 
 func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error) {
 	tr := NewTableRepositoryKV(ctx, kv.GetPool().MetaStore())
-	nr := NewNodeRepositoryKV(ctx, kv.GetPool().MetaStore())
+	nr := NewNodeRepository(ctx, kv.GetPool().MetaStore())
 
 	currentNode, err := nr.GetNodeById(options.CurrentOptions.ServerId)
 	if err != nil {
@@ -562,7 +562,7 @@ func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts
 // but emits a KVChange_Del instead of KVChange_Set.
 func (m *majorityQuorum) DeleteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error) {
 	tr := NewTableRepositoryKV(ctx, kv.GetPool().MetaStore())
-	nr := NewNodeRepositoryKV(ctx, kv.GetPool().MetaStore())
+	nr := NewNodeRepository(ctx, kv.GetPool().MetaStore())
 
 	currentNode, err := nr.GetNodeById(options.CurrentOptions.ServerId)
 	if err != nil {

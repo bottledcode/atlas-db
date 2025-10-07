@@ -42,18 +42,14 @@ func TestNode_List_And_Info(t *testing.T) {
 	options.Logger = zaptest.NewLogger(t)
 
 	// Insert a couple of nodes into meta via repository
-	repo := consensus.NewNodeRepositoryKV(ctx, kv.GetPool().MetaStore())
+	repo := consensus.NewNodeRepository(ctx, kv.GetPool().MetaStore())
 	n1 := &consensus.Node{Id: 1, Address: "127.0.0.1", Port: 1111, Region: &consensus.Region{Name: "us-east-1"}, Active: true, Rtt: durationpb.New(0)}
 	n2 := &consensus.Node{Id: 2, Address: "127.0.0.2", Port: 2222, Region: &consensus.Region{Name: "us-west-2"}, Active: true, Rtt: durationpb.New(0)}
-	if kvRepo, ok := repo.(*consensus.NodeRepositoryKV); ok {
-		if err := kvRepo.AddNode(n1); err != nil {
-			t.Fatalf("add node1: %v", err)
-		}
-		if err := kvRepo.AddNode(n2); err != nil {
-			t.Fatalf("add node2: %v", err)
-		}
-	} else {
-		t.Fatalf("failed to cast to NodeRepositoryKV to add nodes")
+	if err := repo.AddNode(n1); err != nil {
+		t.Fatalf("add node1: %v", err)
+	}
+	if err := repo.AddNode(n2); err != nil {
+		t.Fatalf("add node2: %v", err)
 	}
 
 	// NODE LIST
@@ -101,7 +97,7 @@ func TestQuorum_Info_Execution(t *testing.T) {
 	options.Logger = zaptest.NewLogger(t)
 
 	// Create nodes across regions and add them to both repo and quorum manager
-	repo := consensus.NewNodeRepositoryKV(ctx, kv.GetPool().MetaStore())
+	repo := consensus.NewNodeRepository(ctx, kv.GetPool().MetaStore())
 	qm := consensus.GetDefaultQuorumManager(ctx)
 	nodes := []*consensus.Node{
 		{Id: 1, Address: "127.0.0.1", Port: 1111, Region: &consensus.Region{Name: "us-east-1"}, Active: true, Rtt: durationpb.New(0)},
@@ -110,15 +106,11 @@ func TestQuorum_Info_Execution(t *testing.T) {
 		{Id: 4, Address: "127.0.0.4", Port: 2112, Region: &consensus.Region{Name: "us-west-2"}, Active: true, Rtt: durationpb.New(0)},
 		{Id: 5, Address: "127.0.0.5", Port: 3111, Region: &consensus.Region{Name: "eu-west-1"}, Active: true, Rtt: durationpb.New(0)},
 	}
-	if kvRepo, ok := repo.(*consensus.NodeRepositoryKV); ok {
-		for _, n := range nodes {
-			if err := kvRepo.AddNode(n); err != nil {
-				t.Fatalf("add node %d: %v", n.Id, err)
-			}
-			_ = qm.AddNode(ctx, n)
+	for _, n := range nodes {
+		if err := repo.AddNode(n); err != nil {
+			t.Fatalf("add node %d: %v", n.Id, err)
 		}
-	} else {
-		t.Fatalf("failed to cast to NodeRepositoryKV to add nodes")
+		_ = qm.AddNode(ctx, n)
 	}
 
 	// Execute QUORUM INFO

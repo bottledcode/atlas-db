@@ -206,13 +206,13 @@ func (r *BaseRepository[M, K]) CountPrefix(prefix Prefix) (int64, error) {
 		PrefetchValues: false,
 		Prefix:         prefix.raw,
 	})
-	defer it.Close()
 
 	count := int64(0)
 	for it.Rewind(); it.Valid(); it.Next() {
 		count++
 	}
-	return count, nil
+
+	return count, it.Close()
 }
 
 // ScanIndex scans secondary index keys where values are primary keys, not full messages
@@ -221,17 +221,20 @@ func (r *BaseRepository[M, K]) ScanIndex(prefix Prefix, callback func(primaryKey
 		PrefetchValues: true,
 		Prefix:         prefix.raw,
 	})
-	defer it.Close()
 
 	it.Rewind()
+	var scanErr error
 	for ; it.Valid(); it.Next() {
 		primaryKey, err := it.Item().ValueCopy()
 		if err != nil {
-			return err
+			scanErr = err
+			break
 		}
 		if err := callback(primaryKey); err != nil {
-			return err
+			scanErr = err
+			break
 		}
 	}
-	return nil
+
+	return errors.Join(scanErr, it.Close())
 }

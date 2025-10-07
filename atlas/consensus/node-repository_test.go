@@ -26,7 +26,7 @@ import (
 )
 
 // setupTestRepository creates an in-memory Badger store for testing
-func setupTestRepository(t *testing.T) (*NodeR, func()) {
+func setupTestRepository(t *testing.T) (NodeRepository, func()) {
 	tmpDir, err := os.MkdirTemp("", "node_repo_test")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -37,7 +37,7 @@ func setupTestRepository(t *testing.T) (*NodeR, func()) {
 		t.Fatalf("Failed to create BadgerStore: %v", err)
 	}
 
-	repo := NewNodeRepository(store, context.Background())
+	repo := NewNodeRepository(context.Background(), store)
 
 	cleanup := func() {
 		if err := store.Close(); err != nil {
@@ -72,7 +72,7 @@ func TestNodeRepository_PutAndGetById(t *testing.T) {
 	node := createTestNodeWithActive(1, "192.168.1.100", 8080, "us-west-1", true)
 
 	// Put the node
-	err := repo.Put(node)
+	err := repo.AddNode(node)
 	if err != nil {
 		t.Fatalf("Failed to put node: %v", err)
 	}
@@ -120,11 +120,11 @@ func TestNodeRepository_GetByAddress(t *testing.T) {
 	node1 := createTestNodeWithActive(1, "192.168.1.100", 8080, "us-west-1", true)
 	node2 := createTestNodeWithActive(2, "192.168.1.101", 8080, "us-east-1", true)
 
-	err := repo.Put(node1)
+	err := repo.AddNode(node1)
 	if err != nil {
 		t.Fatalf("Failed to put node1: %v", err)
 	}
-	err = repo.Put(node2)
+	err = repo.AddNode(node2)
 	if err != nil {
 		t.Fatalf("Failed to put node2: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestNodeRepository_GetNodesByRegion(t *testing.T) {
 	node3 := createTestNodeWithActive(3, "192.168.1.102", 8082, "us-east-1", true)
 
 	for _, node := range []*Node{node1, node2, node3} {
-		if err := repo.Put(node); err != nil {
+		if err := repo.AddNode(node); err != nil {
 			t.Fatalf("Failed to put node: %v", err)
 		}
 	}
@@ -185,7 +185,7 @@ func TestNodeRepository_Delete(t *testing.T) {
 
 	// Create and insert a node
 	node := createTestNodeWithActive(1, "192.168.1.100", 8080, "us-west-1", true)
-	err := repo.Put(node)
+	err := repo.AddNode(node)
 	if err != nil {
 		t.Fatalf("Failed to put node: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestNodeRepository_Delete(t *testing.T) {
 	}
 
 	// Delete the node
-	err = repo.Delete(node)
+	err = repo.DeleteNode(node.GetId())
 	if err != nil {
 		t.Fatalf("Failed to delete node: %v", err)
 	}
@@ -215,14 +215,14 @@ func TestNodeRepository_UpdateActiveStatus(t *testing.T) {
 
 	// Create an active node
 	node := createTestNodeWithActive(1, "192.168.1.100", 8080, "us-west-1", true)
-	err := repo.Put(node)
+	err := repo.AddNode(node)
 	if err != nil {
 		t.Fatalf("Failed to put active node: %v", err)
 	}
 
 	// Update to inactive
 	node.Active = false
-	err = repo.Put(node)
+	err = repo.AddNode(node)
 	if err != nil {
 		t.Fatalf("Failed to update node to inactive: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestNodeRepository_Iterate(t *testing.T) {
 	inactiveNode := createTestNodeWithActive(3, "192.168.1.102", 8082, "us-west-1", false)
 
 	for _, node := range []*Node{activeNode1, activeNode2, inactiveNode} {
-		if err := repo.Put(node); err != nil {
+		if err := repo.AddNode(node); err != nil {
 			t.Fatalf("Failed to put node: %v", err)
 		}
 	}
@@ -304,7 +304,7 @@ func TestNodeRepository_TotalCount(t *testing.T) {
 	inactiveNode := createTestNodeWithActive(3, "192.168.1.102", 8082, "us-west-1", false)
 
 	for _, node := range []*Node{activeNode1, activeNode2, inactiveNode} {
-		if err := repo.Put(node); err != nil {
+		if err := repo.AddNode(node); err != nil {
 			t.Fatalf("Failed to put node: %v", err)
 		}
 	}
@@ -326,7 +326,7 @@ func TestNodeRepository_GetRandomNodes(t *testing.T) {
 	// Create active nodes
 	for i := int64(1); i <= 5; i++ {
 		node := createTestNodeWithActive(i, "192.168.1."+string(rune(100+i)), 8080, "us-west-1", true)
-		if err := repo.Put(node); err != nil {
+		if err := repo.AddNode(node); err != nil {
 			t.Fatalf("Failed to put node %d: %v", i, err)
 		}
 	}
@@ -370,7 +370,7 @@ func TestNodeRepository_GetRegions(t *testing.T) {
 	node4 := createTestNodeWithActive(4, "192.168.1.103", 8083, "eu-west-1", true)
 
 	for _, node := range []*Node{node1, node2, node3, node4} {
-		if err := repo.Put(node); err != nil {
+		if err := repo.AddNode(node); err != nil {
 			t.Fatalf("Failed to put node: %v", err)
 		}
 	}
@@ -412,7 +412,7 @@ func TestNodeRepository_MultipleOperations(t *testing.T) {
 
 	// Insert all nodes
 	for _, node := range nodes {
-		if err := repo.Put(node); err != nil {
+		if err := repo.AddNode(node); err != nil {
 			t.Fatalf("Failed to put node: %v", err)
 		}
 	}
@@ -428,7 +428,7 @@ func TestNodeRepository_MultipleOperations(t *testing.T) {
 
 	// Deactivate one node
 	nodes[0].Active = false
-	if err := repo.Put(nodes[0]); err != nil {
+	if err := repo.AddNode(nodes[0]); err != nil {
 		t.Fatalf("Failed to update node: %v", err)
 	}
 
@@ -442,7 +442,7 @@ func TestNodeRepository_MultipleOperations(t *testing.T) {
 	}
 
 	// Delete one node
-	if err := repo.Delete(nodes[1]); err != nil {
+	if err := repo.DeleteNode(nodes[1].GetId()); err != nil {
 		t.Fatalf("Failed to delete node: %v", err)
 	}
 

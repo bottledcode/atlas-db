@@ -75,7 +75,7 @@ func JoinCluster(ctx context.Context) error {
 	}
 
 	// Find the next available node ID
-	nodeRepo := consensus.NewNodeRepositoryKV(ctx, metaStore)
+	nodeRepo := consensus.NewNodeRepository(ctx, metaStore)
 	nextID, err := getNextNodeID(nodeRepo)
 	if err != nil {
 		return fmt.Errorf("failed to get next node ID: %w", err)
@@ -115,7 +115,7 @@ func checkExistingNodeRegistration(ctx context.Context) (*consensus.Node, error)
 		return nil, fmt.Errorf("metadata store not available")
 	}
 
-	nodeRepo := consensus.NewNodeRepositoryKV(ctx, metaStore)
+	nodeRepo := consensus.NewNodeRepository(ctx, metaStore)
 	return nodeRepo.GetNodeByAddress(
 		options.CurrentOptions.AdvertiseAddress,
 		uint(options.CurrentOptions.AdvertisePort),
@@ -134,7 +134,7 @@ func loadNodesIntoQuorumManager(ctx context.Context) error {
 		return fmt.Errorf("metadata store not available")
 	}
 
-	nodeRepo := consensus.NewNodeRepositoryKV(ctx, metaStore)
+	nodeRepo := consensus.NewNodeRepository(ctx, metaStore)
 	qm := consensus.GetDefaultQuorumManager(ctx)
 
 	return nodeRepo.Iterate(func(node *consensus.Node) error {
@@ -230,15 +230,12 @@ func requestClusterMembership(ctx context.Context, nodeTable *consensus.Table, n
 	if kvPool != nil {
 		metaStore := kvPool.MetaStore()
 		if metaStore != nil {
-			nodeRepo := consensus.NewNodeRepositoryKV(ctx, metaStore)
-			if kvRepo, ok := nodeRepo.(*consensus.NodeRepositoryKV); ok {
-				err = kvRepo.AddNode(newNode)
-				if err != nil {
-					options.Logger.Warn("Failed to add self to local node repository after successful join", zap.Error(err))
-					// Don't fail the entire join process for this
-				} else {
-					options.Logger.Info("Successfully added self to local node repository")
-				}
+			nodeRepo := consensus.NewNodeRepository(ctx, metaStore)
+			err = nodeRepo.AddNode(newNode)
+			if err != nil {
+				options.Logger.Warn("Failed to add self to local node repository after successful join", zap.Error(err))
+			} else {
+				options.Logger.Info("Successfully added self to local node repository")
 			}
 		}
 	}
@@ -293,7 +290,7 @@ func InitializeMaybe(ctx context.Context) error {
 	if pool == nil {
 		return fmt.Errorf("KV pool not available")
 	}
-	nodeRepo := consensus.NewNodeRepositoryKV(ctx, pool.MetaStore())
+	nodeRepo := consensus.NewNodeRepository(ctx, pool.MetaStore())
 
 	count, err := nodeRepo.TotalCount()
 	if err != nil {
@@ -370,14 +367,12 @@ func InitializeMaybe(ctx context.Context) error {
 
 	// Initialize repositories for direct data insertion
 	tableRepo := consensus.NewTableRepositoryKV(ctx, pool.MetaStore())
-	nodeRepoKV := consensus.NewNodeRepositoryKV(ctx, pool.MetaStore())
+	nodeRepoKV := consensus.NewNodeRepository(ctx, pool.MetaStore())
 
 	// Insert the node table directly (since we're the first node, we own it) -- however, it may already exist
 	_ = tableRepo.InsertTable(table)
 
-	// For the node insertion, we need to use the KV repository directly
-	// since the interface doesn't include AddNode (it's handled via consensus in normal operations)
-	err = nodeRepoKV.(*consensus.NodeRepositoryKV).AddNode(node)
+	err = nodeRepoKV.AddNode(node)
 	if err != nil {
 		return fmt.Errorf("failed to insert bootstrap node: %w", err)
 	}

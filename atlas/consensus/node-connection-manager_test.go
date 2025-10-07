@@ -146,6 +146,23 @@ func (m *MockNodeRepository) GetRandomNodes(num int64, excluding ...int64) ([]*N
 	return candidates[:num], nil
 }
 
+func (m *MockNodeRepository) AddNode(node *Node) error {
+	m.AddTestNode(node)
+	return nil
+}
+
+func (m *MockNodeRepository) UpdateNode(node *Node) error {
+	m.AddTestNode(node)
+	return nil
+}
+
+func (m *MockNodeRepository) DeleteNode(nodeID int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.nodes, nodeID)
+	return nil
+}
+
 func createTestNode(id int64, region string, address string, port int64) *Node {
 	return &Node{
 		Id:      id,

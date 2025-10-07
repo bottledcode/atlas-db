@@ -590,26 +590,21 @@ func (s *Server) applyAddNodeOperation(ctx context.Context, sessionData []byte, 
 		Rtt:     durationpb.New(0), // Default RTT for new nodes
 	}
 
-	// Use NodeRepositoryKV to properly add the node with indexing
-	nodeRepo := NewNodeRepositoryKV(ctx, kvStore)
-	if kvRepo, ok := nodeRepo.(*NodeRepositoryKV); ok {
-		err = kvRepo.AddNode(node)
-		if err != nil {
-			return fmt.Errorf("failed to add node via repository: %w", err)
-		}
-		qm := GetDefaultQuorumManager(ctx)
-		err = qm.AddNode(ctx, node)
-		if err != nil {
-			return fmt.Errorf("failed to add node to quorum: %w", err)
-		}
-
-		options.Logger.Info("Applied ADD_NODE migration",
-			zap.Int64("node_id", node.Id),
-			zap.String("address", node.Address),
-			zap.String("region", node.Region.Name))
-	} else {
-		return fmt.Errorf("failed to cast to NodeRepositoryKV")
+	nodeRepo := NewNodeRepository(ctx, kvStore)
+	err = nodeRepo.AddNode(node)
+	if err != nil {
+		return fmt.Errorf("failed to add node via repository: %w", err)
 	}
+	qm := GetDefaultQuorumManager(ctx)
+	err = qm.AddNode(ctx, node)
+	if err != nil {
+		return fmt.Errorf("failed to add node to quorum: %w", err)
+	}
+
+	options.Logger.Info("Applied ADD_NODE migration",
+		zap.Int64("node_id", node.Id),
+		zap.String("address", node.Address),
+		zap.String("region", node.Region.Name))
 
 	return nil
 }
@@ -842,7 +837,7 @@ func SendGossip(ctx context.Context, req *GossipMigration, kvStore kv.Store) err
 	}
 
 	// pick 5 random nodes to gossip to, excluding the sender, owner, and myself
-	nr := NewNodeRepositoryKV(ctx, kvStore)
+	nr := NewNodeRepository(ctx, kvStore)
 	nodes, err := nr.GetRandomNodes(5,
 		req.GetMigrationRequest().GetVersion().GetNodeId(),
 		options.CurrentOptions.ServerId,
@@ -1128,7 +1123,7 @@ func (s *Server) PrefixScan(ctx context.Context, req *PrefixScanRequest) (*Prefi
 		}, nil
 	}
 
-	nr := NewNodeRepositoryKV(ctx, metaStore)
+	nr := NewNodeRepository(ctx, metaStore)
 	currentNode, err := nr.GetNodeById(options.CurrentOptions.ServerId)
 	if err != nil {
 		return &PrefixScanResponse{
@@ -1242,7 +1237,7 @@ func (s *Server) WriteKey(ctx context.Context, req *WriteKeyRequest) (*WriteKeyR
 
 	// We are the leader - execute the full consensus protocol
 	qm := GetDefaultQuorumManager(ctx)
-	nr := NewNodeRepositoryKV(ctx, metaStore)
+	nr := NewNodeRepository(ctx, metaStore)
 
 	currentNode, err := nr.GetNodeById(options.CurrentOptions.ServerId)
 	if err != nil {

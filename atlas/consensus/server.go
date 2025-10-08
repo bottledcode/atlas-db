@@ -949,7 +949,7 @@ func (s *Server) Ping(ctx context.Context, req *PingRequest) (*PingResponse, err
 			nodeRepo := connectionManager.storage
 			if nodeRepo != nil {
 				var discoveredNode *Node
-				_ = nodeRepo.Iterate(func(node *Node) error {
+				_ = nodeRepo.Iterate(false, func(node *Node, txn *kv.Transaction) error {
 					if node.Id == req.SenderNodeId {
 						discoveredNode = node
 						return nil // found it, stop iterating
@@ -1087,7 +1087,7 @@ func (s *Server) ReadKey(ctx context.Context, req *ReadKeyRequest) (*ReadKeyResp
 
 	return &ReadKeyResponse{
 		Success: true,
-		Value:   record.Value.Data,
+		Value:   record.GetValue().GetData(),
 	}, nil
 }
 

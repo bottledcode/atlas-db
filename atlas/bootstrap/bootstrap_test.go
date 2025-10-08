@@ -453,8 +453,12 @@ func TestKVChangeProtobuf(t *testing.T) {
 	change := &consensus.KVChange{
 		Operation: &consensus.KVChange_Set{
 			Set: &consensus.SetChange{
-				Key:  []byte("test-key"),
-				Data: &consensus.Record{Value: &consensus.RawData{Data: []byte("test-value")}},
+				Key: []byte("test-key"),
+				Data: &consensus.Record{
+					Data: &consensus.Record_Value{
+						Value: &consensus.RawData{Data: []byte("test-value")},
+					},
+				},
 			},
 		},
 	}

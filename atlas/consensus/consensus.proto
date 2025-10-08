@@ -69,8 +69,16 @@ message ACL {
   ACLData writers = 3;
 }
 
+message DataReference {
+  bytes key = 1;
+  bytes checksum = 2;
+}
+
 message Record {
-  RawData value = 1;
+  oneof data {
+    RawData value = 1;
+    DataReference ref = 3;
+  }
   ACL accessControl = 2;
 }
 

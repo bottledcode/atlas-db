@@ -37,9 +37,17 @@ type MigrationRepositoryKV struct {
 
 // NewMigrationRepositoryKV creates a new KV-based migration repository
 func NewMigrationRepositoryKV(ctx context.Context, store kv.Store) MigrationRepository {
-	return &MigrationRepositoryKV{
-		store: store,
-		ctx:   ctx,
+	return &MigrationR{
+		BaseRepository: BaseRepository[*StoredMigrationBatch, MigrationKey]{
+			store: store,
+			ctx:   ctx,
+		},
+		data:           &DataR{
+			BaseRepository[*Record, DataKey]{
+				store: store,
+				ctx:   ctx,
+			},
+		},
 	}
 }
 

@@ -51,13 +51,14 @@ type Prefix struct {
 }
 
 type Repository[M proto.Message, K Key] interface {
-	GetByKey(k K) (M, error)
+	GetByKey(k K, txn *kv.Transaction) (M, error)
 	GetKeys(obj M) *StructuredKey
 	CreateKey(b []byte) K
 	Put(obj M) error
-	Delete(obj M) error
+	Delete(obj M, txn *kv.Transaction) error
 	DeleteByKey(k K) error
-	PrefixScan(cursor []byte, prefix Prefix, c func(K, M) error) error
+	PrefixScan(cursor []byte, write bool, prefix Prefix, c func(K, M, *kv.Transaction) error) error
+	ScanIndex(prefix Prefix, write bool, callback func(primaryKey []byte, txn *kv.Transaction) error) error
 }
 
 type BaseRepository[M proto.Message, K Key] struct {
@@ -67,16 +68,34 @@ type BaseRepository[M proto.Message, K Key] struct {
 }
 
 func (r *BaseRepository[M, K]) DeleteByKey(k K) error {
-	m, err := r.GetByKey(k)
+	txn, err := r.store.Begin(true)
 	if err != nil {
 		return err
 	}
-	return r.Delete(m)
+	defer txn.Discard()
+	m, err := r.GetByKey(k, &txn)
+	if err != nil {
+		return err
+	}
+	err = r.Delete(m, &txn)
+	if err != nil {
+		return err
+	}
+	return txn.Commit()
 }
 
-func (r *BaseRepository[M, K]) GetByKey(k K) (M, error) {
-	val, err := r.store.Get(r.ctx, k.Raw())
+func (r *BaseRepository[M, K]) GetByKey(k K, txn *kv.Transaction) (M, error) {
 	var m M
+	if txn == nil {
+		t, err := r.store.Begin(false)
+		if err != nil {
+			return m, err
+		}
+		txn = &t
+		defer t.Discard()
+	}
+
+	val, err := (*txn).Get(r.ctx, k.Raw())
 	if err != nil {
 		return m, err
 	}
@@ -101,12 +120,7 @@ func (r *BaseRepository[M, K]) CreateKey(b []byte) K {
 	panic("implement me")
 }
 
-func (r *BaseRepository[M, K]) Put(obj M) (err error) {
-	keys := r.repo.GetKeys(obj)
-	val, err := proto.Marshal(obj)
-	if err != nil {
-		return err
-	}
+func (r *BaseRepository[M, K]) Update(key K, cb func(M, kv.Transaction) M) (err error) {
 	txn, err := r.store.Begin(true)
 	if err != nil {
 		return err
@@ -117,7 +131,7 @@ func (r *BaseRepository[M, K]) Put(obj M) (err error) {
 		}
 	}()
 
-	existing, err := txn.Get(r.ctx, keys.PrimaryKey)
+	existing, err := txn.Get(r.ctx, key.Raw())
 	if err != nil && !errors.Is(err, kv.ErrKeyNotFound) {
 		return err
 	}
@@ -128,6 +142,8 @@ func (r *BaseRepository[M, K]) Put(obj M) (err error) {
 			batch.Reset()
 		}
 	}()
+
+	var obj M
 
 	if existing != nil {
 		var m M
@@ -144,7 +160,16 @@ func (r *BaseRepository[M, K]) Put(obj M) (err error) {
 				return err
 			}
 		}
+		obj = cb(m, txn)
+	} else {
+		var m M
+		obj = cb(m, txn)
 	}
+	val, err := proto.Marshal(obj)
+	if err != nil {
+		return err
+	}
+	keys := r.repo.GetKeys(obj)
 
 	err = batch.Set(keys.PrimaryKey, val)
 	if err != nil {
@@ -169,9 +194,25 @@ func (r *BaseRepository[M, K]) Put(obj M) (err error) {
 	return txn.Commit()
 }
 
-func (r *BaseRepository[M, K]) Delete(obj M) (err error) {
+func (r *BaseRepository[M, K]) Put(obj M) error {
 	keys := r.repo.GetKeys(obj)
-	batch := r.store.NewBatch()
+	return r.Update(r.repo.CreateKey(keys.PrimaryKey), func(m M, transaction kv.Transaction) M {
+		return obj
+	})
+}
+
+func (r *BaseRepository[M, K]) Delete(obj M, txn *kv.Transaction) (err error) {
+	keys := r.repo.GetKeys(obj)
+	if txn == nil {
+		t, err := r.store.Begin(true)
+		if err != nil {
+			return err
+		}
+		defer t.Discard()
+		txn = &t
+	}
+
+	batch := (*txn).NewBatch()
 	defer func() {
 		if err != nil {
 			batch.Reset()
@@ -196,7 +237,13 @@ func (r *BaseRepository[M, K]) Delete(obj M) (err error) {
 	return batch.Flush()
 }
 
-func (r *BaseRepository[M, K]) PrefixScan(cursor []byte, prefix Prefix, c func(K, M) error) error {
+func (r *BaseRepository[M, K]) PrefixScan(cursor []byte, write bool, prefix Prefix, c func(K, M, *kv.Transaction) error) error {
+	txn, err := r.store.Begin(write)
+	if err != nil {
+		return err
+	}
+	defer txn.Discard()
+
 	it := r.store.NewIterator(kv.IteratorOptions{
 		PrefetchValues: false,
 		Prefix:         prefix.raw,
@@ -228,7 +275,7 @@ func (r *BaseRepository[M, K]) PrefixScan(cursor []byte, prefix Prefix, c func(K
 			return err
 		}
 		k := r.repo.CreateKey(it.Item().KeyCopy())
-		err = c(k, m)
+		err = c(k, m, &txn)
 		if err != nil {
 			nerr := it.Close()
 			if nerr != nil {
@@ -238,7 +285,11 @@ func (r *BaseRepository[M, K]) PrefixScan(cursor []byte, prefix Prefix, c func(K
 		}
 	}
 
-	return it.Close()
+	err = it.Close()
+	if err != nil {
+		return err
+	}
+	return txn.Commit()
 }
 
 func (r *BaseRepository[M, K]) CountPrefix(prefix Prefix) (int64, error) {
@@ -256,8 +307,14 @@ func (r *BaseRepository[M, K]) CountPrefix(prefix Prefix) (int64, error) {
 }
 
 // ScanIndex scans secondary index keys where values are primary keys, not full messages
-func (r *BaseRepository[M, K]) ScanIndex(prefix Prefix, callback func(primaryKey []byte) error) error {
-	it := r.store.NewIterator(kv.IteratorOptions{
+func (r *BaseRepository[M, K]) ScanIndex(prefix Prefix, write bool, callback func(primaryKey []byte, txn *kv.Transaction) error) error {
+	txn, err := r.store.Begin(write)
+	if err != nil {
+		return err
+	}
+	defer txn.Discard()
+
+	it := txn.NewIterator(kv.IteratorOptions{
 		PrefetchValues: true,
 		Prefix:         prefix.raw,
 	})
@@ -270,11 +327,15 @@ func (r *BaseRepository[M, K]) ScanIndex(prefix Prefix, callback func(primaryKey
 			scanErr = err
 			break
 		}
-		if err := callback(primaryKey); err != nil {
+		if err := callback(primaryKey, &txn); err != nil {
 			scanErr = err
 			break
 		}
 	}
 
-	return errors.Join(scanErr, it.Close())
+	err = errors.Join(scanErr, it.Close())
+	if err != nil {
+		return err
+	}
+	return txn.Commit()
 }

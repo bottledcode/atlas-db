@@ -301,7 +301,7 @@ func (m *majorityQuorum) PrefixScan(ctx context.Context, in *PrefixScanRequest, 
 	qm := GetDefaultQuorumManager(ctx)
 
 	var allNodes []*Node
-	err := nr.Iterate(func(node *Node) error {
+	err := nr.Iterate(false, func(node *Node, txn *kv.Transaction) error {
 		allNodes = append(allNodes, node)
 		return nil
 	})

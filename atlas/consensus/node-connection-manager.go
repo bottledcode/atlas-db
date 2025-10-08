@@ -186,7 +186,7 @@ func GetNodeConnectionManager(ctx context.Context) *NodeConnectionManager {
 }
 
 func (ncm *NodeConnectionManager) loadNodesFromStorage(ctx context.Context) {
-	_ = ncm.storage.Iterate(func(node *Node) error {
+	_ = ncm.storage.Iterate(false, func(node *Node, txn *kv.Transaction) error {
 		managedNode := &ManagedNode{
 			Node:       node,
 			status:     NodeStatusUnknown,

@@ -289,7 +289,11 @@ func (r *BaseRepository[M, K]) PrefixScan(cursor []byte, write bool, prefix Pref
 	if err != nil {
 		return err
 	}
-	return txn.Commit()
+	// Only commit write transactions; read-only transactions return ErrReadOnlyTxn on Commit
+	if write {
+		return txn.Commit()
+	}
+	return nil
 }
 
 func (r *BaseRepository[M, K]) CountPrefix(prefix Prefix) (int64, error) {
@@ -337,5 +341,9 @@ func (r *BaseRepository[M, K]) ScanIndex(prefix Prefix, write bool, callback fun
 	if err != nil {
 		return err
 	}
-	return txn.Commit()
+	// Only commit write transactions; read-only transactions return ErrReadOnlyTxn on Commit
+	if write {
+		return txn.Commit()
+	}
+	return nil
 }

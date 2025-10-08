@@ -137,7 +137,7 @@ func loadNodesIntoQuorumManager(ctx context.Context) error {
 	nodeRepo := consensus.NewNodeRepository(ctx, metaStore)
 	qm := consensus.GetDefaultQuorumManager(ctx)
 
-	return nodeRepo.Iterate(func(node *consensus.Node) error {
+	return nodeRepo.Iterate(false, func(node *consensus.Node, txn *kv.Transaction) error {
 		err := qm.AddNode(ctx, node)
 		if err != nil {
 			return fmt.Errorf("failed to add node to quorum manager: %w", err)
@@ -153,7 +153,7 @@ func loadNodesIntoQuorumManager(ctx context.Context) error {
 func getNextNodeID(nodeRepo consensus.NodeRepository) (int64, error) {
 	maxID := int64(0)
 
-	err := nodeRepo.Iterate(func(node *consensus.Node) error {
+	err := nodeRepo.Iterate(false, func(node *consensus.Node, txn *kv.Transaction) error {
 		if node.GetId() > maxID {
 			maxID = node.GetId()
 		}
@@ -313,7 +313,7 @@ func InitializeMaybe(ctx context.Context) error {
 		options.CurrentOptions.ServerId = self.GetId()
 
 		// add all known nodes to the internal cache
-		err = nodeRepo.Iterate(func(node *consensus.Node) error {
+		err = nodeRepo.Iterate(false, func(node *consensus.Node, txn *kv.Transaction) error {
 			return qm.AddNode(ctx, node)
 		})
 		if err != nil {

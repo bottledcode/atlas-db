@@ -255,7 +255,7 @@ func TestNodeRepository_Iterate(t *testing.T) {
 
 	// Iterate over active nodes
 	var iteratedIDs []int64
-	err := repo.Iterate(func(n *Node) error {
+	err := repo.Iterate(false, func(n *Node, txn *kv.Transaction) error {
 		iteratedIDs = append(iteratedIDs, n.GetId())
 		return nil
 	})

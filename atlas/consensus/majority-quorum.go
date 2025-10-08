@@ -301,7 +301,7 @@ func (m *majorityQuorum) PrefixScan(ctx context.Context, in *PrefixScanRequest, 
 	qm := GetDefaultQuorumManager(ctx)
 
 	var allNodes []*Node
-	err := nr.Iterate(func(node *Node) error {
+	err := nr.Iterate(false, func(node *Node, txn *kv.Transaction) error {
 		allNodes = append(allNodes, node)
 		return nil
 	})
@@ -464,7 +464,8 @@ func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts
 			return nil, err
 		}
 	}
-	mr := NewMigrationRepositoryKV(ctx, kv.GetPool().MetaStore())
+	dr := NewDataRepository(ctx, kv.GetPool().DataStore())
+	mr := NewMigrationRepositoryKV(ctx, kv.GetPool().MetaStore(), dr)
 
 	version, err := mr.GetNextVersion(in.GetTable())
 	if err != nil {
@@ -627,7 +628,8 @@ func (m *majorityQuorum) DeleteKey(ctx context.Context, in *WriteKeyRequest, opt
 			return nil, err
 		}
 	}
-	mr := NewMigrationRepositoryKV(ctx, kv.GetPool().MetaStore())
+	dr := NewDataRepository(ctx, kv.GetPool().DataStore())
+	mr := NewMigrationRepositoryKV(ctx, kv.GetPool().MetaStore(), dr)
 	version, err := mr.GetNextVersion(in.GetTable())
 	if err != nil {
 		return nil, err

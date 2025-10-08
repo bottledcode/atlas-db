@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bottledcode/atlas-db/atlas/kv"
 	"github.com/bottledcode/atlas-db/atlas/options"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -123,12 +124,12 @@ func (m *MockNodeRepository) GetRegions() ([]*Region, error) {
 	return regions, nil
 }
 
-func (m *MockNodeRepository) Iterate(fn func(*Node) error) error {
+func (m *MockNodeRepository) Iterate(write bool, fn func(*Node, *kv.Transaction) error) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	for _, node := range m.nodes {
-		if err := fn(node); err != nil {
+		if err := fn(node, nil); err != nil {
 			return err
 		}
 	}

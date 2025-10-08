@@ -13,6 +13,7 @@
  *
  * You should have received a copy of the GNU Affero General Public License
  * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
+ *
  */
 
 package consensus
@@ -30,7 +31,8 @@ func TestMigrationRepositoryKV_GetNextVersion(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationRepositoryKV)
+	dr := NewDataRepository(ctx, store)
+	repo := NewMigrationRepositoryKV(ctx, store, dr).(*MigrationR)
 
 	// Test next version for empty table
 	version, err := repo.GetNextVersion("test_table")
@@ -82,7 +84,8 @@ func TestMigrationRepositoryKV_AddAndGetMigration(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationRepositoryKV)
+	dr := NewDataRepository(ctx, store)
+	repo := NewMigrationRepositoryKV(ctx, store, dr).(*MigrationR)
 
 	// Test schema migration
 	schemaMigration := &Migration{
@@ -127,7 +130,8 @@ func TestMigrationRepositoryKV_DataMigration(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationRepositoryKV)
+	dr := NewDataRepository(ctx, store)
+	repo := NewMigrationRepositoryKV(ctx, store, dr).(*MigrationR)
 
 	// Test data migration
 	sessionData1 := []byte("INSERT INTO test (id) VALUES (1)")
@@ -176,7 +180,8 @@ func TestMigrationRepositoryKV_CommitOperations(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationRepositoryKV)
+	dr := NewDataRepository(ctx, store)
+	repo := NewMigrationRepositoryKV(ctx, store, dr).(*MigrationR)
 
 	// Add migration
 	migration := &Migration{
@@ -212,7 +217,8 @@ func TestMigrationRepositoryKV_CommitAllMigrations(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationRepositoryKV)
+	dr := NewDataRepository(ctx, store)
+	repo := NewMigrationRepositoryKV(ctx, store, dr).(*MigrationR)
 
 	// Add multiple migrations for same table
 	migration1 := &Migration{
@@ -264,7 +270,8 @@ func TestMigrationRepositoryKV_GetUncommittedMigrations(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationRepositoryKV)
+	dr := NewDataRepository(ctx, store)
+	repo := NewMigrationRepositoryKV(ctx, store, dr).(*MigrationR)
 
 	// Add regular migration
 	regularMigration := &Migration{
@@ -315,7 +322,8 @@ func TestMigrationRepositoryKV_GossipMigration(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationRepositoryKV)
+	dr := NewDataRepository(ctx, store)
+	repo := NewMigrationRepositoryKV(ctx, store, dr).(*MigrationR)
 
 	gossipMigration := &Migration{
 		Version: &MigrationVersion{
@@ -351,7 +359,8 @@ func TestMigrationRepositoryKV_DuplicateInsert(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationRepositoryKV)
+	dr := NewDataRepository(ctx, store)
+	repo := NewMigrationRepositoryKV(ctx, store, dr).(*MigrationR)
 
 	migration := &Migration{
 		Version: &MigrationVersion{
@@ -386,7 +395,8 @@ func TestMigrationRepositoryKV_ErrorCases(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationRepositoryKV)
+	dr := NewDataRepository(ctx, store)
+	repo := NewMigrationRepositoryKV(ctx, store, dr).(*MigrationR)
 
 	// Test GetMigrationVersion with nil version
 	migrations, err := repo.GetMigrationVersion(nil)

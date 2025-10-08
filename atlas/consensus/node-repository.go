@@ -32,7 +32,7 @@ type NodeRepository interface {
 	GetNodeByAddress(address string, port uint) (*Node, error)
 	GetNodesByRegion(region string) ([]*Node, error)
 	GetRegions() ([]*Region, error)
-	Iterate(fn func(*Node) error) error
+	Iterate(write bool, fn func(*Node, *kv.Transaction) error) error
 	TotalCount() (int64, error)
 	GetRandomNodes(num int64, excluding ...int64) ([]*Node, error)
 	AddNode(node *Node) error
@@ -140,16 +140,16 @@ func (n *NodeR) GetKeys(node *Node) *StructuredKey {
 
 func (n *NodeR) GetNodeById(id int64) (*Node, error) {
 	key := n.getNodeKey(id)
-	return n.GetByKey(key)
+	return n.GetByKey(key, nil)
 }
 
 func (n *NodeR) GetNodeByAddress(address string, port uint) (*Node, error) {
 	prefix := n.getAddressPrefixKey(address, int64(port), 0)
 	var node *Node
 	// Scan index keys - values are primary keys, not full messages
-	err := n.ScanIndex(prefix, func(primaryKey []byte) error {
+	err := n.ScanIndex(prefix, false, func(primaryKey []byte, txn *kv.Transaction) error {
 		var err error
-		node, err = n.GetByKey(n.CreateKey(primaryKey))
+		node, err = n.GetByKey(n.CreateKey(primaryKey), txn)
 		return err
 	})
 	return node, err
@@ -158,8 +158,8 @@ func (n *NodeR) GetNodeByAddress(address string, port uint) (*Node, error) {
 func (n *NodeR) GetNodesByRegion(region string) ([]*Node, error) {
 	prefix := n.getActivePrefixKey(region, 0)
 	var nodes []*Node
-	err := n.ScanIndex(prefix, func(primaryKey []byte) error {
-		node, err := n.GetByKey(n.CreateKey(primaryKey))
+	err := n.ScanIndex(prefix, false, func(primaryKey []byte, txn *kv.Transaction) error {
+		node, err := n.GetByKey(n.CreateKey(primaryKey), txn)
 		if err != nil {
 			return err
 		}
@@ -172,8 +172,8 @@ func (n *NodeR) GetNodesByRegion(region string) ([]*Node, error) {
 func (n *NodeR) GetRegions() ([]*Region, error) {
 	prefix := n.getRegionPrefixKey("", 0)
 	regionMap := make(map[string]*Region)
-	err := n.ScanIndex(prefix, func(primaryKey []byte) error {
-		node, err := n.GetByKey(n.CreateKey(primaryKey))
+	err := n.ScanIndex(prefix, false, func(primaryKey []byte, txn *kv.Transaction) error {
+		node, err := n.GetByKey(n.CreateKey(primaryKey), txn)
 		if err != nil {
 			return err
 		}
@@ -188,14 +188,14 @@ func (n *NodeR) GetRegions() ([]*Region, error) {
 	return regions, err
 }
 
-func (n *NodeR) Iterate(fn func(*Node) error) error {
+func (n *NodeR) Iterate(write bool, fn func(*Node, *kv.Transaction) error) error {
 	prefix := n.getActivePrefixKey("", 0)
-	return n.ScanIndex(prefix, func(primaryKey []byte) error {
-		node, err := n.GetByKey(n.CreateKey(primaryKey))
+	return n.ScanIndex(prefix, write, func(primaryKey []byte, txn *kv.Transaction) error {
+		node, err := n.GetByKey(n.CreateKey(primaryKey), txn)
 		if err != nil {
 			return err
 		}
-		return fn(node)
+		return fn(node, txn)
 	})
 }
 
@@ -212,8 +212,8 @@ func (n *NodeR) GetRandomNodes(num int64, excluding ...int64) ([]*Node, error) {
 	}
 
 	var candidates []*Node
-	err := n.ScanIndex(prefix, func(primaryKey []byte) error {
-		node, err := n.GetByKey(n.CreateKey(primaryKey))
+	err := n.ScanIndex(prefix, false, func(primaryKey []byte, txn *kv.Transaction) error {
+		node, err := n.GetByKey(n.CreateKey(primaryKey), txn)
 		if err != nil {
 			return err
 		}

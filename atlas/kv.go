@@ -32,8 +32,10 @@ func WriteKey(ctx context.Context, builder *kv.KeyBuilder, value []byte) error {
 			Set: &consensus.SetChange{
 				Key: builder.Build(),
 				Data: &consensus.Record{
-					Value: &consensus.RawData{
-						Data: value,
+					Data: &consensus.Record_Value{
+						Value: &consensus.RawData{
+							Data: value,
+						},
 					},
 					AccessControl: nil,
 				},

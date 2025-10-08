@@ -70,7 +70,9 @@ func TestReadKey_ACL_PublicAndOwner(t *testing.T) {
 	table := "user.table"
 	// Seed data store with value as a Record protobuf, no ACL => public read
 	record := &Record{
-		Value: &RawData{Data: []byte("v1")},
+		Data: &Record_Value{
+			Value: &RawData{Data: []byte("v1")},
+		},
 	}
 	recordBytes, err := proto.Marshal(record)
 	if err != nil {
@@ -87,7 +89,9 @@ func TestReadKey_ACL_PublicAndOwner(t *testing.T) {
 
 	// Update the record to include ACL for alice as owner
 	recordWithACL := &Record{
-		Value: &RawData{Data: []byte("v1")},
+		Data: &Record_Value{
+			Value: &RawData{Data: []byte("v1")},
+		},
 		AccessControl: &ACL{
 			Owners: &ACLData{
 				Principals: []string{"alice"},

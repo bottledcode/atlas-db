@@ -226,9 +226,9 @@ func (m *MigrationR) GetMigrationVersion(version *MigrationVersion) ([]*Migratio
 func (m *MigrationR) CommitAllMigrations(table string) error {
 	prefix := m.getUncommittedMigrationPrefix(table, 0, 0, gossipValueFalse)
 	err := m.ScanIndex(prefix, true, func(primaryKey []byte, txn *kv.Transaction) error {
-		return m.Update(MigrationKey{GenericKey{raw: primaryKey}}, func(batch *StoredMigrationBatch, txn kv.Transaction) *StoredMigrationBatch {
+		return m.Update(MigrationKey{GenericKey{raw: primaryKey}}, func(batch *StoredMigrationBatch, txn kv.Transaction) (*StoredMigrationBatch, error) {
 			batch.Committed = true
-			return batch
+			return batch, nil
 		})
 	})
 	return err
@@ -236,12 +236,13 @@ func (m *MigrationR) CommitAllMigrations(table string) error {
 
 func (m *MigrationR) CommitMigrationExact(version *MigrationVersion) error {
 	key := m.getMigrationKey(version)
-	r, err := m.GetByKey(key, nil)
-	if err != nil {
-		return err
-	}
-	r.Committed = true
-	return m.Put(r)
+	return m.Update(key, func(batch *StoredMigrationBatch, txn kv.Transaction) (*StoredMigrationBatch, error) {
+		if batch == nil {
+			return nil, fmt.Errorf("migration not found")
+		}
+		batch.Committed = true
+		return batch, nil
+	})
 }
 
 func (m *MigrationR) AddGossipMigration(migration *Migration) (err error) {

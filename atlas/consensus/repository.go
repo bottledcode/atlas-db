@@ -120,7 +120,7 @@ func (r *BaseRepository[M, K]) CreateKey(b []byte) K {
 	panic("implement me")
 }
 
-func (r *BaseRepository[M, K]) Update(key K, cb func(M, kv.Transaction) M) (err error) {
+func (r *BaseRepository[M, K]) Update(key K, cb func(M, kv.Transaction) (M, error)) (err error) {
 	txn, err := r.store.Begin(true)
 	if err != nil {
 		return err
@@ -160,11 +160,15 @@ func (r *BaseRepository[M, K]) Update(key K, cb func(M, kv.Transaction) M) (err 
 				return err
 			}
 		}
-		obj = cb(m, txn)
+		obj, err = cb(m, txn)
 	} else {
 		var m M
-		obj = cb(m, txn)
+		obj, err = cb(m, txn)
 	}
+	if err != nil {
+		return err
+	}
+
 	val, err := proto.Marshal(obj)
 	if err != nil {
 		return err
@@ -196,8 +200,8 @@ func (r *BaseRepository[M, K]) Update(key K, cb func(M, kv.Transaction) M) (err 
 
 func (r *BaseRepository[M, K]) Put(obj M) error {
 	keys := r.repo.GetKeys(obj)
-	return r.Update(r.repo.CreateKey(keys.PrimaryKey), func(m M, transaction kv.Transaction) M {
-		return obj
+	return r.Update(r.repo.CreateKey(keys.PrimaryKey), func(m M, transaction kv.Transaction) (M, error) {
+		return obj, nil
 	})
 }
 

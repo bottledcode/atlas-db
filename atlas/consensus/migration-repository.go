@@ -19,6 +19,7 @@
 package consensus
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/bottledcode/atlas-db/atlas/kv"
@@ -45,6 +46,28 @@ type MigrationRepository interface {
 	GetNextVersion(table string) (int64, error)
 }
 
+// NewMigrationRepositoryKV creates a new KV-based migration repository
+func NewMigrationRepositoryKV(ctx context.Context, store kv.Store) MigrationRepository {
+	dataRepo := &DataR{
+		BaseRepository[*Record, DataKey]{
+			store: store,
+			ctx:   ctx,
+		},
+	}
+	dataRepo.repo = dataRepo
+
+	repo := &MigrationR{
+		BaseRepository: BaseRepository[*StoredMigrationBatch, MigrationKey]{
+			store: store,
+			ctx:   ctx,
+		},
+		data: dataRepo,
+	}
+	repo.repo = repo
+	return repo
+}
+
+
 type DataKey struct {
 	GenericKey
 }
@@ -59,8 +82,20 @@ func (d *DataR) CreateKey(k []byte) DataKey {
 	}
 }
 
-func (d *DataR) GetKeys(ref *DataReference) *StructuredKey {
-	primaryKey := kv.NewKeyBuilder().Meta().Append("ref").Append(fmt.Sprintf("%x", ref.GetChecksum())).Build()
+func (d *DataR) GetKeys(record *Record) *StructuredKey {
+	// Extract the reference from the record to build the key
+	var checksum []byte
+	switch data := record.GetData().(type) {
+	case *Record_Ref:
+		checksum = data.Ref.GetChecksum()
+	case *Record_Value:
+		// If it's a value, hash it to get the checksum
+		hasher := blake3.New()
+		_, _ = hasher.Write(data.Value.GetData())
+		checksum = hasher.Sum(nil)
+	}
+
+	primaryKey := kv.NewKeyBuilder().Meta().Append("ref").Append(fmt.Sprintf("%x", checksum)).Build()
 
 	return &StructuredKey{
 		PrimaryKey: primaryKey,
@@ -143,7 +178,7 @@ func (m *MigrationR) CreateKey(k []byte) MigrationKey {
 
 func (m *MigrationR) getMigrationKey(version *MigrationVersion) MigrationKey {
 	key := kv.NewKeyBuilder().Meta().
-		Migration(version.GetTableName(), version.GetTableVersion()).
+		Migration(version.GetTableName(), version.GetMigrationVersion()).
 		TableVersion(version.GetTableVersion()).
 		Node(version.GetNodeId()).
 		Build()
@@ -266,6 +301,9 @@ func (m *MigrationR) AddMigration(migration *Migration) (err error) {
 }
 
 func (m *MigrationR) GetMigrationVersion(version *MigrationVersion) ([]*Migration, error) {
+	if version == nil {
+		return nil, fmt.Errorf("version is nil")
+	}
 	prefix := m.getMigrationPrefix(version)
 	migrations := make([]*Migration, 0)
 	err := m.PrefixScan(nil, false, prefix, func(key MigrationKey, batch *StoredMigrationBatch, txn *kv.Transaction) error {

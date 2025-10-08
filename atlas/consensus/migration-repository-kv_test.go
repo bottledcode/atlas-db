@@ -30,7 +30,7 @@ func TestMigrationRepositoryKV_GetNextVersion(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationRepositoryKV)
+	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationR)
 
 	// Test next version for empty table
 	version, err := repo.GetNextVersion("test_table")
@@ -82,7 +82,7 @@ func TestMigrationRepositoryKV_AddAndGetMigration(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationRepositoryKV)
+	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationR)
 
 	// Test schema migration
 	schemaMigration := &Migration{
@@ -127,7 +127,7 @@ func TestMigrationRepositoryKV_DataMigration(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationRepositoryKV)
+	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationR)
 
 	// Test data migration
 	sessionData1 := []byte("INSERT INTO test (id) VALUES (1)")
@@ -176,7 +176,7 @@ func TestMigrationRepositoryKV_CommitOperations(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationRepositoryKV)
+	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationR)
 
 	// Add migration
 	migration := &Migration{
@@ -212,7 +212,7 @@ func TestMigrationRepositoryKV_CommitAllMigrations(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationRepositoryKV)
+	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationR)
 
 	// Add multiple migrations for same table
 	migration1 := &Migration{
@@ -264,7 +264,7 @@ func TestMigrationRepositoryKV_GetUncommittedMigrations(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationRepositoryKV)
+	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationR)
 
 	// Add regular migration
 	regularMigration := &Migration{
@@ -315,7 +315,7 @@ func TestMigrationRepositoryKV_GossipMigration(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationRepositoryKV)
+	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationR)
 
 	gossipMigration := &Migration{
 		Version: &MigrationVersion{
@@ -351,7 +351,7 @@ func TestMigrationRepositoryKV_DuplicateInsert(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationRepositoryKV)
+	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationR)
 
 	migration := &Migration{
 		Version: &MigrationVersion{
@@ -386,7 +386,7 @@ func TestMigrationRepositoryKV_ErrorCases(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationRepositoryKV)
+	repo := NewMigrationRepositoryKV(ctx, store).(*MigrationR)
 
 	// Test GetMigrationVersion with nil version
 	migrations, err := repo.GetMigrationVersion(nil)

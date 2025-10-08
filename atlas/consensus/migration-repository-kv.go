@@ -37,18 +37,20 @@ type MigrationRepositoryKV struct {
 
 // NewMigrationRepositoryKV creates a new KV-based migration repository
 func NewMigrationRepositoryKV(ctx context.Context, store kv.Store) MigrationRepository {
-	return &MigrationR{
+	repo := &MigrationR{
 		BaseRepository: BaseRepository[*StoredMigrationBatch, MigrationKey]{
 			store: store,
 			ctx:   ctx,
 		},
-		data:           &DataR{
+		data: &DataR{
 			BaseRepository[*Record, DataKey]{
 				store: store,
 				ctx:   ctx,
 			},
 		},
 	}
+	repo.repo = repo
+	return repo
 }
 
 func getMigrationPrefixKey(table string) []byte {

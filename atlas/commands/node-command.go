@@ -50,7 +50,7 @@ func (n *NodeListCommand) Execute(ctx context.Context) ([]byte, error) {
 
 	repo := consensus.NewNodeRepository(ctx, store)
 	var lines []string
-	err := repo.Iterate(func(node *consensus.Node) error {
+	err := repo.Iterate(false, func(node *consensus.Node, txn *kv.Transaction) error {
 		lines = append(lines, formatNodeSummary(node))
 		return nil
 	})

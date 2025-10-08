@@ -1090,9 +1090,43 @@ func (s *Server) ReadKey(ctx context.Context, req *ReadKeyRequest) (*ReadKeyResp
 		}, nil
 	}
 
+	// Check if the record contains a DataReference instead of direct data
+	var valueData []byte
+	if record.GetValue() != nil {
+		// Direct value present
+		valueData = record.GetValue().GetData()
+	} else if record.GetRef() != nil {
+		// DataReference present - need to dereference
+		dr := NewDataRepository(ctx, dataStore)
+		dereferencedRecord, err := dr.Dereference(&record)
+		if err != nil {
+			return &ReadKeyResponse{
+				Success: false,
+				Error:   fmt.Sprintf("failed to dereference record: %v", err),
+			}, nil
+		}
+
+		if dereferencedRecord == nil {
+			return &ReadKeyResponse{
+				Success: false,
+				Error:   "dereferenced record is nil - referenced data not found",
+			}, nil
+		}
+
+		if dereferencedRecord.GetValue() == nil {
+			return &ReadKeyResponse{
+				Success: false,
+				Error:   "dereferenced record contains no value data",
+			}, nil
+		}
+
+		valueData = dereferencedRecord.GetValue().GetData()
+	}
+	// If both GetValue() and GetRef() are nil, valueData remains nil (valid for key-not-found case)
+
 	return &ReadKeyResponse{
 		Success: true,
-		Value:   record.GetValue().GetData(),
+		Value:   valueData,
 	}, nil
 }
 

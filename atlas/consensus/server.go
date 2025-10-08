@@ -162,7 +162,8 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 
 	// if this table is a group, all tables in the group must be stolen
 	var missing []*Migration
-	mr := NewMigrationRepositoryKV(ctx, metaStore)
+	dr := NewDataRepository(ctx, kvPool.DataStore())
+	mr := NewMigrationRepositoryKV(ctx, metaStore, dr)
 	if existingTable.GetType() == TableType_group {
 
 		// first we update the table to the new owner
@@ -261,7 +262,8 @@ func (s *Server) WriteMigration(ctx context.Context, req *WriteMigrationRequest)
 	}
 
 	// insert the migration
-	migrationRepo := NewMigrationRepositoryKV(ctx, metaStore)
+	dr := NewDataRepository(ctx, kvPool.DataStore())
+	migrationRepo := NewMigrationRepositoryKV(ctx, metaStore, dr)
 	err = migrationRepo.AddMigration(req.GetMigration())
 	if err != nil {
 		return nil, err
@@ -298,7 +300,8 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 		}
 	}
 
-	mr := NewMigrationRepositoryKV(ctx, metaStore)
+	dr := NewDataRepository(ctx, kvStore)
+	mr := NewMigrationRepositoryKV(ctx, metaStore, dr)
 	migrations, err := mr.GetMigrationVersion(req.GetMigration().GetVersion())
 	if err != nil {
 		return nil, err
@@ -675,7 +678,8 @@ func (s *Server) JoinCluster(ctx context.Context, req *Node) (*JoinClusterRespon
 	}
 
 	nodeTable := table
-	mr := NewMigrationRepositoryKV(ctx, metaStore)
+	dr := NewDataRepository(ctx, kv.GetPool().DataStore())
+	mr := NewMigrationRepositoryKV(ctx, metaStore, dr)
 	nextVersion, err := mr.GetNextVersion(NodeTable)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get next migration version: %w", err)
@@ -763,7 +767,8 @@ func (s *Server) applyGossipMigration(ctx context.Context, req *GossipMigration)
 		return fmt.Errorf("metaStore is closed")
 	}
 
-	mr := NewMigrationRepositoryKV(ctx, metaStore)
+	dr := NewDataRepository(ctx, kv.GetPool().DataStore())
+	mr := NewMigrationRepositoryKV(ctx, metaStore, dr)
 
 	// check to see if we have the previous migration already
 	prev, err := mr.GetMigrationVersion(req.GetPreviousMigration())
@@ -1282,7 +1287,8 @@ func (s *Server) WriteKey(ctx context.Context, req *WriteKeyRequest) (*WriteKeyR
 	}
 
 	// Execute the migration
-	mr := NewMigrationRepositoryKV(ctx, metaStore)
+	dr := NewDataRepository(ctx, kv.GetPool().DataStore())
+	mr := NewMigrationRepositoryKV(ctx, metaStore, dr)
 	version, err := mr.GetNextVersion(req.GetTable())
 	if err != nil {
 		return &WriteKeyResponse{

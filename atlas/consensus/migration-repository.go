@@ -23,8 +23,6 @@ import (
 	"fmt"
 
 	"github.com/bottledcode/atlas-db/atlas/kv"
-	"github.com/zeebo/blake3"
-	"google.golang.org/protobuf/proto"
 )
 
 // MigrationRepository is an interface that allows getting and maintaining migrations,
@@ -47,118 +45,16 @@ type MigrationRepository interface {
 }
 
 // NewMigrationRepositoryKV creates a new KV-based migration repository
-func NewMigrationRepositoryKV(ctx context.Context, store kv.Store) MigrationRepository {
-	dataRepo := &DataR{
-		BaseRepository[*Record, DataKey]{
-			store: store,
-			ctx:   ctx,
-		},
-	}
-	dataRepo.repo = dataRepo
-
+func NewMigrationRepositoryKV(ctx context.Context, store kv.Store, dataRepository DataRepository) MigrationRepository {
 	repo := &MigrationR{
 		BaseRepository: BaseRepository[*StoredMigrationBatch, MigrationKey]{
 			store: store,
 			ctx:   ctx,
 		},
-		data: dataRepo,
+		data: dataRepository,
 	}
 	repo.repo = repo
 	return repo
-}
-
-
-type DataKey struct {
-	GenericKey
-}
-
-type DataR struct {
-	BaseRepository[*Record, DataKey]
-}
-
-func (d *DataR) CreateKey(k []byte) DataKey {
-	return DataKey{
-		GenericKey{raw: k},
-	}
-}
-
-func (d *DataR) GetKeys(record *Record) *StructuredKey {
-	// Extract the reference from the record to build the key
-	var checksum []byte
-	switch data := record.GetData().(type) {
-	case *Record_Ref:
-		checksum = data.Ref.GetChecksum()
-	case *Record_Value:
-		// If it's a value, hash it to get the checksum
-		hasher := blake3.New()
-		_, _ = hasher.Write(data.Value.GetData())
-		checksum = hasher.Sum(nil)
-	}
-
-	primaryKey := kv.NewKeyBuilder().Meta().Append("ref").Append(fmt.Sprintf("%x", checksum)).Build()
-
-	return &StructuredKey{
-		PrimaryKey: primaryKey,
-	}
-}
-
-func (d *DataR) hashData(data *RawData) (*DataReference, *Record) {
-	hasher := blake3.New()
-	_, _ = hasher.Write(data.GetData())
-	hash := hasher.Sum(nil)
-	return &DataReference{
-			Key:      kv.NewKeyBuilder().Meta().Append("ref").Append(fmt.Sprintf("%x", hash)).Build(),
-			Checksum: hash,
-		}, &Record{
-			Data: &Record_Value{
-				Value: data,
-			},
-		}
-}
-
-func (d *DataR) ProcessIncomingMigration(m *Migration) (*Migration, error) {
-	switch migration := m.GetMigration().(type) {
-	case *Migration_None:
-		return m, nil
-	case *Migration_Schema:
-		return m, nil
-	case *Migration_Data:
-		switch op := migration.Data.GetChange().GetOperation().(type) {
-		case *KVChange_Acl:
-			return m, nil
-		case *KVChange_Data:
-			return m, nil
-		case *KVChange_Del:
-			return m, nil
-		case *KVChange_Set:
-			switch data := op.Set.GetData().GetData().(type) {
-			case *Record_Ref:
-				return m, nil
-			case *Record_Value:
-				if len(data.Value.Data) < 64 {
-					return m, nil
-				}
-
-				next := proto.Clone(m).(*Migration)
-
-				ref, store := d.hashData(data.Value)
-				next.GetData().GetChange().GetSet().Data.Data = &Record_Ref{
-					Ref: ref,
-				}
-				err := d.Put(store)
-				if err != nil {
-					return nil, err
-				}
-				return next, nil
-			default:
-				panic("unknown data type")
-			}
-		default:
-			panic("unknown operation type")
-		}
-	default:
-		panic("unknown migration type")
-	}
 }
 
 type MigrationKey struct {
@@ -167,7 +63,7 @@ type MigrationKey struct {
 
 type MigrationR struct {
 	BaseRepository[*StoredMigrationBatch, MigrationKey]
-	data *DataR
+	data DataRepository
 }
 
 func (m *MigrationR) CreateKey(k []byte) MigrationKey {
@@ -219,9 +115,12 @@ func (m *MigrationR) getUncommittedMigrationPrefix(table string, version int64, 
 		Append("migu").
 		Append("t").Append(table)
 
-	if gossip == gossipValueTrue {
+	switch gossip {
+	case gossipValueUnset:
+		break
+	case gossipValueTrue:
 		key.Append("g")
-	} else if gossip == gossipValueFalse {
+	case gossipValueFalse:
 		key.Append("a")
 	}
 
@@ -272,13 +171,17 @@ func (m *MigrationR) GetUncommittedMigrations(table *Table) ([]*Migration, error
 		m.getUncommittedMigrationPrefix(table.GetName(), 0, 0, gossipValueFalse),
 		false,
 		func(primaryKey []byte, txn *kv.Transaction) error {
-		r, err := m.GetByKey(MigrationKey{GenericKey{raw: primaryKey}}, txn)
-		if err != nil {
-			return err
-		}
-		batch = append(batch, r.GetMigration())
-		return nil
-	})
+			r, err := m.GetByKey(MigrationKey{GenericKey{raw: primaryKey}}, txn)
+			if err != nil {
+				return err
+			}
+			mig, err := m.data.ProcessOutgoingMigration(r.GetMigration())
+			if err != nil {
+				return err
+			}
+			batch = append(batch, mig)
+			return nil
+		})
 	if err != nil {
 		return batch, err
 	}

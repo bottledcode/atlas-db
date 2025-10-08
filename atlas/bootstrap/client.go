@@ -137,7 +137,7 @@ func loadNodesIntoQuorumManager(ctx context.Context) error {
 	nodeRepo := consensus.NewNodeRepository(ctx, metaStore)
 	qm := consensus.GetDefaultQuorumManager(ctx)
 
-	return nodeRepo.Iterate(false,func(node *consensus.Node, txn *kv.Transaction) error {
+	return nodeRepo.Iterate(false, func(node *consensus.Node, txn *kv.Transaction) error {
 		err := qm.AddNode(ctx, node)
 		if err != nil {
 			return fmt.Errorf("failed to add node to quorum manager: %w", err)

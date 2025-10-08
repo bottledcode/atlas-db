@@ -210,7 +210,11 @@ func (m *MigrationR) GetMigrationVersion(version *MigrationVersion) ([]*Migratio
 	prefix := m.getMigrationPrefix(version)
 	migrations := make([]*Migration, 0)
 	err := m.PrefixScan(nil, false, prefix, func(key MigrationKey, batch *StoredMigrationBatch, txn *kv.Transaction) error {
-		migrations = append(migrations, batch.GetMigration())
+		mig, err := m.data.ProcessOutgoingMigration(batch.GetMigration())
+		if err != nil {
+			return err
+		}
+		migrations = append(migrations, mig)
 		return nil
 	})
 	if err != nil {

@@ -103,12 +103,39 @@ message DelChange {
   bytes key = 1;
 }
 
+message SubscribeOptions {
+  bool batch = 1;
+  sint32 retryAttempts = 2;
+  google.protobuf.Duration retryAfterBase = 3;
+  string auth = 4;
+}
+
+message Subscribe {
+  string url = 1;
+  bytes prefix = 2;
+  SubscribeOptions options = 3;
+}
+
+message Notify {
+  bytes prefix = 1;
+  bytes key = 2;
+  oneof change {
+    SetChange set = 3;
+    DelChange del = 4;
+    AclChange acl = 5;
+  }
+  string version = 6;
+  google.protobuf.Timestamp ts = 7;
+}
+
 message KVChange {
   oneof operation {
     SetChange set = 1;
     DelChange del = 2;
     RawData data = 3;
     AclChange acl = 4;
+    Subscribe sub = 5;
+    Notify notification = 6;
   }
 }
 

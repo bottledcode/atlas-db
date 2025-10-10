@@ -347,6 +347,25 @@ func (s *Server) applyKVDataMigration(migration *Migration, kvStore kv.Store) er
 	switch migrationType := dataMigration.GetSession().(type) {
 	case *DataMigration_Change:
 		switch op := migrationType.Change.GetOperation().(type) {
+		case *KVChange_Sub:
+			record := op.Sub
+			// todo: add subscriber to trie
+			value, err := proto.Marshal(record)
+			if err != nil {
+				return fmt.Errorf("failed to marshal subscriber record: %w", err)
+			}
+			key := kv.NewKeyBuilder().Meta().Append("sub").Append(string(op.Sub.GetPrefix())).Build()
+			err = kvStore.Put(ctx, key, value)
+			if err != nil {
+				return fmt.Errorf("failed to SET key %s: %w", key, err)
+			}
+			options.Logger.Info("Applied KV SUB migration",
+				zap.String("prefix", string(op.Sub.GetPrefix())),
+				zap.Int64("table_version", mv.GetTableVersion()),
+				zap.Int64("migration_version", mv.GetMigrationVersion()),
+				zap.Int64("node_id", mv.GetNodeId()),
+				zap.String("table", mv.GetTableName()),
+			)
 		case *KVChange_Set:
 			record := op.Set.Data
 			value, err := proto.Marshal(record)

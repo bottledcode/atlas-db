@@ -107,6 +107,10 @@ func (d *DataR) ProcessOutgoingMigration(m *Migration) (*Migration, error) {
 			return m, nil
 		case *KVChange_Del:
 			return m, nil
+		case *KVChange_Notification:
+			return m, nil
+		case *KVChange_Sub:
+			return m, nil
 		case *KVChange_Set:
 			switch data := op.Set.GetData().GetData().(type) {
 			case *Record_Ref:

@@ -876,7 +876,7 @@ func (x *DelChange) GetKey() []byte {
 type SubscriptionList struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Subscriptions []*Subscribe           `protobuf:"bytes,1,rep,name=subscriptions,proto3" json:"subscriptions,omitempty"`
-	Log           []*Notify              `protobuf:"bytes,2,rep,name=log,proto3" json:"log,omitempty"`
+	Log           [][]byte               `protobuf:"bytes,2,rep,name=log,proto3" json:"log,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -918,7 +918,7 @@ func (x *SubscriptionList) GetSubscriptions() []*Subscribe {
 	return nil
 }
 
-func (x *SubscriptionList) GetLog() []*Notify {
+func (x *SubscriptionList) GetLog() [][]byte {
 	if x != nil {
 		return x.Log
 	}
@@ -2913,10 +2913,10 @@ const file_consensus_consensus_proto_rawDesc = "" +
 	"\bdeletion\x18\x03 \x01(\v2\x14.atlas.consensus.ACLH\x00R\bdeletionB\b\n" +
 	"\x06change\"\x1d\n" +
 	"\tDelChange\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\fR\x03key\"\x7f\n" +
+	"\x03key\x18\x01 \x01(\fR\x03key\"f\n" +
 	"\x10SubscriptionList\x12@\n" +
-	"\rsubscriptions\x18\x01 \x03(\v2\x1a.atlas.consensus.SubscribeR\rsubscriptions\x12)\n" +
-	"\x03log\x18\x02 \x03(\v2\x17.atlas.consensus.NotifyR\x03log\"\xa5\x01\n" +
+	"\rsubscriptions\x18\x01 \x03(\v2\x1a.atlas.consensus.SubscribeR\rsubscriptions\x12\x10\n" +
+	"\x03log\x18\x02 \x03(\fR\x03log\"\xa5\x01\n" +
 	"\x10SubscribeOptions\x12\x14\n" +
 	"\x05batch\x18\x01 \x01(\bR\x05batch\x12$\n" +
 	"\rretryAttempts\x18\x02 \x01(\x11R\rretryAttempts\x12A\n" +
@@ -3156,81 +3156,80 @@ var file_consensus_consensus_proto_depIdxs = []int32{
 	7,  // 12: atlas.consensus.AclChange.addition:type_name -> atlas.consensus.ACL
 	7,  // 13: atlas.consensus.AclChange.deletion:type_name -> atlas.consensus.ACL
 	16, // 14: atlas.consensus.SubscriptionList.subscriptions:type_name -> atlas.consensus.Subscribe
-	17, // 15: atlas.consensus.SubscriptionList.log:type_name -> atlas.consensus.Notify
-	44, // 16: atlas.consensus.SubscribeOptions.retryAfterBase:type_name -> google.protobuf.Duration
-	15, // 17: atlas.consensus.Subscribe.options:type_name -> atlas.consensus.SubscribeOptions
-	11, // 18: atlas.consensus.Notify.set:type_name -> atlas.consensus.SetChange
-	13, // 19: atlas.consensus.Notify.del:type_name -> atlas.consensus.DelChange
-	12, // 20: atlas.consensus.Notify.acl:type_name -> atlas.consensus.AclChange
-	45, // 21: atlas.consensus.Notify.ts:type_name -> google.protobuf.Timestamp
-	11, // 22: atlas.consensus.KVChange.set:type_name -> atlas.consensus.SetChange
-	13, // 23: atlas.consensus.KVChange.del:type_name -> atlas.consensus.DelChange
-	10, // 24: atlas.consensus.KVChange.data:type_name -> atlas.consensus.RawData
-	12, // 25: atlas.consensus.KVChange.acl:type_name -> atlas.consensus.AclChange
-	16, // 26: atlas.consensus.KVChange.sub:type_name -> atlas.consensus.Subscribe
-	17, // 27: atlas.consensus.KVChange.notification:type_name -> atlas.consensus.Notify
-	45, // 28: atlas.consensus.DataMigration.time:type_name -> google.protobuf.Timestamp
-	18, // 29: atlas.consensus.DataMigration.change:type_name -> atlas.consensus.KVChange
-	3,  // 30: atlas.consensus.Migration.version:type_name -> atlas.consensus.MigrationVersion
-	6,  // 31: atlas.consensus.Migration.schema:type_name -> atlas.consensus.SchemaMigration
-	19, // 32: atlas.consensus.Migration.data:type_name -> atlas.consensus.DataMigration
-	20, // 33: atlas.consensus.Migration.none:type_name -> atlas.consensus.NilMigration
-	32, // 34: atlas.consensus.WriteMigrationRequest.sender:type_name -> atlas.consensus.Node
-	21, // 35: atlas.consensus.WriteMigrationRequest.migration:type_name -> atlas.consensus.Migration
-	26, // 36: atlas.consensus.WriteMigrationResponse.table:type_name -> atlas.consensus.Table
-	26, // 37: atlas.consensus.Shard.table:type_name -> atlas.consensus.Table
-	26, // 38: atlas.consensus.Shard.shard:type_name -> atlas.consensus.Table
-	24, // 39: atlas.consensus.Shard.principals:type_name -> atlas.consensus.Principal
-	0,  // 40: atlas.consensus.Table.replicationLevel:type_name -> atlas.consensus.ReplicationLevel
-	32, // 41: atlas.consensus.Table.owner:type_name -> atlas.consensus.Node
-	45, // 42: atlas.consensus.Table.createdAt:type_name -> google.protobuf.Timestamp
-	1,  // 43: atlas.consensus.Table.type:type_name -> atlas.consensus.TableType
-	26, // 44: atlas.consensus.TableGroup.details:type_name -> atlas.consensus.Table
-	26, // 45: atlas.consensus.TableGroup.tables:type_name -> atlas.consensus.Table
-	26, // 46: atlas.consensus.StealTableOwnershipFailure.table:type_name -> atlas.consensus.Table
-	26, // 47: atlas.consensus.StealTableOwnershipSuccess.table:type_name -> atlas.consensus.Table
-	21, // 48: atlas.consensus.StealTableOwnershipSuccess.missingMigrations:type_name -> atlas.consensus.Migration
-	32, // 49: atlas.consensus.StealTableOwnershipRequest.sender:type_name -> atlas.consensus.Node
-	2,  // 50: atlas.consensus.StealTableOwnershipRequest.reason:type_name -> atlas.consensus.StealReason
-	26, // 51: atlas.consensus.StealTableOwnershipRequest.table:type_name -> atlas.consensus.Table
-	28, // 52: atlas.consensus.StealTableOwnershipResponse.failure:type_name -> atlas.consensus.StealTableOwnershipFailure
-	29, // 53: atlas.consensus.StealTableOwnershipResponse.success:type_name -> atlas.consensus.StealTableOwnershipSuccess
-	33, // 54: atlas.consensus.Node.region:type_name -> atlas.consensus.Region
-	44, // 55: atlas.consensus.Node.rtt:type_name -> google.protobuf.Duration
-	21, // 56: atlas.consensus.StoredMigrationBatch.migration:type_name -> atlas.consensus.Migration
-	45, // 57: atlas.consensus.PingRequest.timestamp:type_name -> google.protobuf.Timestamp
-	45, // 58: atlas.consensus.PingResponse.timestamp:type_name -> google.protobuf.Timestamp
-	32, // 59: atlas.consensus.ReadKeyRequest.sender:type_name -> atlas.consensus.Node
-	32, // 60: atlas.consensus.PrefixScanRequest.sender:type_name -> atlas.consensus.Node
-	32, // 61: atlas.consensus.WriteKeyRequest.sender:type_name -> atlas.consensus.Node
-	18, // 62: atlas.consensus.WriteKeyRequest.value:type_name -> atlas.consensus.KVChange
-	45, // 63: atlas.consensus.ACLData.created_at:type_name -> google.protobuf.Timestamp
-	45, // 64: atlas.consensus.ACLData.updated_at:type_name -> google.protobuf.Timestamp
-	30, // 65: atlas.consensus.Consensus.StealTableOwnership:input_type -> atlas.consensus.StealTableOwnershipRequest
-	22, // 66: atlas.consensus.Consensus.WriteMigration:input_type -> atlas.consensus.WriteMigrationRequest
-	22, // 67: atlas.consensus.Consensus.AcceptMigration:input_type -> atlas.consensus.WriteMigrationRequest
-	32, // 68: atlas.consensus.Consensus.JoinCluster:input_type -> atlas.consensus.Node
-	4,  // 69: atlas.consensus.Consensus.Gossip:input_type -> atlas.consensus.GossipMigration
-	35, // 70: atlas.consensus.Consensus.Ping:input_type -> atlas.consensus.PingRequest
-	37, // 71: atlas.consensus.Consensus.ReadKey:input_type -> atlas.consensus.ReadKeyRequest
-	41, // 72: atlas.consensus.Consensus.WriteKey:input_type -> atlas.consensus.WriteKeyRequest
-	41, // 73: atlas.consensus.Consensus.DeleteKey:input_type -> atlas.consensus.WriteKeyRequest
-	39, // 74: atlas.consensus.Consensus.PrefixScan:input_type -> atlas.consensus.PrefixScanRequest
-	31, // 75: atlas.consensus.Consensus.StealTableOwnership:output_type -> atlas.consensus.StealTableOwnershipResponse
-	23, // 76: atlas.consensus.Consensus.WriteMigration:output_type -> atlas.consensus.WriteMigrationResponse
-	46, // 77: atlas.consensus.Consensus.AcceptMigration:output_type -> google.protobuf.Empty
-	5,  // 78: atlas.consensus.Consensus.JoinCluster:output_type -> atlas.consensus.JoinClusterResponse
-	46, // 79: atlas.consensus.Consensus.Gossip:output_type -> google.protobuf.Empty
-	36, // 80: atlas.consensus.Consensus.Ping:output_type -> atlas.consensus.PingResponse
-	38, // 81: atlas.consensus.Consensus.ReadKey:output_type -> atlas.consensus.ReadKeyResponse
-	42, // 82: atlas.consensus.Consensus.WriteKey:output_type -> atlas.consensus.WriteKeyResponse
-	42, // 83: atlas.consensus.Consensus.DeleteKey:output_type -> atlas.consensus.WriteKeyResponse
-	40, // 84: atlas.consensus.Consensus.PrefixScan:output_type -> atlas.consensus.PrefixScanResponse
-	75, // [75:85] is the sub-list for method output_type
-	65, // [65:75] is the sub-list for method input_type
-	65, // [65:65] is the sub-list for extension type_name
-	65, // [65:65] is the sub-list for extension extendee
-	0,  // [0:65] is the sub-list for field type_name
+	44, // 15: atlas.consensus.SubscribeOptions.retryAfterBase:type_name -> google.protobuf.Duration
+	15, // 16: atlas.consensus.Subscribe.options:type_name -> atlas.consensus.SubscribeOptions
+	11, // 17: atlas.consensus.Notify.set:type_name -> atlas.consensus.SetChange
+	13, // 18: atlas.consensus.Notify.del:type_name -> atlas.consensus.DelChange
+	12, // 19: atlas.consensus.Notify.acl:type_name -> atlas.consensus.AclChange
+	45, // 20: atlas.consensus.Notify.ts:type_name -> google.protobuf.Timestamp
+	11, // 21: atlas.consensus.KVChange.set:type_name -> atlas.consensus.SetChange
+	13, // 22: atlas.consensus.KVChange.del:type_name -> atlas.consensus.DelChange
+	10, // 23: atlas.consensus.KVChange.data:type_name -> atlas.consensus.RawData
+	12, // 24: atlas.consensus.KVChange.acl:type_name -> atlas.consensus.AclChange
+	16, // 25: atlas.consensus.KVChange.sub:type_name -> atlas.consensus.Subscribe
+	17, // 26: atlas.consensus.KVChange.notification:type_name -> atlas.consensus.Notify
+	45, // 27: atlas.consensus.DataMigration.time:type_name -> google.protobuf.Timestamp
+	18, // 28: atlas.consensus.DataMigration.change:type_name -> atlas.consensus.KVChange
+	3,  // 29: atlas.consensus.Migration.version:type_name -> atlas.consensus.MigrationVersion
+	6,  // 30: atlas.consensus.Migration.schema:type_name -> atlas.consensus.SchemaMigration
+	19, // 31: atlas.consensus.Migration.data:type_name -> atlas.consensus.DataMigration
+	20, // 32: atlas.consensus.Migration.none:type_name -> atlas.consensus.NilMigration
+	32, // 33: atlas.consensus.WriteMigrationRequest.sender:type_name -> atlas.consensus.Node
+	21, // 34: atlas.consensus.WriteMigrationRequest.migration:type_name -> atlas.consensus.Migration
+	26, // 35: atlas.consensus.WriteMigrationResponse.table:type_name -> atlas.consensus.Table
+	26, // 36: atlas.consensus.Shard.table:type_name -> atlas.consensus.Table
+	26, // 37: atlas.consensus.Shard.shard:type_name -> atlas.consensus.Table
+	24, // 38: atlas.consensus.Shard.principals:type_name -> atlas.consensus.Principal
+	0,  // 39: atlas.consensus.Table.replicationLevel:type_name -> atlas.consensus.ReplicationLevel
+	32, // 40: atlas.consensus.Table.owner:type_name -> atlas.consensus.Node
+	45, // 41: atlas.consensus.Table.createdAt:type_name -> google.protobuf.Timestamp
+	1,  // 42: atlas.consensus.Table.type:type_name -> atlas.consensus.TableType
+	26, // 43: atlas.consensus.TableGroup.details:type_name -> atlas.consensus.Table
+	26, // 44: atlas.consensus.TableGroup.tables:type_name -> atlas.consensus.Table
+	26, // 45: atlas.consensus.StealTableOwnershipFailure.table:type_name -> atlas.consensus.Table
+	26, // 46: atlas.consensus.StealTableOwnershipSuccess.table:type_name -> atlas.consensus.Table
+	21, // 47: atlas.consensus.StealTableOwnershipSuccess.missingMigrations:type_name -> atlas.consensus.Migration
+	32, // 48: atlas.consensus.StealTableOwnershipRequest.sender:type_name -> atlas.consensus.Node
+	2,  // 49: atlas.consensus.StealTableOwnershipRequest.reason:type_name -> atlas.consensus.StealReason
+	26, // 50: atlas.consensus.StealTableOwnershipRequest.table:type_name -> atlas.consensus.Table
+	28, // 51: atlas.consensus.StealTableOwnershipResponse.failure:type_name -> atlas.consensus.StealTableOwnershipFailure
+	29, // 52: atlas.consensus.StealTableOwnershipResponse.success:type_name -> atlas.consensus.StealTableOwnershipSuccess
+	33, // 53: atlas.consensus.Node.region:type_name -> atlas.consensus.Region
+	44, // 54: atlas.consensus.Node.rtt:type_name -> google.protobuf.Duration
+	21, // 55: atlas.consensus.StoredMigrationBatch.migration:type_name -> atlas.consensus.Migration
+	45, // 56: atlas.consensus.PingRequest.timestamp:type_name -> google.protobuf.Timestamp
+	45, // 57: atlas.consensus.PingResponse.timestamp:type_name -> google.protobuf.Timestamp
+	32, // 58: atlas.consensus.ReadKeyRequest.sender:type_name -> atlas.consensus.Node
+	32, // 59: atlas.consensus.PrefixScanRequest.sender:type_name -> atlas.consensus.Node
+	32, // 60: atlas.consensus.WriteKeyRequest.sender:type_name -> atlas.consensus.Node
+	18, // 61: atlas.consensus.WriteKeyRequest.value:type_name -> atlas.consensus.KVChange
+	45, // 62: atlas.consensus.ACLData.created_at:type_name -> google.protobuf.Timestamp
+	45, // 63: atlas.consensus.ACLData.updated_at:type_name -> google.protobuf.Timestamp
+	30, // 64: atlas.consensus.Consensus.StealTableOwnership:input_type -> atlas.consensus.StealTableOwnershipRequest
+	22, // 65: atlas.consensus.Consensus.WriteMigration:input_type -> atlas.consensus.WriteMigrationRequest
+	22, // 66: atlas.consensus.Consensus.AcceptMigration:input_type -> atlas.consensus.WriteMigrationRequest
+	32, // 67: atlas.consensus.Consensus.JoinCluster:input_type -> atlas.consensus.Node
+	4,  // 68: atlas.consensus.Consensus.Gossip:input_type -> atlas.consensus.GossipMigration
+	35, // 69: atlas.consensus.Consensus.Ping:input_type -> atlas.consensus.PingRequest
+	37, // 70: atlas.consensus.Consensus.ReadKey:input_type -> atlas.consensus.ReadKeyRequest
+	41, // 71: atlas.consensus.Consensus.WriteKey:input_type -> atlas.consensus.WriteKeyRequest
+	41, // 72: atlas.consensus.Consensus.DeleteKey:input_type -> atlas.consensus.WriteKeyRequest
+	39, // 73: atlas.consensus.Consensus.PrefixScan:input_type -> atlas.consensus.PrefixScanRequest
+	31, // 74: atlas.consensus.Consensus.StealTableOwnership:output_type -> atlas.consensus.StealTableOwnershipResponse
+	23, // 75: atlas.consensus.Consensus.WriteMigration:output_type -> atlas.consensus.WriteMigrationResponse
+	46, // 76: atlas.consensus.Consensus.AcceptMigration:output_type -> google.protobuf.Empty
+	5,  // 77: atlas.consensus.Consensus.JoinCluster:output_type -> atlas.consensus.JoinClusterResponse
+	46, // 78: atlas.consensus.Consensus.Gossip:output_type -> google.protobuf.Empty
+	36, // 79: atlas.consensus.Consensus.Ping:output_type -> atlas.consensus.PingResponse
+	38, // 80: atlas.consensus.Consensus.ReadKey:output_type -> atlas.consensus.ReadKeyResponse
+	42, // 81: atlas.consensus.Consensus.WriteKey:output_type -> atlas.consensus.WriteKeyResponse
+	42, // 82: atlas.consensus.Consensus.DeleteKey:output_type -> atlas.consensus.WriteKeyResponse
+	40, // 83: atlas.consensus.Consensus.PrefixScan:output_type -> atlas.consensus.PrefixScanResponse
+	74, // [74:84] is the sub-list for method output_type
+	64, // [64:74] is the sub-list for method input_type
+	64, // [64:64] is the sub-list for extension type_name
+	64, // [64:64] is the sub-list for extension extendee
+	0,  // [0:64] is the sub-list for field type_name
 }
 
 func init() { file_consensus_consensus_proto_init() }

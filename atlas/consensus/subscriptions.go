@@ -26,7 +26,6 @@ import (
 	"fmt"
 	"math/bits"
 	"net/http"
-	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,10 +33,19 @@ import (
 	"github.com/bottledcode/atlas-db/atlas/kv"
 	"github.com/bottledcode/atlas-db/atlas/options"
 	"github.com/bottledcode/atlas-db/atlas/trie"
+	"github.com/zeebo/blake3"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+type NotificationJson struct {
+	Key     string `json:"key"`
+	Version string `json:"version"`
+	Op      string `json:"op"`
+	Origin  string `json:"origin"`
+	EventId string `json:"event_id"`
+}
 
 type NotificationSender interface {
 	HandleNotifications()
@@ -116,9 +124,33 @@ func (s *notificationSender) HandleNotifications() {
 
 					sender.mu.Unlock()
 
-					var nl []*Notify
+					var nl []*NotificationJson
 					for _, n := range list {
-						nl = append(nl, n.pub)
+						var opName string
+						switch n.pub.GetChange().(type) {
+						case *Notify_Set:
+							opName = "set"
+						case *Notify_Acl:
+							opName = "acl"
+						case *Notify_Del:
+							opName = "del"
+						default:
+							panic("unsupported operation type")
+						}
+						hasher := blake3.New()
+						_, err := hasher.WriteString(n.pub.GetVersion())
+						if err != nil {
+							options.Logger.Error("failed to hash notification", zap.Error(err))
+							return
+						}
+
+						nl = append(nl, &NotificationJson{
+							Key:     string(n.pub.GetKey()),
+							Version: n.pub.GetVersion(),
+							Op:      opName,
+							Origin:  string(n.sub.GetPrefix()),
+							EventId: string(hasher.Sum(nil)),
+						})
 					}
 
 					bodyBytes, err := json.Marshal(nl)
@@ -215,7 +247,7 @@ func (s *notificationSender) GenerateNotification(migration *Migration) *Migrati
 			change := proto.Clone(migration).(*Migration)
 			change.GetData().GetChange().Operation = &KVChange_Notification{
 				Notification: &Notify{
-					Key: []byte(migration.GetVersion().GetTableName()),
+					Key: migration.GetVersion().GetTableName(),
 					Change: &Notify_Del{
 						Del: op.Del,
 					},
@@ -344,14 +376,23 @@ func (s *notificationSender) maybeHandleMagicKey(ctx context.Context, migration 
 				if err != nil {
 					return true, err
 				}
-				log := list.GetLog()
-				if slices.IndexFunc(log, func(notify *Notify) bool {
-					return bytes.Equal(notify.Key, op.Notification.Key) && notify.Version == op.Notification.Version
-				}) > -1 {
-					// we have already processed this notification
-					return true, nil
+				hasher := blake3.New()
+				_, err = hasher.WriteString(op.Notification.Version)
+				if err != nil {
+					return true, err
 				}
-				list.Log = append(list.Log, op.Notification)
+				idHash := hasher.Sum(nil)
+				for _, prev := range list.Log {
+					if bytes.Equal(idHash, prev) {
+						return true, nil
+					}
+				}
+
+				if len(list.Log) > 100 {
+					list.Log = list.Log[1:]
+				}
+
+				list.Log = append(list.Log, idHash)
 				obj, err = proto.Marshal(&list)
 				if err != nil {
 					return true, err

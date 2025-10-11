@@ -105,7 +105,7 @@ message DelChange {
 
 message SubscriptionList {
   repeated Subscribe subscriptions = 1;
-  repeated Notify log = 2;
+  repeated bytes log = 2;
 }
 
 message SubscribeOptions {

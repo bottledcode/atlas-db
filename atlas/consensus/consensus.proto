@@ -103,6 +103,11 @@ message DelChange {
   bytes key = 1;
 }
 
+message SubscriptionList {
+  repeated Subscribe subscriptions = 1;
+  repeated Notify log = 2;
+}
+
 message SubscribeOptions {
   bool batch = 1;
   sint32 retryAttempts = 2;
@@ -117,7 +122,6 @@ message Subscribe {
 }
 
 message Notify {
-  bytes prefix = 1;
   bytes key = 2;
   oneof change {
     SetChange set = 3;

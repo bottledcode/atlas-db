@@ -19,21 +19,17 @@
 package consensus
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/bottledcode/atlas-db/atlas/kv"
 	"github.com/bottledcode/atlas-db/atlas/options"
-	"github.com/bottledcode/atlas-db/atlas/trie"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -47,16 +43,10 @@ const NodeTable = "atlas.nodes"
 
 type Server struct {
 	UnimplementedConsensusServer
-
-	subscriptions trie.Trie[*Subscribe]
-	notification  chan *notification
 }
 
 func NewServer() *Server {
-	return &Server{
-		subscriptions: trie.New[*Subscribe](),
-		notification:  make(chan *notification, 10000),
-	}
+	return &Server{}
 }
 
 func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnershipRequest) (*StealTableOwnershipResponse, error) {
@@ -317,7 +307,7 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 		return nil, err
 	}
 
-	err = s.applyMigration(migrations, kvStore)
+	err = s.applyMigration(ctx, migrations, kvStore)
 	if err != nil {
 		return nil, err
 	}
@@ -330,7 +320,7 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 	return &emptypb.Empty{}, nil
 }
 
-func (s *Server) applyMigration(migrations []*Migration, kvStore kv.Store) error {
+func (s *Server) applyMigration(ctx context.Context, migrations []*Migration, kvStore kv.Store) error {
 	for _, migration := range migrations {
 		switch migration.GetMigration().(type) {
 		case *Migration_Schema:
@@ -340,7 +330,7 @@ func (s *Server) applyMigration(migrations []*Migration, kvStore kv.Store) error
 				zap.String("table", migration.GetVersion().GetTableName()))
 			continue
 		case *Migration_Data:
-			err := s.applyKVDataMigration(migration, kvStore)
+			err := s.applyKVDataMigration(ctx, migration, kvStore)
 			if err != nil {
 				return fmt.Errorf("failed to apply KV data migration: %w", err)
 			}
@@ -349,162 +339,26 @@ func (s *Server) applyMigration(migrations []*Migration, kvStore kv.Store) error
 	return nil
 }
 
-type notificationSender struct {
-	notifications map[string][]*notification
-	waiters       map[string]chan struct{}
-	mu            sync.Mutex
-}
-
-type notification struct {
-	sub *Subscribe
-	pub *Notify
-}
-
-var notificationHandler = sync.Once{}
-var sender = &notificationSender{
-	notifications: make(map[string][]*notification),
-	waiters:       make(map[string]chan struct{}),
-}
-
-func (s *Server) handleNotifications() {
-	notificationHandler.Do(func() {
-		go func() {
-			for {
-				next := <-s.notification
-				sender.mu.Lock()
-				if list, ok := sender.notifications[next.sub.GetUrl()]; ok {
-					sender.notifications[next.sub.GetUrl()] = append(list, next)
-					sender.waiters[next.sub.GetUrl()] <- struct{}{}
-					sender.mu.Unlock()
-					continue
-				}
-
-				sender.notifications[next.sub.GetUrl()] = []*notification{next}
-				sender.waiters[next.sub.GetUrl()] = make(chan struct{})
-				sender.mu.Unlock()
-
-				// wait for 100 notifications going to this url or 100ms, whichever is sooner
-				go func() {
-					timer := time.After(100 * time.Millisecond)
-					counter := atomic.Int32{}
-					for {
-						select {
-						case <-timer:
-							goto wait
-						case <-sender.waiters[next.sub.GetUrl()]:
-							counter.Add(1)
-							if counter.Load() >= 100 {
-								goto wait
-							}
-						}
-					}
-				wait:
-
-					sender.mu.Lock()
-
-					list := sender.notifications[next.sub.GetUrl()]
-					delete(sender.notifications, next.sub.GetUrl())
-					delete(sender.waiters, next.sub.GetUrl())
-
-					sender.mu.Unlock()
-
-					var nl []*Notify
-					for _, n := range list {
-						nl = append(nl, n.pub)
-					}
-
-					bodyBytes, err := json.Marshal(nl)
-					if err != nil {
-						options.Logger.Error("failed to marshal notification list", zap.Error(err))
-						return
-					}
-
-					client := &http.Client{
-						Timeout: 2 * time.Second,
-					}
-
-					for retries := next.sub.GetOptions().GetRetryAttempts(); retries > 0; retries-- {
-						body := bytes.NewReader(bodyBytes)
-
-						req, err := http.NewRequest("POST", next.sub.GetUrl(), body)
-						if err != nil {
-							options.Logger.Error("failed to create notification request", zap.Error(err))
-							return
-						}
-
-						resp, err := client.Do(req)
-						if err != nil {
-							options.Logger.Error("failed to send notification", zap.Error(err))
-							return
-						}
-						_ = resp.Body.Close()
-						if resp.StatusCode == http.StatusOK {
-							return
-						}
-						options.Logger.Warn("failed to send notification", zap.Int("status_code", resp.StatusCode))
-						retryBase := next.sub.GetOptions().RetryAfterBase.AsDuration()
-						if retryBase == 0 {
-							retryBase = 100 * time.Millisecond
-						}
-						time.Sleep(retryBase * time.Duration(next.sub.GetOptions().GetRetryAttempts()-retries+1))
-					}
-				}()
-			}
-		}()
-	})
-}
-
-func (s *Server) applyKVDataMigration(migration *Migration, kvStore kv.Store) error {
-	ctx := context.Background()
+func (s *Server) applyKVDataMigration(ctx context.Context, migration *Migration, kvStore kv.Store) error {
 	dataMigration := migration.GetData()
 	mv := migration.GetVersion()
+
+	if halt, err := sender.maybeHandleMagicKey(ctx, migration); err != nil {
+		return err
+	} else if halt {
+		return nil
+	}
 
 	switch migrationType := dataMigration.GetSession().(type) {
 	case *DataMigration_Change:
 		switch op := migrationType.Change.GetOperation().(type) {
 		case *KVChange_Sub:
-			record := op.Sub
-
-			// it doesn't matter if we are the leader or not -- we could become the leader!
-			s.subscriptions.Insert(record.Prefix, record)
-
-			value, err := proto.Marshal(record)
+			err := DefaultNotificationSender().Notify(migration)
 			if err != nil {
-				return fmt.Errorf("failed to marshal subscriber record: %w", err)
+				return err
 			}
-			key := kv.NewKeyBuilder().Meta().Append("sub").Append(string(op.Sub.GetPrefix())).Build()
-			err = kvStore.Put(ctx, key, value)
-			if err != nil {
-				return fmt.Errorf("failed to SET key %s: %w", key, err)
-			}
-			options.Logger.Info("Applied KV SUB migration",
-				zap.String("prefix", string(op.Sub.GetPrefix())),
-				zap.Int64("table_version", mv.GetTableVersion()),
-				zap.Int64("migration_version", mv.GetMigrationVersion()),
-				zap.Int64("node_id", mv.GetNodeId()),
-				zap.String("table", mv.GetTableName()),
-			)
 		case *KVChange_Notification:
-			record := op.Notification
-			value, err := proto.Marshal(record)
-			if err != nil {
-				return fmt.Errorf("failed to marshal notification record: %w", err)
-			}
-			key := kv.NewKeyBuilder().Meta().Append("sub").Append(string(op.Notification.GetPrefix())).Build()
-			err = kvStore.Put(ctx, key, value)
-
-			/// todo: determine if we are the leader for this table
-			for _, sub := range s.subscriptions.PrefixesOf(record.GetKey()) {
-				go func(sub *Subscribe) {
-					notif := &notification{
-						sub: sub,
-						pub: op.Notification,
-					}
-					s.notification <- notif
-					s.handleNotifications()
-				}(sub)
-			}
-
+			panic("notification is not supported except by magic key")
 		case *KVChange_Set:
 			record := op.Set.Data
 			value, err := proto.Marshal(record)
@@ -523,6 +377,12 @@ func (s *Server) applyKVDataMigration(migration *Migration, kvStore kv.Store) er
 				zap.Int64("node_id", mv.GetNodeId()),
 				zap.String("table", mv.GetTableName()),
 			)
+			go func() {
+				err := DefaultNotificationSender().Notify(DefaultNotificationSender().GenerateNotification(migration))
+				if err != nil {
+					options.Logger.Error("failed to notify migration", zap.Error(err))
+				}
+			}()
 		case *KVChange_Del:
 			err := kvStore.Delete(ctx, op.Del.Key)
 			if err != nil {
@@ -535,6 +395,12 @@ func (s *Server) applyKVDataMigration(migration *Migration, kvStore kv.Store) er
 				zap.Int64("node_id", mv.GetNodeId()),
 				zap.String("table", mv.GetTableName()),
 			)
+			go func() {
+				err := DefaultNotificationSender().Notify(DefaultNotificationSender().GenerateNotification(migration))
+				if err != nil {
+					options.Logger.Error("failed to notify migration", zap.Error(err))
+				}
+			}()
 		case *KVChange_Data:
 			sessionData := op.Data.GetData()
 			var operationCheck map[string]any
@@ -636,6 +502,12 @@ func (s *Server) applyKVDataMigration(migration *Migration, kvStore kv.Store) er
 				if err != nil {
 					return fmt.Errorf("failed to SET key %s: %w", op.Acl.GetKey(), err)
 				}
+				go func() {
+					err := DefaultNotificationSender().Notify(DefaultNotificationSender().GenerateNotification(migration))
+					if err != nil {
+						options.Logger.Error("failed to notify migration", zap.Error(err))
+					}
+				}()
 			case *AclChange_Deletion:
 				var record Record
 				val, err := kvStore.Get(ctx, op.Acl.GetKey())
@@ -697,6 +569,12 @@ func (s *Server) applyKVDataMigration(migration *Migration, kvStore kv.Store) er
 				if err != nil {
 					return fmt.Errorf("failed to SET key %s: %w", op.Acl.GetKey(), err)
 				}
+				go func() {
+					err := DefaultNotificationSender().Notify(DefaultNotificationSender().GenerateNotification(migration))
+					if err != nil {
+						options.Logger.Error("failed to notify migration", zap.Error(err))
+					}
+				}()
 			}
 		default:
 			return fmt.Errorf("unknown KV operation: %s", op)
@@ -979,7 +857,7 @@ func (s *Server) applyGossipMigration(ctx context.Context, req *GossipMigration)
 	}
 
 	// we have a previous migration, so apply this one
-	err = s.applyMigration([]*Migration{req.GetMigrationRequest()}, kvStore)
+	err = s.applyMigration(ctx, []*Migration{req.GetMigrationRequest()}, kvStore)
 	if err != nil {
 		return err
 	}

@@ -51,23 +51,15 @@ func sendWrite(ctx context.Context, builder *kv.KeyBuilder, change *consensus.KV
 
 	key := builder.Build()
 	keyString := string(key)
-	tableName, ok := builder.TableName()
-	if !ok || tableName == "" {
-		if t, _, valid := kv.ParseTableRowKey(key); valid {
-			tableName = t
-		} else {
-			tableName = keyString
-		}
-	}
 
-	q, err := qm.GetQuorum(ctx, tableName)
+	q, err := qm.GetQuorum(ctx, keyString)
 	if err != nil {
 		return err
 	}
 
 	resp, err := q.WriteKey(ctx, &consensus.WriteKeyRequest{
 		Sender: nil,
-		Table:  tableName,
+		Table:  keyString,
 		Value:  change,
 	})
 	if err != nil {
@@ -195,23 +187,15 @@ func GetKey(ctx context.Context, builder *kv.KeyBuilder) ([]byte, error) {
 
 	key := builder.Build()
 	keyString := string(key)
-	tableName, ok := builder.TableName()
-	if !ok || tableName == "" {
-		if t, _, valid := kv.ParseTableRowKey(key); valid {
-			tableName = t
-		} else {
-			tableName = keyString
-		}
-	}
 
-	q, err := qm.GetQuorum(ctx, tableName)
+	q, err := qm.GetQuorum(ctx, keyString)
 	if err != nil {
 		return nil, err
 	}
 	resp, err := q.ReadKey(ctx, &consensus.ReadKeyRequest{
 		Sender: nil,
 		Key:    keyString,
-		Table:  tableName,
+		Table:  keyString,
 	})
 	if err != nil {
 		return nil, err
@@ -229,16 +213,8 @@ func DeleteKey(ctx context.Context, builder *kv.KeyBuilder) error {
 
 	key := builder.Build()
 	keyString := string(key)
-	tableName, ok := builder.TableName()
-	if !ok || tableName == "" {
-		if t, _, valid := kv.ParseTableRowKey(key); valid {
-			tableName = t
-		} else {
-			tableName = keyString
-		}
-	}
 
-	q, err := qm.GetQuorum(ctx, tableName)
+	q, err := qm.GetQuorum(ctx, keyString)
 	if err != nil {
 		return err
 	}
@@ -246,7 +222,7 @@ func DeleteKey(ctx context.Context, builder *kv.KeyBuilder) error {
 	// Reuse WriteKeyRequest shape for quorum-level delete operation
 	resp, err := q.DeleteKey(ctx, &consensus.WriteKeyRequest{
 		Sender: nil,
-		Table:  tableName,
+		Table:  keyString,
 		Value: &consensus.KVChange{
 			Operation: &consensus.KVChange_Del{
 				Del: &consensus.DelChange{

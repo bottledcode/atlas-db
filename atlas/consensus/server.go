@@ -581,6 +581,8 @@ func (s *Server) applyKVDataMigration(ctx context.Context, migration *Migration,
 		}
 	}
 
+	DefaultNotificationSender().HandleNotifications()
+
 	return nil
 }
 

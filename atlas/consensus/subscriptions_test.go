@@ -485,7 +485,7 @@ func TestNotificationSender_SubscriptionStorage(t *testing.T) {
 
 	handled, err := ns.maybeHandleMagicKey(ctx, migration)
 	require.NoError(t, err)
-	assert.False(t, handled, "subscription should be stored but return false for halt")
+	assert.True(t, handled, "subscription should be stored and return true to indicate it was handled")
 
 	// Verify subscription was stored
 	store := kvPool.MetaStore()

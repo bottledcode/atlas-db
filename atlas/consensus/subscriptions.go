@@ -73,9 +73,11 @@ var sender = &notificationSender{
 
 func (s *notificationSender) HandleNotifications() {
 	notificationHandler.Do(func() {
+		options.Logger.Info("starting notification handler")
 		go func() {
 			for {
 				next := <-s.notification
+				options.Logger.Info("handling notification", zap.String("url", next.sub.GetUrl()))
 				sender.mu.Lock()
 				if list, ok := sender.notifications[next.sub.GetUrl()]; ok {
 					sender.notifications[next.sub.GetUrl()] = append(list, next)
@@ -145,6 +147,7 @@ func (s *notificationSender) HandleNotifications() {
 							return
 						}
 						_ = resp.Body.Close()
+						options.Logger.Info("sent notification", zap.Int("status_code", resp.StatusCode))
 						if resp.StatusCode == http.StatusOK {
 							return
 						}
@@ -163,6 +166,25 @@ func (s *notificationSender) HandleNotifications() {
 
 func (s *notificationSender) Notify(migration *Migration) error {
 	key := migration.GetVersion().GetTableName()
+	tableIndex := strings.Index(key, "t:")
+	if tableIndex > -1 {
+		tableKey := key[tableIndex+2:]
+		end := strings.Index(tableKey, ":")
+		if end > -1 {
+			tableKey = tableKey[:end]
+		}
+		rowIndex := strings.Index(key, "r:")
+		if rowIndex > -1 {
+			key = key[rowIndex+2:]
+			end = strings.Index(key, ":")
+			if end > -1 {
+				key = key[:end]
+			}
+			key = tableKey + "." + key
+		} else {
+			key = tableKey
+		}
+	}
 	if len(key) == 0 {
 		return nil
 	}
@@ -278,7 +300,8 @@ func (s *notificationSender) maybeHandleMagicKey(ctx context.Context, migration 
 	//and that is it.
 	//We guarantee at-least-once by not committing to the log until after we have handled notifications. This ensures
 	//that notifications do not get lost.
-	originalKey := migration.GetVersion().GetTableName()[:len(prefix.Append("pb").Build())]
+	prefix = prefix.Append("pb")
+	originalKey := migration.GetVersion().GetTableName()[len(prefix.Build())+1:]
 	key := []byte(migration.GetVersion().GetTableName())
 
 	switch mig := migration.GetMigration().(type) {
@@ -322,8 +345,9 @@ func (s *notificationSender) maybeHandleMagicKey(ctx context.Context, migration 
 			if err != nil {
 				return true, err
 			}
+			return true, nil
 		case *KVChange_Notification:
-			key = append(key, []byte(":log")...)
+			//logKey := append(key, []byte(":log")...)
 			store := kv.GetPool().MetaStore()
 			txn, err := store.Begin(true)
 			if err != nil {
@@ -367,7 +391,7 @@ func (s *notificationSender) maybeHandleMagicKey(ctx context.Context, migration 
 			nextBucket := s.nextBucket([]byte(originalKey))
 			// If nextBucket is nil, we've reached the end of the cascade (single byte key)
 			if len(nextBucket) > 0 {
-				nextKey := string(prefix.Append("pb").Append(string(nextBucket)).Build())
+				nextKey := string(prefix.Append(string(nextBucket)).Build())
 				qm := GetDefaultQuorumManager(ctx)
 				q, err := qm.GetQuorum(ctx, nextKey)
 				if err != nil {
@@ -400,11 +424,11 @@ func (s *notificationSender) maybeHandleMagicKey(ctx context.Context, migration 
 					return true, err
 				}
 			}
+			return true, nil
 		default:
 			panic("unsupported migration type")
 		}
 	default:
 		panic("unsupported migration type")
 	}
-	return false, nil
 }

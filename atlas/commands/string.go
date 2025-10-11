@@ -79,6 +79,8 @@ func (c *CommandString) GetNext() (Command, error) {
 			return (&QuorumCommand{CommandString: *c}).GetNext()
 		case "ACL":
 			return (&ACLCommand{*c}).GetNext()
+		case "SUB":
+			return (&SubCommand{*c}).GetNext()
 		}
 		return EmptyCommandString, fmt.Errorf("command expected, got %s", next)
 	}

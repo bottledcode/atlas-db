@@ -405,6 +405,7 @@ func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts
 	if err != nil {
 		return nil, err
 	}
+	in.Sender = currentNode
 
 	table, err := tr.GetTable(in.GetTable())
 	if err != nil {
@@ -454,7 +455,7 @@ func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts
 		return nil, err
 	}
 
-	s := Server{}
+	s := NewServer()
 	for _, migration := range phase1.GetSuccess().GetMissingMigrations() {
 		_, err = s.AcceptMigration(ctx, &WriteMigrationRequest{
 			Sender:    currentNode,
@@ -520,6 +521,41 @@ func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts
 		} else if !errors.Is(err, kv.ErrKeyNotFound) {
 			return &WriteKeyResponse{Success: false, Error: fmt.Sprintf("failed to check key: %v", err)}, nil
 		}
+	case *KVChange_Acl:
+		key := op.Acl.GetKey()
+		var record Record
+		store := kv.GetPool().DataStore()
+		val, err := store.Get(ctx, key)
+		if err != nil && errors.Is(err, kv.ErrKeyNotFound) {
+			break
+		}
+		if err != nil {
+			return &WriteKeyResponse{
+				Success: false,
+				Error:   fmt.Sprintf("failed to get key: %v", err),
+			}, nil
+		}
+		err = proto.Unmarshal(val, &record)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal record: %v", err)
+		}
+		if isOwner(ctx, &record) {
+			break
+		}
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   "principal isn't allowed to modify ACLs for this key",
+		}, nil
+	case *KVChange_Notification:
+		// Notifications are internal system operations that bypass ACL checks
+		// They are written to magic keys for subscription processing
+		break
+	case *KVChange_Sub:
+		// Subscriptions are internal system operations that bypass ACL checks
+		// They are written to magic keys for subscription storage
+		break
+	default:
+		panic("unknown operation type")
 	}
 
 	// we have completed phase 1, now we move on to phase 2

@@ -307,7 +307,7 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 		return nil, err
 	}
 
-	err = s.applyMigration(migrations, kvStore)
+	err = s.applyMigration(ctx, migrations, kvStore)
 	if err != nil {
 		return nil, err
 	}
@@ -320,7 +320,7 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 	return &emptypb.Empty{}, nil
 }
 
-func (s *Server) applyMigration(migrations []*Migration, kvStore kv.Store) error {
+func (s *Server) applyMigration(ctx context.Context, migrations []*Migration, kvStore kv.Store) error {
 	for _, migration := range migrations {
 		switch migration.GetMigration().(type) {
 		case *Migration_Schema:
@@ -330,7 +330,7 @@ func (s *Server) applyMigration(migrations []*Migration, kvStore kv.Store) error
 				zap.String("table", migration.GetVersion().GetTableName()))
 			continue
 		case *Migration_Data:
-			err := s.applyKVDataMigration(migration, kvStore)
+			err := s.applyKVDataMigration(ctx, migration, kvStore)
 			if err != nil {
 				return fmt.Errorf("failed to apply KV data migration: %w", err)
 			}
@@ -339,14 +339,26 @@ func (s *Server) applyMigration(migrations []*Migration, kvStore kv.Store) error
 	return nil
 }
 
-func (s *Server) applyKVDataMigration(migration *Migration, kvStore kv.Store) error {
-	ctx := context.Background()
+func (s *Server) applyKVDataMigration(ctx context.Context, migration *Migration, kvStore kv.Store) error {
 	dataMigration := migration.GetData()
 	mv := migration.GetVersion()
+
+	if halt, err := sender.maybeHandleMagicKey(ctx, migration); err != nil {
+		return err
+	} else if halt {
+		return nil
+	}
 
 	switch migrationType := dataMigration.GetSession().(type) {
 	case *DataMigration_Change:
 		switch op := migrationType.Change.GetOperation().(type) {
+		case *KVChange_Sub:
+			err := DefaultNotificationSender().Notify(migration)
+			if err != nil {
+				return err
+			}
+		case *KVChange_Notification:
+			panic("notification is not supported except by magic key")
 		case *KVChange_Set:
 			record := op.Set.Data
 			value, err := proto.Marshal(record)
@@ -365,6 +377,12 @@ func (s *Server) applyKVDataMigration(migration *Migration, kvStore kv.Store) er
 				zap.Int64("node_id", mv.GetNodeId()),
 				zap.String("table", mv.GetTableName()),
 			)
+			go func() {
+				err := DefaultNotificationSender().Notify(DefaultNotificationSender().GenerateNotification(migration))
+				if err != nil {
+					options.Logger.Error("failed to notify migration", zap.Error(err))
+				}
+			}()
 		case *KVChange_Del:
 			err := kvStore.Delete(ctx, op.Del.Key)
 			if err != nil {
@@ -377,6 +395,12 @@ func (s *Server) applyKVDataMigration(migration *Migration, kvStore kv.Store) er
 				zap.Int64("node_id", mv.GetNodeId()),
 				zap.String("table", mv.GetTableName()),
 			)
+			go func() {
+				err := DefaultNotificationSender().Notify(DefaultNotificationSender().GenerateNotification(migration))
+				if err != nil {
+					options.Logger.Error("failed to notify migration", zap.Error(err))
+				}
+			}()
 		case *KVChange_Data:
 			sessionData := op.Data.GetData()
 			var operationCheck map[string]any
@@ -478,6 +502,12 @@ func (s *Server) applyKVDataMigration(migration *Migration, kvStore kv.Store) er
 				if err != nil {
 					return fmt.Errorf("failed to SET key %s: %w", op.Acl.GetKey(), err)
 				}
+				go func() {
+					err := DefaultNotificationSender().Notify(DefaultNotificationSender().GenerateNotification(migration))
+					if err != nil {
+						options.Logger.Error("failed to notify migration", zap.Error(err))
+					}
+				}()
 			case *AclChange_Deletion:
 				var record Record
 				val, err := kvStore.Get(ctx, op.Acl.GetKey())
@@ -539,11 +569,19 @@ func (s *Server) applyKVDataMigration(migration *Migration, kvStore kv.Store) er
 				if err != nil {
 					return fmt.Errorf("failed to SET key %s: %w", op.Acl.GetKey(), err)
 				}
+				go func() {
+					err := DefaultNotificationSender().Notify(DefaultNotificationSender().GenerateNotification(migration))
+					if err != nil {
+						options.Logger.Error("failed to notify migration", zap.Error(err))
+					}
+				}()
 			}
 		default:
 			return fmt.Errorf("unknown KV operation: %s", op)
 		}
 	}
+
+	DefaultNotificationSender().HandleNotifications()
 
 	return nil
 }
@@ -821,7 +859,7 @@ func (s *Server) applyGossipMigration(ctx context.Context, req *GossipMigration)
 	}
 
 	// we have a previous migration, so apply this one
-	err = s.applyMigration([]*Migration{req.GetMigrationRequest()}, kvStore)
+	err = s.applyMigration(ctx, []*Migration{req.GetMigrationRequest()}, kvStore)
 	if err != nil {
 		return err
 	}

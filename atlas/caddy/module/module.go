@@ -273,7 +273,7 @@ func init() {
 
 			ready:
 
-				options.Logger.Info("🌐 Atlas Client Started")
+				options.Logger.Debug("🌐 Atlas Client Started")
 
 				rl, err := readline.New("> ")
 				if err != nil {

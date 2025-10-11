@@ -89,7 +89,7 @@ func NewPool(dataPath, metaPath string) (*Pool, error) {
 	}, nil
 }
 
-// DataStore returns the main data store
+// DataStore returns the masin data store
 func (p *Pool) DataStore() Store {
 	p.mutex.RLock()
 	defer p.mutex.RUnlock()

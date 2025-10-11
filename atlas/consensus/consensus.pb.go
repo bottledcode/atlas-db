@@ -198,7 +198,7 @@ type MigrationVersion struct {
 	TableVersion     int64                  `protobuf:"varint,1,opt,name=tableVersion,proto3" json:"tableVersion,omitempty"`         // The version of the table
 	MigrationVersion int64                  `protobuf:"varint,2,opt,name=migrationVersion,proto3" json:"migrationVersion,omitempty"` // The version of the migration
 	NodeId           int64                  `protobuf:"varint,3,opt,name=nodeId,proto3" json:"nodeId,omitempty"`                     // The ID of the node
-	TableName        string                 `protobuf:"bytes,4,opt,name=tableName,proto3" json:"tableName,omitempty"`                // The name of the table
+	TableName        []byte                 `protobuf:"bytes,4,opt,name=tableName,proto3" json:"tableName,omitempty"`                // The name of the table
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -254,11 +254,11 @@ func (x *MigrationVersion) GetNodeId() int64 {
 	return 0
 }
 
-func (x *MigrationVersion) GetTableName() string {
+func (x *MigrationVersion) GetTableName() []byte {
 	if x != nil {
 		return x.TableName
 	}
-	return ""
+	return nil
 }
 
 type GossipMigration struct {
@@ -1755,7 +1755,7 @@ func (x *Shard) GetPrincipals() []*Principal {
 
 type Table struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
-	Name              string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                                                // The name of the table
+	Name              []byte                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                                                // The name of the table
 	ReplicationLevel  ReplicationLevel       `protobuf:"varint,2,opt,name=replicationLevel,proto3,enum=atlas.consensus.ReplicationLevel" json:"replicationLevel,omitempty"` // The replication level of the table
 	Owner             *Node                  `protobuf:"bytes,3,opt,name=owner,proto3" json:"owner,omitempty"`                                                              // The global owner of the table
 	CreatedAt         *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=createdAt,proto3" json:"createdAt,omitempty"`                                                      // The time the table was created
@@ -1799,11 +1799,11 @@ func (*Table) Descriptor() ([]byte, []int) {
 	return file_consensus_consensus_proto_rawDescGZIP(), []int{23}
 }
 
-func (x *Table) GetName() string {
+func (x *Table) GetName() []byte {
 	if x != nil {
 		return x.Name
 	}
-	return ""
+	return nil
 }
 
 func (x *Table) GetReplicationLevel() ReplicationLevel {
@@ -2473,8 +2473,7 @@ func (x *PingResponse) GetTimestamp() *timestamppb.Timestamp {
 type ReadKeyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Sender        *Node                  `protobuf:"bytes,1,opt,name=sender,proto3" json:"sender,omitempty"` // The node requesting the read
-	Key           string                 `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`       // The key to read
-	Table         string                 `protobuf:"bytes,3,opt,name=table,proto3" json:"table,omitempty"`   // The table the key belongs to
+	Key           []byte                 `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`       // The key to read
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2516,18 +2515,11 @@ func (x *ReadKeyRequest) GetSender() *Node {
 	return nil
 }
 
-func (x *ReadKeyRequest) GetKey() string {
+func (x *ReadKeyRequest) GetKey() []byte {
 	if x != nil {
 		return x.Key
 	}
-	return ""
-}
-
-func (x *ReadKeyRequest) GetTable() string {
-	if x != nil {
-		return x.Table
-	}
-	return ""
+	return nil
 }
 
 type ReadKeyResponse struct {
@@ -2594,8 +2586,7 @@ func (x *ReadKeyResponse) GetError() string {
 type PrefixScanRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Sender        *Node                  `protobuf:"bytes,1,opt,name=sender,proto3" json:"sender,omitempty"`
-	TablePrefix   string                 `protobuf:"bytes,2,opt,name=tablePrefix,proto3" json:"tablePrefix,omitempty"`
-	RowPrefix     string                 `protobuf:"bytes,3,opt,name=rowPrefix,proto3" json:"rowPrefix,omitempty"`
+	Prefix        []byte                 `protobuf:"bytes,2,opt,name=prefix,proto3" json:"prefix,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2637,24 +2628,17 @@ func (x *PrefixScanRequest) GetSender() *Node {
 	return nil
 }
 
-func (x *PrefixScanRequest) GetTablePrefix() string {
+func (x *PrefixScanRequest) GetPrefix() []byte {
 	if x != nil {
-		return x.TablePrefix
+		return x.Prefix
 	}
-	return ""
-}
-
-func (x *PrefixScanRequest) GetRowPrefix() string {
-	if x != nil {
-		return x.RowPrefix
-	}
-	return ""
+	return nil
 }
 
 type PrefixScanResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
-	Keys          []string               `protobuf:"bytes,2,rep,name=keys,proto3" json:"keys,omitempty"`
+	Keys          [][]byte               `protobuf:"bytes,2,rep,name=keys,proto3" json:"keys,omitempty"`
 	Error         string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2697,7 +2681,7 @@ func (x *PrefixScanResponse) GetSuccess() bool {
 	return false
 }
 
-func (x *PrefixScanResponse) GetKeys() []string {
+func (x *PrefixScanResponse) GetKeys() [][]byte {
 	if x != nil {
 		return x.Keys
 	}
@@ -2714,7 +2698,7 @@ func (x *PrefixScanResponse) GetError() string {
 type WriteKeyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Sender        *Node                  `protobuf:"bytes,1,opt,name=sender,proto3" json:"sender,omitempty"` // The node requesting the write
-	Table         string                 `protobuf:"bytes,3,opt,name=table,proto3" json:"table,omitempty"`   // The table the key belongs to
+	Table         []byte                 `protobuf:"bytes,3,opt,name=table,proto3" json:"table,omitempty"`   // The table the key belongs to
 	Value         *KVChange              `protobuf:"bytes,4,opt,name=value,proto3" json:"value,omitempty"`   // The value to write
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2757,11 +2741,11 @@ func (x *WriteKeyRequest) GetSender() *Node {
 	return nil
 }
 
-func (x *WriteKeyRequest) GetTable() string {
+func (x *WriteKeyRequest) GetTable() []byte {
 	if x != nil {
 		return x.Table
 	}
-	return ""
+	return nil
 }
 
 func (x *WriteKeyRequest) GetValue() *KVChange {
@@ -2893,7 +2877,7 @@ const file_consensus_consensus_proto_rawDesc = "" +
 	"\ftableVersion\x18\x01 \x01(\x03R\ftableVersion\x12*\n" +
 	"\x10migrationVersion\x18\x02 \x01(\x03R\x10migrationVersion\x12\x16\n" +
 	"\x06nodeId\x18\x03 \x01(\x03R\x06nodeId\x12\x1c\n" +
-	"\ttableName\x18\x04 \x01(\tR\ttableName\"\x99\x02\n" +
+	"\ttableName\x18\x04 \x01(\fR\ttableName\"\x99\x02\n" +
 	"\x0fGossipMigration\x12F\n" +
 	"\x10migrationRequest\x18\x01 \x01(\v2\x1a.atlas.consensus.MigrationR\x10migrationRequest\x12,\n" +
 	"\x05table\x18\x02 \x01(\v2\x16.atlas.consensus.TableR\x05table\x12O\n" +
@@ -2985,7 +2969,7 @@ const file_consensus_consensus_proto_rawDesc = "" +
 	"principals\x18\x03 \x03(\v2\x1a.atlas.consensus.PrincipalR\n" +
 	"principals\"\xb1\x03\n" +
 	"\x05Table\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12M\n" +
+	"\x04name\x18\x01 \x01(\fR\x04name\x12M\n" +
 	"\x10replicationLevel\x18\x02 \x01(\x0e2!.atlas.consensus.ReplicationLevelR\x10replicationLevel\x12+\n" +
 	"\x05owner\x18\x03 \x01(\v2\x15.atlas.consensus.NodeR\x05owner\x128\n" +
 	"\tcreatedAt\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12\x18\n" +
@@ -3034,26 +3018,24 @@ const file_consensus_consensus_proto_rawDesc = "" +
 	"\fPingResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12*\n" +
 	"\x11responder_node_id\x18\x02 \x01(\x03R\x0fresponderNodeId\x128\n" +
-	"\ttimestamp\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"g\n" +
+	"\ttimestamp\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"Q\n" +
 	"\x0eReadKeyRequest\x12-\n" +
 	"\x06sender\x18\x01 \x01(\v2\x15.atlas.consensus.NodeR\x06sender\x12\x10\n" +
-	"\x03key\x18\x02 \x01(\tR\x03key\x12\x14\n" +
-	"\x05table\x18\x03 \x01(\tR\x05table\"W\n" +
+	"\x03key\x18\x02 \x01(\fR\x03key\"W\n" +
 	"\x0fReadKeyResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\fR\x05value\x12\x14\n" +
-	"\x05error\x18\x03 \x01(\tR\x05error\"\x82\x01\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\"Z\n" +
 	"\x11PrefixScanRequest\x12-\n" +
-	"\x06sender\x18\x01 \x01(\v2\x15.atlas.consensus.NodeR\x06sender\x12 \n" +
-	"\vtablePrefix\x18\x02 \x01(\tR\vtablePrefix\x12\x1c\n" +
-	"\trowPrefix\x18\x03 \x01(\tR\trowPrefix\"X\n" +
+	"\x06sender\x18\x01 \x01(\v2\x15.atlas.consensus.NodeR\x06sender\x12\x16\n" +
+	"\x06prefix\x18\x02 \x01(\fR\x06prefix\"X\n" +
 	"\x12PrefixScanResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x12\n" +
-	"\x04keys\x18\x02 \x03(\tR\x04keys\x12\x14\n" +
+	"\x04keys\x18\x02 \x03(\fR\x04keys\x12\x14\n" +
 	"\x05error\x18\x03 \x01(\tR\x05error\"\x87\x01\n" +
 	"\x0fWriteKeyRequest\x12-\n" +
 	"\x06sender\x18\x01 \x01(\v2\x15.atlas.consensus.NodeR\x06sender\x12\x14\n" +
-	"\x05table\x18\x03 \x01(\tR\x05table\x12/\n" +
+	"\x05table\x18\x03 \x01(\fR\x05table\x12/\n" +
 	"\x05value\x18\x04 \x01(\v2\x19.atlas.consensus.KVChangeR\x05value\"B\n" +
 	"\x10WriteKeyResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +

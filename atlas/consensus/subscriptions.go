@@ -27,7 +27,6 @@ import (
 	"math/bits"
 	"net/http"
 	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -166,25 +165,6 @@ func (s *notificationSender) HandleNotifications() {
 
 func (s *notificationSender) Notify(migration *Migration) error {
 	key := migration.GetVersion().GetTableName()
-	tableIndex := strings.Index(key, "t:")
-	if tableIndex > -1 {
-		tableKey := key[tableIndex+2:]
-		end := strings.Index(tableKey, ":")
-		if end > -1 {
-			tableKey = tableKey[:end]
-		}
-		rowIndex := strings.Index(key, "r:")
-		if rowIndex > -1 {
-			key = key[rowIndex+2:]
-			end = strings.Index(key, ":")
-			if end > -1 {
-				key = key[:end]
-			}
-			key = tableKey + "." + key
-		} else {
-			key = tableKey
-		}
-	}
 	if len(key) == 0 {
 		return nil
 	}
@@ -192,14 +172,14 @@ func (s *notificationSender) Notify(migration *Migration) error {
 	ctx := context.Background()
 	qm := GetDefaultQuorumManager(ctx)
 	magicKey := kv.NewKeyBuilder().Meta().Table("magic").Append("pb").Append(string(prefix)).Build()
-	q, err := qm.GetQuorum(ctx, string(magicKey))
+	q, err := qm.GetQuorum(ctx, magicKey)
 	if err != nil {
 		options.Logger.Error("failed to get quorum for notification", zap.Error(err))
 		return errors.New("failed to get quorum for notification")
 	}
 	resp, err := q.WriteKey(ctx, &WriteKeyRequest{
 		Sender: nil,
-		Table:  string(magicKey),
+		Table:  magicKey,
 		Value:  migration.GetData().GetChange(),
 	})
 	if err != nil {
@@ -286,7 +266,7 @@ func (s *notificationSender) nextBucket(key []byte) []byte {
 // maybeHandleMagicKey is meant to be called when applying/replaying migrations
 func (s *notificationSender) maybeHandleMagicKey(ctx context.Context, migration *Migration) (bool, error) {
 	prefix := kv.NewKeyBuilder().Meta().Table("magic")
-	if !strings.HasPrefix(migration.GetVersion().GetTableName(), string(prefix.Build())) {
+	if !bytes.HasPrefix(migration.GetVersion().GetTableName(), prefix.Build()) {
 		return false, nil
 	}
 
@@ -391,7 +371,7 @@ func (s *notificationSender) maybeHandleMagicKey(ctx context.Context, migration 
 			nextBucket := s.nextBucket([]byte(originalKey))
 			// If nextBucket is nil, we've reached the end of the cascade (single byte key)
 			if len(nextBucket) > 0 {
-				nextKey := string(prefix.Append(string(nextBucket)).Build())
+				nextKey := prefix.Append(string(nextBucket)).Build()
 				qm := GetDefaultQuorumManager(ctx)
 				q, err := qm.GetQuorum(ctx, nextKey)
 				if err != nil {

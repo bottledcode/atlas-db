@@ -42,7 +42,7 @@ message MigrationVersion {
   int64 tableVersion = 1; // The version of the table
   int64 migrationVersion = 2; // The version of the migration
   int64 nodeId = 3; // The ID of the node
-  string tableName = 4; // The name of the table
+  bytes tableName = 4; // The name of the table
 }
 
 message GossipMigration {
@@ -197,7 +197,7 @@ message Shard {
 }
 
 message Table {
-  string name = 1; // The name of the table
+  bytes name = 1; // The name of the table
   ReplicationLevel replicationLevel = 2; // The replication level of the table
   Node owner = 3; // The global owner of the table
   google.protobuf.Timestamp createdAt = 4; // The time the table was created
@@ -278,8 +278,7 @@ message PingResponse {
 // Remote read messages for leader-based reads
 message ReadKeyRequest {
   Node sender = 1; // The node requesting the read
-  string key = 2; // The key to read
-  string table = 3; // The table the key belongs to
+  bytes key = 2; // The key to read
 }
 
 message ReadKeyResponse {
@@ -291,19 +290,18 @@ message ReadKeyResponse {
 // Remote prefix scan
 message PrefixScanRequest {
   Node sender = 1;
-  string tablePrefix = 2;
-  string rowPrefix = 3;
+  bytes prefix = 2;
 }
 
 message PrefixScanResponse {
   bool success = 1;
-  repeated string keys = 2;
+  repeated bytes keys = 2;
   string error = 3;
 }
 
 message WriteKeyRequest {
   Node sender = 1; // The node requesting the write
-  string table = 3; // The table the key belongs to
+  bytes table = 3; // The table the key belongs to
   KVChange value = 4; // The value to write
 }
 

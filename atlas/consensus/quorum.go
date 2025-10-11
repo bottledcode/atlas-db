@@ -37,7 +37,8 @@ import (
 )
 
 type QuorumManager interface {
-	GetQuorum(ctx context.Context, table string) (Quorum, error)
+	GetQuorum(ctx context.Context, table KeyName) (Quorum, error)
+	GetBroadcastQuorum(ctx context.Context) (Quorum, error)
 	AddNode(ctx context.Context, node *Node) error
 	RemoveNode(nodeID int64) error
 	Send(node *Node, do func(quorumNode *QuorumNode) (any, error)) (any, error)
@@ -58,6 +59,7 @@ func GetDefaultQuorumManager(ctx context.Context) QuorumManager {
 }
 
 type RegionName string
+type KeyName []byte
 
 type defaultQuorumManager struct {
 	mu                sync.RWMutex
@@ -361,8 +363,14 @@ func (q *defaultQuorumManager) getClosestRegions(nodes map[RegionName][]*QuorumN
 	return regions
 }
 
+func (q *defaultQuorumManager) GetBroadcastQuorum(ctx context.Context) (Quorum, error) {
+	return &broadcastQuorum{
+		nodes: q.nodes,
+	}, nil
+}
+
 // GetQuorum returns the quorum for stealing a table. It uses a grid-based approach to determine the best solution.
-func (q *defaultQuorumManager) GetQuorum(ctx context.Context, table string) (Quorum, error) {
+func (q *defaultQuorumManager) GetQuorum(ctx context.Context, table KeyName) (Quorum, error) {
 	// get the number of regions we have active nodes in
 	q.mu.RLock()
 	defer q.mu.RUnlock()
@@ -566,7 +574,7 @@ func (q *defaultQuorumManager) filterHealthyNodes(nodes map[RegionName][]*Quorum
 // describeQuorumDiagnostic implements quorum computation for diagnostic purposes,
 // treating all known nodes as active to show the complete potential quorum structure.
 // This method is thread-safe and does not modify shared state.
-func (q *defaultQuorumManager) describeQuorumDiagnostic(ctx context.Context, table string) (q1 []*QuorumNode, q2 []*QuorumNode, err error) {
+func (q *defaultQuorumManager) describeQuorumDiagnostic(ctx context.Context, table KeyName) (q1 []*QuorumNode, q2 []*QuorumNode, err error) {
 	// Snapshot current nodes under read lock
 	q.mu.RLock()
 	nodesCopy := make(map[RegionName][]*QuorumNode)
@@ -771,7 +779,7 @@ func (q *defaultQuorumManager) calculateFmaxDiagnostic(nodes map[RegionName][]*Q
 // DescribeQuorum computes and returns diagnostic information about the potential quorum
 // for a given table, showing all known nodes regardless of their current health status.
 // This is intended for diagnostic purposes only.
-func DescribeQuorum(ctx context.Context, table string) (q1 []*QuorumNode, q2 []*QuorumNode, err error) {
+func DescribeQuorum(ctx context.Context, table KeyName) (q1 []*QuorumNode, q2 []*QuorumNode, err error) {
 	qm := GetDefaultQuorumManager(ctx)
 	dqm, ok := qm.(*defaultQuorumManager)
 	if !ok {

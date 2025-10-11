@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"github.com/bottledcode/atlas-db/atlas"
-	"github.com/bottledcode/atlas-db/atlas/kv"
+	"github.com/bottledcode/atlas-db/atlas/consensus"
 	"github.com/bottledcode/atlas-db/atlas/options"
 	"go.uber.org/zap"
 )
@@ -66,8 +66,8 @@ func (c *KeyCommand) GetNext() (Command, error) {
 	return EmptyCommandString, nil
 }
 
-func (c *KeyCommand) FromKey(key string) *kv.KeyBuilder {
-	return kv.FromDottedKey(key)
+func (c *KeyCommand) FromKey(key string) consensus.KeyName {
+	return consensus.KeyName(key)
 }
 
 type KeyPutCommand struct {

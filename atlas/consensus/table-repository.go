@@ -20,7 +20,7 @@ package consensus
 
 type TableRepository interface {
 	// GetTable returns a table by name.
-	GetTable(name string) (*Table, error)
+	GetTable(name KeyName) (*Table, error)
 	// GetTablesBatch returns multiple tables by name in a single operation.
 	// Returns a slice of tables in the same order as the input names.
 	// Nil entries indicate table not found for that name.
@@ -30,7 +30,7 @@ type TableRepository interface {
 	// InsertTable inserts a table.
 	InsertTable(*Table) error
 	// GetGroup returns a group by name.
-	GetGroup(string) (*TableGroup, error)
+	GetGroup(KeyName) (*TableGroup, error)
 	// UpdateGroup updates a group.
 	UpdateGroup(*TableGroup) error
 	// InsertGroup inserts a group.

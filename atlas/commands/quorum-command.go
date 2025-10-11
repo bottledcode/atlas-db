@@ -27,7 +27,7 @@ func (q *QuorumInfoCommand) Execute(ctx context.Context) ([]byte, error) {
 	}
 	table, _ := q.SelectNormalizedCommand(2)
 
-	q1, q2, err := consensus.DescribeQuorum(ctx, table)
+	q1, q2, err := consensus.DescribeQuorum(ctx, consensus.KeyName(table))
 	if err != nil {
 		return nil, err
 	}

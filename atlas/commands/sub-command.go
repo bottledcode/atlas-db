@@ -131,7 +131,7 @@ func (c *SubCommand) Execute(ctx context.Context) ([]byte, error) {
 	// Write subscription to the user's prefix key
 	// The consensus layer will handle routing this to the appropriate magic key
 	qm := consensus.GetDefaultQuorumManager(ctx)
-	q, err := qm.GetQuorum(ctx, parsed.Prefix)
+	q, err := qm.GetQuorum(ctx, consensus.KeyName(parsed.Prefix))
 	if err != nil {
 		options.Logger.Error("failed to get quorum for subscription",
 			zap.Error(err),
@@ -142,7 +142,7 @@ func (c *SubCommand) Execute(ctx context.Context) ([]byte, error) {
 	// Write subscription to the quorum
 	resp, err := q.WriteKey(ctx, &consensus.WriteKeyRequest{
 		Sender: nil,
-		Table:  parsed.Prefix,
+		Table:  consensus.KeyName(parsed.Prefix),
 		Value: &consensus.KVChange{
 			Operation: &consensus.KVChange_Sub{
 				Sub: sub,

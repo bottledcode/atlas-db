@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/bottledcode/atlas-db/atlas"
+	"github.com/bottledcode/atlas-db/atlas/consensus"
 )
 
 type ScanCommand struct{ CommandString }
@@ -22,14 +22,8 @@ func (s *ScanCommand) Execute(ctx context.Context) ([]byte, error) {
 	if !ok {
 		return nil, fmt.Errorf("expected prefix")
 	}
-	parts := strings.Split(prefix, ".")
-	tablePrefix := parts[0]
-	rowPrefix := ""
-	if len(parts) > 1 {
-		rowPrefix = parts[1]
-	}
 
-	keys, err := atlas.PrefixScan(ctx, tablePrefix, rowPrefix)
+	keys, err := atlas.PrefixScan(ctx, consensus.KeyName(prefix))
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +35,7 @@ func (s *ScanCommand) Execute(ctx context.Context) ([]byte, error) {
 	// Format: KEYS:<count>\n<key1>\n<key2>\n...
 	var buf bytes.Buffer
 	buf.WriteString(fmt.Sprintf("KEYS:%d\n", len(keys)))
-	buf.WriteString(strings.Join(keys, "\n"))
+	buf.Write(bytes.Join(keys, []byte("\n")))
 
 	return buf.Bytes(), nil
 }

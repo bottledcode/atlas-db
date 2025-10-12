@@ -43,13 +43,18 @@ var NodeTable = KeyName("atlas.nodes")
 
 type Server struct {
 	UnimplementedConsensusServer
+	namedLocker *namedLocker
 }
 
 func NewServer() *Server {
-	return &Server{}
+	return &Server{
+		namedLocker: newNamedLocker(),
+	}
 }
 
 func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnershipRequest) (*StealTableOwnershipResponse, error) {
+	s.namedLocker.lock(string(req.GetTable().GetName()))
+	defer s.namedLocker.unlock(string(req.GetTable().GetName()))
 	// Get KV store for metadata operations
 	kvPool := kv.GetPool()
 	if kvPool == nil {
@@ -221,6 +226,8 @@ func (s *Server) stealTableOperation(tr TableRepository, mr MigrationRepository,
 }
 
 func (s *Server) WriteMigration(ctx context.Context, req *WriteMigrationRequest) (*WriteMigrationResponse, error) {
+	s.namedLocker.lock(string(req.GetMigration().GetVersion().GetTableName()))
+	defer s.namedLocker.unlock(string(req.GetMigration().GetVersion().GetTableName()))
 	// Get KV store for metadata operations
 	kvPool := kv.GetPool()
 	if kvPool == nil {
@@ -276,6 +283,8 @@ func (s *Server) WriteMigration(ctx context.Context, req *WriteMigrationRequest)
 }
 
 func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest) (*emptypb.Empty, error) {
+	s.namedLocker.lock(string(req.GetMigration().GetVersion().GetTableName()))
+	defer s.namedLocker.unlock(string(req.GetMigration().GetVersion().GetTableName()))
 	// Get the appropriate KV store for the migration
 	var kvStore kv.Store
 	kvPool := kv.GetPool()

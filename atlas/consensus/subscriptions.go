@@ -206,6 +206,9 @@ func (s *notificationSender) Notify(migration *Migration) error {
 	if len(key) == 0 {
 		return nil
 	}
+	s.namedLocker.lock(string(key))
+	defer s.namedLocker.unlock(string(key))
+
 	prefix := s.currentBucket(key)
 	ctx := context.Background()
 	qm := GetDefaultQuorumManager(ctx)

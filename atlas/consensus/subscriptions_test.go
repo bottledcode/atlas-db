@@ -377,6 +377,7 @@ func TestNotificationSender_MagicKeyPrefix(t *testing.T) {
 		waiters:       make(map[string]chan struct{}),
 		mu:            sync.Mutex{},
 		notification:  make(chan *notification, 10000),
+		namedLocker:   newNamedLocker(),
 	}
 
 	tests := []struct {
@@ -448,6 +449,7 @@ func TestNotificationSender_SubscriptionStorage(t *testing.T) {
 		mu:            sync.Mutex{},
 		subscriptions: trie.New[*Subscribe](),
 		notification:  make(chan *notification, 10000),
+		namedLocker:   newNamedLocker(),
 	}
 
 	// Create subscription migration
@@ -528,6 +530,7 @@ func TestNotificationSender_NotificationDeduplication(t *testing.T) {
 		mu:            sync.Mutex{},
 		subscriptions: trie.New[*Subscribe](),
 		notification:  make(chan *notification, 10000),
+		namedLocker:   newNamedLocker(),
 	}
 
 	magicKey := kv.NewKeyBuilder().Meta().Table("magic").Append("pb").Append("test").Build()
@@ -633,6 +636,7 @@ func TestNotificationSender_PrefixMatchingWithTrie(t *testing.T) {
 		mu:            sync.Mutex{},
 		subscriptions: trie.New[*Subscribe](),
 		notification:  make(chan *notification, 10000),
+		namedLocker:   newNamedLocker(),
 	}
 
 	// Add subscriptions with different prefixes
@@ -693,6 +697,7 @@ func TestNotificationSender_NotificationCascading(t *testing.T) {
 		waiters:       make(map[string]chan struct{}),
 		mu:            sync.Mutex{},
 		notification:  make(chan *notification, 10000),
+		namedLocker:   newNamedLocker(),
 	}
 
 	// Test the cascading bucket logic
@@ -758,6 +763,7 @@ func TestNotificationSender_ConcurrentNotifications(t *testing.T) {
 		waiters:       make(map[string]chan struct{}),
 		mu:            sync.Mutex{},
 		notification:  make(chan *notification, 10000),
+		namedLocker:   newNamedLocker(),
 	}
 
 	received := atomic.Int32{}

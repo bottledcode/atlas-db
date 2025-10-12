@@ -21,11 +21,13 @@ package consensus
 import (
 	"bytes"
 	"context"
+	"encoding/base32"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math/bits"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -144,12 +146,14 @@ func (s *notificationSender) HandleNotifications() {
 							return
 						}
 
+						encoder := base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
+
 						nl = append(nl, &NotificationJson{
 							Key:     string(n.pub.GetKey()),
 							Version: n.pub.GetVersion(),
 							Op:      opName,
 							Origin:  string(n.sub.GetPrefix()),
-							EventId: string(hasher.Sum(nil)),
+							EventId: strings.ReplaceAll(encoder.EncodeToString(hasher.Sum(nil)), "=", ""),
 						})
 					}
 
@@ -216,7 +220,7 @@ func (s *notificationSender) Notify(migration *Migration) error {
 	})
 	if err != nil {
 		options.Logger.Error("failed to write magic key to quorum", zap.Error(err))
-		return errors.New("failed to write magic key to quorum")
+		return err
 	}
 	if resp.Error != "" {
 		options.Logger.Error("failed to write magic key from quorum", zap.Error(errors.New(resp.Error)))
@@ -314,7 +318,7 @@ func (s *notificationSender) maybeHandleMagicKey(ctx context.Context, migration 
 	//that notifications do not get lost.
 	prefix = prefix.Append("pb")
 	originalKey := migration.GetVersion().GetTableName()[len(prefix.Build())+1:]
-	key := []byte(migration.GetVersion().GetTableName())
+	key := migration.GetVersion().GetTableName()
 
 	switch mig := migration.GetMigration().(type) {
 	case *Migration_None:
@@ -359,7 +363,6 @@ func (s *notificationSender) maybeHandleMagicKey(ctx context.Context, migration 
 			}
 			return true, nil
 		case *KVChange_Notification:
-			//logKey := append(key, []byte(":log")...)
 			store := kv.GetPool().MetaStore()
 			txn, err := store.Begin(true)
 			if err != nil {
@@ -399,6 +402,16 @@ func (s *notificationSender) maybeHandleMagicKey(ctx context.Context, migration 
 				}
 
 				for _, sub := range s.subscriptions.PrefixesOf(op.Notification.Key) {
+					// Check if we're actually the leader for this table
+					tr := NewTableRepositoryKV(ctx, store)
+					table, err := tr.GetTable(op.Notification.GetKey())
+					if err != nil {
+						continue
+					}
+					if table.Owner.Id != options.CurrentOptions.ServerId {
+						continue
+					}
+
 					note := &notification{
 						sub: sub,
 						pub: op.Notification,

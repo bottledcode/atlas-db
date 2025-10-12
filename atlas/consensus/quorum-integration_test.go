@@ -134,7 +134,7 @@ func TestDescribeQuorum_ThreadSafety(t *testing.T) {
 	for i := range numOps {
 		go func(id int) {
 			defer wg.Done()
-			q1, q2, err := DescribeQuorum(ctx, "test_table")
+			q1, q2, err := DescribeQuorum(ctx, KeyName("test_table"))
 			if err != nil {
 				atomic.AddInt64(&errors, 1)
 				t.Logf("DescribeQuorum error in goroutine %d: %v", id, err)
@@ -156,7 +156,7 @@ func TestDescribeQuorum_ThreadSafety(t *testing.T) {
 	for i := range numOps {
 		go func(id int) {
 			defer wg.Done()
-			_, err := dqm.GetQuorum(ctx, "test_table")
+			_, err := dqm.GetQuorum(ctx, KeyName("test_table"))
 			if err != nil {
 				atomic.AddInt64(&errors, 1)
 				t.Logf("GetQuorum error in goroutine %d: %v", id, err)
@@ -244,7 +244,7 @@ func TestDescribeQuorum_BasicFunctionality(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Call DescribeQuorum
-	q1, q2, err := DescribeQuorum(ctx, "test_table")
+	q1, q2, err := DescribeQuorum(ctx, KeyName("test_table"))
 
 	// Basic validation - the exact quorum composition depends on the algorithm
 	// but we should get valid results without errors
@@ -325,7 +325,7 @@ func TestQuorumManagerConcurrentAccess(t *testing.T) {
 			defer wg.Done()
 			ctx := context.Background()
 			// This will fail due to no KV pool, but the important thing is thread safety
-			_, _, _ = qm.describeQuorumDiagnostic(ctx, "test_table")
+			_, _, _ = qm.describeQuorumDiagnostic(ctx, KeyName("test_table"))
 			atomic.AddInt64(&concurrentOps, 1)
 		}(i)
 	}

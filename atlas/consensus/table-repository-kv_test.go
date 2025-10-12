@@ -55,7 +55,7 @@ func TestTableRepositoryKV_InsertAndGetTable(t *testing.T) {
 
 	// Create test table
 	table := &Table{
-		Name:              "test_table",
+		Name:              KeyName("test_table"),
 		Version:           1,
 		ReplicationLevel:  ReplicationLevel_regional,
 		AllowedRegions:    []string{"us-east-1", "us-west-2"},
@@ -79,7 +79,7 @@ func TestTableRepositoryKV_InsertAndGetTable(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Test Get
-	retrieved, err := repo.GetTable("test_table")
+	retrieved, err := repo.GetTable(KeyName("test_table"))
 	assert.NoError(t, err)
 	assert.NotNil(t, retrieved)
 
@@ -110,7 +110,7 @@ func TestTableRepositoryKV_UpdateTable(t *testing.T) {
 
 	// Create and insert initial table
 	table := &Table{
-		Name:             "test_table",
+		Name:             KeyName("test_table"),
 		Version:          1,
 		ReplicationLevel: ReplicationLevel_regional,
 		AllowedRegions:   []string{"us-east-1"},
@@ -130,7 +130,7 @@ func TestTableRepositoryKV_UpdateTable(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Verify update
-	retrieved, err := repo.GetTable("test_table")
+	retrieved, err := repo.GetTable(KeyName("test_table"))
 	assert.NoError(t, err)
 	assert.Equal(t, int64(2), retrieved.Version)
 	assert.Equal(t, ReplicationLevel_global, retrieved.ReplicationLevel)
@@ -146,7 +146,7 @@ func TestTableRepositoryKV_UpdateTable_StaleIndexes(t *testing.T) {
 
 	// Create initial table with regional replication
 	table := &Table{
-		Name:             "test_table",
+		Name:             KeyName("test_table"),
 		Version:          1,
 		ReplicationLevel: ReplicationLevel_regional,
 		Group:            "old_group",
@@ -169,7 +169,7 @@ func TestTableRepositoryKV_UpdateTable_StaleIndexes(t *testing.T) {
 	regionalTables, err := repo.GetTablesByReplicationLevel(ReplicationLevel_regional)
 	assert.NoError(t, err)
 	assert.Len(t, regionalTables, 1)
-	assert.Equal(t, "test_table", regionalTables[0].Name)
+	assert.Equal(t, "test_table", string(regionalTables[0].Name))
 
 	// Global queries should be empty
 	globalTables, err := repo.GetTablesByReplicationLevel(ReplicationLevel_global)
@@ -205,7 +205,7 @@ func TestTableRepositoryKV_UpdateTable_StaleIndexes(t *testing.T) {
 	globalTablesAfterUpdate, err := repo.GetTablesByReplicationLevel(ReplicationLevel_global)
 	assert.NoError(t, err)
 	assert.Len(t, globalTablesAfterUpdate, 1)
-	assert.Equal(t, "test_table", globalTablesAfterUpdate[0].Name)
+	assert.Equal(t, "test_table", string(globalTablesAfterUpdate[0].Name))
 
 	// Additional verification: Check for ghost entries in old group and owner indexes
 	// This requires access to the underlying KV store to check for stale keys
@@ -245,21 +245,21 @@ func TestTableRepositoryKV_GetTablesByReplicationLevel(t *testing.T) {
 	// Create tables with different replication levels
 	tables := []*Table{
 		{
-			Name:             "regional_table_1",
+			Name:             KeyName("regional_table_1"),
 			Version:          1,
 			ReplicationLevel: ReplicationLevel_regional,
 			Type:             TableType_table,
 			CreatedAt:        timestamppb.New(time.Now()),
 		},
 		{
-			Name:             "regional_table_2",
+			Name:             KeyName("regional_table_2"),
 			Version:          1,
 			ReplicationLevel: ReplicationLevel_regional,
 			Type:             TableType_table,
 			CreatedAt:        timestamppb.New(time.Now()),
 		},
 		{
-			Name:             "global_table",
+			Name:             KeyName("global_table"),
 			Version:          1,
 			ReplicationLevel: ReplicationLevel_global,
 			Type:             TableType_table,
@@ -281,7 +281,7 @@ func TestTableRepositoryKV_GetTablesByReplicationLevel(t *testing.T) {
 	globalTables, err := repo.GetTablesByReplicationLevel(ReplicationLevel_global)
 	assert.NoError(t, err)
 	assert.Len(t, globalTables, 1)
-	assert.Equal(t, "global_table", globalTables[0].Name)
+	assert.Equal(t, "global_table", string(globalTables[0].Name))
 }
 
 func TestTableRepositoryKV_GroupOperations(t *testing.T) {
@@ -293,7 +293,7 @@ func TestTableRepositoryKV_GroupOperations(t *testing.T) {
 
 	// Create group
 	groupTable := &Table{
-		Name:             "test_group",
+		Name:             KeyName("test_group"),
 		Version:          1,
 		ReplicationLevel: ReplicationLevel_regional,
 		Type:             TableType_group,
@@ -310,7 +310,7 @@ func TestTableRepositoryKV_GroupOperations(t *testing.T) {
 
 	// Create tables in the group
 	table1 := &Table{
-		Name:             "table_in_group_1",
+		Name:             KeyName("table_in_group_1"),
 		Version:          1,
 		ReplicationLevel: ReplicationLevel_regional,
 		Type:             TableType_table,
@@ -319,7 +319,7 @@ func TestTableRepositoryKV_GroupOperations(t *testing.T) {
 	}
 
 	table2 := &Table{
-		Name:             "table_in_group_2",
+		Name:             KeyName("table_in_group_2"),
 		Version:          1,
 		ReplicationLevel: ReplicationLevel_regional,
 		Type:             TableType_table,
@@ -333,14 +333,14 @@ func TestTableRepositoryKV_GroupOperations(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test getting group
-	retrievedGroup, err := repo.GetGroup("test_group")
+	retrievedGroup, err := repo.GetGroup(KeyName("test_group"))
 	assert.NoError(t, err)
 	assert.NotNil(t, retrievedGroup)
-	assert.Equal(t, "test_group", retrievedGroup.Details.Name)
+	assert.Equal(t, "test_group", string(retrievedGroup.Details.Name))
 	assert.Len(t, retrievedGroup.Tables, 2)
 
 	// Verify table names in group
-	tableNames := []string{retrievedGroup.Tables[0].Name, retrievedGroup.Tables[1].Name}
+	tableNames := []string{string(retrievedGroup.Tables[0].Name), string(retrievedGroup.Tables[1].Name)}
 	assert.Contains(t, tableNames, "table_in_group_1")
 	assert.Contains(t, tableNames, "table_in_group_2")
 }
@@ -354,7 +354,7 @@ func TestTableRepositoryKV_ShardOperations(t *testing.T) {
 
 	// Create parent table for sharding
 	parentTable := &Table{
-		Name:             "sharded_table",
+		Name:             KeyName("sharded_table"),
 		Version:          1,
 		ReplicationLevel: ReplicationLevel_regional,
 		Type:             TableType_table,
@@ -367,7 +367,7 @@ func TestTableRepositoryKV_ShardOperations(t *testing.T) {
 
 	// Create shard
 	shardTable := &Table{
-		Name:             "", // Will be auto-generated
+		Name:             KeyName(""), // Will be auto-generated
 		Version:          1,
 		ReplicationLevel: ReplicationLevel_regional,
 		Type:             TableType_table,
@@ -389,7 +389,7 @@ func TestTableRepositoryKV_ShardOperations(t *testing.T) {
 	err = repo.InsertShard(shard)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, shardTable.Name)
-	assert.Contains(t, shardTable.Name, "sharded_table_")
+	assert.Contains(t, string(shardTable.Name), "sharded_table_")
 
 	// Test getting shard
 	retrievedShard, err := repo.GetShard(parentTable, principals)
@@ -406,13 +406,13 @@ func TestTableRepositoryKV_ErrorCases(t *testing.T) {
 	repo := NewTableRepositoryKV(ctx, store).(*TableRepositoryKV)
 
 	// Test getting non-existent table
-	table, err := repo.GetTable("non_existent")
+	table, err := repo.GetTable(KeyName("non_existent"))
 	assert.NoError(t, err)
 	assert.Nil(t, table)
 
 	// Test inserting duplicate table
 	testTable := &Table{
-		Name:             "duplicate_test",
+		Name:             KeyName("duplicate_test"),
 		Version:          1,
 		ReplicationLevel: ReplicationLevel_regional,
 		Type:             TableType_table,
@@ -429,7 +429,7 @@ func TestTableRepositoryKV_ErrorCases(t *testing.T) {
 
 	// Test updating non-existent table
 	nonExistentTable := &Table{
-		Name:             "does_not_exist",
+		Name:             KeyName("does_not_exist"),
 		Version:          1,
 		ReplicationLevel: ReplicationLevel_regional,
 		Type:             TableType_table,
@@ -442,7 +442,7 @@ func TestTableRepositoryKV_ErrorCases(t *testing.T) {
 
 	// Test getting group that's not a group type
 	regularTable := &Table{
-		Name:             "not_a_group",
+		Name:             KeyName("not_a_group"),
 		Version:          1,
 		ReplicationLevel: ReplicationLevel_regional,
 		Type:             TableType_table,
@@ -452,7 +452,7 @@ func TestTableRepositoryKV_ErrorCases(t *testing.T) {
 	err = repo.InsertTable(regularTable)
 	require.NoError(t, err)
 
-	group, err := repo.GetGroup("not_a_group")
+	group, err := repo.GetGroup(KeyName("not_a_group"))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not a group")
 	assert.Nil(t, group)

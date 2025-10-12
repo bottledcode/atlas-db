@@ -21,8 +21,10 @@ package atlas
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/bottledcode/atlas-db/atlas/consensus"
+	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 func WriteKey(ctx context.Context, key consensus.KeyName, value []byte) error {
@@ -249,4 +251,36 @@ func PrefixScan(ctx context.Context, prefix consensus.KeyName) ([][]byte, error)
 		return resp.GetKeys(), err
 	}
 	return nil, err
+}
+
+type SubscribeOptions struct {
+	RetryAttempts  int
+	RetryAfterBase time.Duration
+	Auth           string
+}
+
+func Subscribe(ctx context.Context, prefix consensus.KeyName, callbackUrl string, opts SubscribeOptions) error {
+	if opts.RetryAttempts == 0 {
+		opts.RetryAttempts = 3
+	}
+	if opts.RetryAfterBase == 0 {
+		opts.RetryAfterBase = 100 * time.Millisecond
+	}
+
+	op := &consensus.KVChange{
+		Operation: &consensus.KVChange_Sub{
+			Sub: &consensus.Subscribe{
+				Url:    callbackUrl,
+				Prefix: prefix,
+				Options: &consensus.SubscribeOptions{
+					Batch:          true,
+					RetryAttempts:  int32(opts.RetryAttempts),
+					RetryAfterBase: durationpb.New(opts.RetryAfterBase),
+					Auth:           opts.Auth,
+				},
+			},
+		},
+	}
+
+	return sendWrite(ctx, prefix, op)
 }

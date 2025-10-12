@@ -149,7 +149,7 @@ func TestNotificationSender_GenerateNotification(t *testing.T) {
 			name: "set change generates notification",
 			migration: &Migration{
 				Version: &MigrationVersion{
-					TableName:        "test.table",
+					TableName:        KeyName("test.table"),
 					MigrationVersion: 1,
 					TableVersion:     1,
 					NodeId:           100,
@@ -180,7 +180,7 @@ func TestNotificationSender_GenerateNotification(t *testing.T) {
 			name: "delete change generates notification",
 			migration: &Migration{
 				Version: &MigrationVersion{
-					TableName:        "test.table",
+					TableName:        KeyName("test.table"),
 					MigrationVersion: 2,
 					TableVersion:     1,
 					NodeId:           100,
@@ -206,7 +206,7 @@ func TestNotificationSender_GenerateNotification(t *testing.T) {
 			name: "acl change generates notification",
 			migration: &Migration{
 				Version: &MigrationVersion{
-					TableName:        "test.table",
+					TableName:        KeyName("test.table"),
 					MigrationVersion: 3,
 					TableVersion:     1,
 					NodeId:           100,
@@ -239,7 +239,7 @@ func TestNotificationSender_GenerateNotification(t *testing.T) {
 			name: "schema migration returns unchanged",
 			migration: &Migration{
 				Version: &MigrationVersion{
-					TableName:        "test.table",
+					TableName:        KeyName("test.table"),
 					MigrationVersion: 4,
 					TableVersion:     1,
 					NodeId:           100,
@@ -405,7 +405,7 @@ func TestNotificationSender_MagicKeyPrefix(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			migration := &Migration{
 				Version: &MigrationVersion{
-					TableName:        tt.tableName,
+					TableName:        KeyName(tt.tableName),
 					MigrationVersion: 1,
 					TableVersion:     1,
 					NodeId:           100,
@@ -465,7 +465,7 @@ func TestNotificationSender_SubscriptionStorage(t *testing.T) {
 
 	migration := &Migration{
 		Version: &MigrationVersion{
-			TableName:        string(magicKey),
+			TableName:        KeyName(magicKey),
 			MigrationVersion: 1,
 			TableVersion:     1,
 			NodeId:           100,
@@ -542,6 +542,9 @@ func TestNotificationSender_NotificationDeduplication(t *testing.T) {
 		Ts: timestamppb.Now(),
 	}
 
+	initialNotificationBytes, err := proto.Marshal(initialNotification)
+	require.NoError(t, err)
+
 	list := &SubscriptionList{
 		Subscriptions: []*Subscribe{
 			{
@@ -549,7 +552,7 @@ func TestNotificationSender_NotificationDeduplication(t *testing.T) {
 				Prefix: []byte("test"),
 			},
 		},
-		Log: []*Notify{initialNotification},
+		Log: [][]byte{initialNotificationBytes},
 	}
 	listKey := append(magicKey, []byte("log")...)
 
@@ -581,7 +584,7 @@ func TestNotificationSender_NotificationDeduplication(t *testing.T) {
 
 	migration := &Migration{
 		Version: &MigrationVersion{
-			TableName:        string(magicKey),
+			TableName:        KeyName(magicKey),
 			MigrationVersion: 2,
 			TableVersion:     1,
 			NodeId:           100,

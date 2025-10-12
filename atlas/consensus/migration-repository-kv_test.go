@@ -35,14 +35,14 @@ func TestMigrationRepositoryKV_GetNextVersion(t *testing.T) {
 	repo := NewMigrationRepositoryKV(ctx, store, dr).(*MigrationR)
 
 	// Test next version for empty table
-	version, err := repo.GetNextVersion("test_table")
+	version, err := repo.GetNextVersion(KeyName("test_table"))
 	assert.NoError(t, err)
 	assert.Equal(t, int64(1), version)
 
 	// Add some migrations
 	migration1 := &Migration{
 		Version: &MigrationVersion{
-			TableName:        "test_table",
+			TableName:        KeyName("test_table"),
 			TableVersion:     1,
 			MigrationVersion: 1,
 			NodeId:           123,
@@ -56,7 +56,7 @@ func TestMigrationRepositoryKV_GetNextVersion(t *testing.T) {
 
 	migration2 := &Migration{
 		Version: &MigrationVersion{
-			TableName:        "test_table",
+			TableName:        KeyName("test_table"),
 			TableVersion:     1,
 			MigrationVersion: 3,
 			NodeId:           123,
@@ -74,7 +74,7 @@ func TestMigrationRepositoryKV_GetNextVersion(t *testing.T) {
 	require.NoError(t, err)
 
 	// Next version should be 4 (max version + 1)
-	nextVersion, err := repo.GetNextVersion("test_table")
+	nextVersion, err := repo.GetNextVersion(KeyName("test_table"))
 	assert.NoError(t, err)
 	assert.Equal(t, int64(4), nextVersion)
 }
@@ -90,7 +90,7 @@ func TestMigrationRepositoryKV_AddAndGetMigration(t *testing.T) {
 	// Test schema migration
 	schemaMigration := &Migration{
 		Version: &MigrationVersion{
-			TableName:        "test_table",
+			TableName:        KeyName("test_table"),
 			TableVersion:     1,
 			MigrationVersion: 1,
 			NodeId:           123,
@@ -138,7 +138,7 @@ func TestMigrationRepositoryKV_DataMigration(t *testing.T) {
 
 	dataMigration := &Migration{
 		Version: &MigrationVersion{
-			TableName:        "test_table",
+			TableName:        KeyName("test_table"),
 			TableVersion:     1,
 			MigrationVersion: 2,
 			NodeId:           123,
@@ -186,7 +186,7 @@ func TestMigrationRepositoryKV_CommitOperations(t *testing.T) {
 	// Add migration
 	migration := &Migration{
 		Version: &MigrationVersion{
-			TableName:        "test_table",
+			TableName:        KeyName("test_table"),
 			TableVersion:     1,
 			MigrationVersion: 1,
 			NodeId:           123,
@@ -206,7 +206,7 @@ func TestMigrationRepositoryKV_CommitOperations(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Verify committed status by checking uncommitted migrations
-	table := &Table{Name: "test_table"}
+	table := &Table{Name: KeyName("test_table")}
 	uncommitted, err := repo.GetUncommittedMigrations(table)
 	assert.NoError(t, err)
 	assert.Len(t, uncommitted, 0) // Should be empty since we committed it
@@ -223,7 +223,7 @@ func TestMigrationRepositoryKV_CommitAllMigrations(t *testing.T) {
 	// Add multiple migrations for same table
 	migration1 := &Migration{
 		Version: &MigrationVersion{
-			TableName:        "test_table",
+			TableName:        KeyName("test_table"),
 			TableVersion:     1,
 			MigrationVersion: 1,
 			NodeId:           123,
@@ -237,7 +237,7 @@ func TestMigrationRepositoryKV_CommitAllMigrations(t *testing.T) {
 
 	migration2 := &Migration{
 		Version: &MigrationVersion{
-			TableName:        "test_table",
+			TableName:        KeyName("test_table"),
 			TableVersion:     1,
 			MigrationVersion: 2,
 			NodeId:           124,
@@ -255,11 +255,11 @@ func TestMigrationRepositoryKV_CommitAllMigrations(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test CommitAllMigrations
-	err = repo.CommitAllMigrations("test_table")
+	err = repo.CommitAllMigrations(KeyName("test_table"))
 	assert.NoError(t, err)
 
 	// Verify all migrations are committed
-	table := &Table{Name: "test_table"}
+	table := &Table{Name: KeyName("test_table")}
 	uncommitted, err := repo.GetUncommittedMigrations(table)
 	assert.NoError(t, err)
 	assert.Len(t, uncommitted, 0)
@@ -276,7 +276,7 @@ func TestMigrationRepositoryKV_GetUncommittedMigrations(t *testing.T) {
 	// Add regular migration
 	regularMigration := &Migration{
 		Version: &MigrationVersion{
-			TableName:        "test_table",
+			TableName:        KeyName("test_table"),
 			TableVersion:     1,
 			MigrationVersion: 1,
 			NodeId:           123,
@@ -291,7 +291,7 @@ func TestMigrationRepositoryKV_GetUncommittedMigrations(t *testing.T) {
 	// Add gossip migration
 	gossipMigration := &Migration{
 		Version: &MigrationVersion{
-			TableName:        "test_table",
+			TableName:        KeyName("test_table"),
 			TableVersion:     1,
 			MigrationVersion: 2,
 			NodeId:           124,
@@ -309,7 +309,7 @@ func TestMigrationRepositoryKV_GetUncommittedMigrations(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get uncommitted migrations (should exclude gossip)
-	table := &Table{Name: "test_table"}
+	table := &Table{Name: KeyName("test_table")}
 	uncommitted, err := repo.GetUncommittedMigrations(table)
 	assert.NoError(t, err)
 	assert.Len(t, uncommitted, 1) // Only regular migration, not gossip
@@ -327,7 +327,7 @@ func TestMigrationRepositoryKV_GossipMigration(t *testing.T) {
 
 	gossipMigration := &Migration{
 		Version: &MigrationVersion{
-			TableName:        "test_table",
+			TableName:        KeyName("test_table"),
 			TableVersion:     1,
 			MigrationVersion: 1,
 			NodeId:           123,
@@ -348,7 +348,7 @@ func TestMigrationRepositoryKV_GossipMigration(t *testing.T) {
 	assert.Len(t, retrieved, 1)
 
 	// Verify it's marked as gossip (indirectly by checking uncommitted list)
-	table := &Table{Name: "test_table"}
+	table := &Table{Name: KeyName("test_table")}
 	uncommitted, err := repo.GetUncommittedMigrations(table)
 	assert.NoError(t, err)
 	assert.Len(t, uncommitted, 0) // Gossip migrations don't appear in uncommitted list
@@ -364,7 +364,7 @@ func TestMigrationRepositoryKV_DuplicateInsert(t *testing.T) {
 
 	migration := &Migration{
 		Version: &MigrationVersion{
-			TableName:        "test_table",
+			TableName:        KeyName("test_table"),
 			TableVersion:     1,
 			MigrationVersion: 1,
 			NodeId:           123,
@@ -406,7 +406,7 @@ func TestMigrationRepositoryKV_ErrorCases(t *testing.T) {
 
 	// Test CommitMigrationExact with non-existent migration
 	nonExistentVersion := &MigrationVersion{
-		TableName:        "non_existent_table",
+		TableName:        KeyName("non_existent_table"),
 		TableVersion:     1,
 		MigrationVersion: 999,
 		NodeId:           999,

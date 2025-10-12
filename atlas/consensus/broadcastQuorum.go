@@ -31,7 +31,7 @@ import (
 
 var ErrUnbroadcastableQuorum = errors.New("may not be broadcast")
 
-type broadcastQuorum struct{
+type broadcastQuorum struct {
 	nodes map[RegionName][]*QuorumNode
 }
 

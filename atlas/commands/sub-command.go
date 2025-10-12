@@ -21,14 +21,13 @@ package commands
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strconv"
 	"time"
 
+	"github.com/bottledcode/atlas-db/atlas"
 	"github.com/bottledcode/atlas-db/atlas/consensus"
 	"github.com/bottledcode/atlas-db/atlas/options"
 	"go.uber.org/zap"
-	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 type SubCommand struct {
@@ -62,8 +61,8 @@ func (c *SubCommand) Parse() (*SubParsed, error) {
 	parsed := &SubParsed{
 		Prefix:         prefix,
 		URL:            url,
-		Batch:          false, // Default to non-batched
-		RetryAttempts:  3,     // Default 3 retries
+		Batch:          true, // Default to non-batched
+		RetryAttempts:  3,    // Default 3 retries
 		RetryAfterBase: 100 * time.Millisecond,
 	}
 
@@ -71,8 +70,8 @@ func (c *SubCommand) Parse() (*SubParsed, error) {
 	for i := 3; i < c.NormalizedLen(); i++ {
 		flag, _ := c.SelectNormalizedCommand(i)
 		switch flag {
-		case "BATCH":
-			parsed.Batch = true
+		case "NOBATCH":
+			parsed.Batch = false
 		case "RETRY":
 			// Need attempts after RETRY
 			if i+1 >= c.NormalizedLen() {
@@ -116,52 +115,13 @@ func (c *SubCommand) Execute(ctx context.Context) ([]byte, error) {
 		return nil, err
 	}
 
-	// Create subscription protobuf
-	sub := &consensus.Subscribe{
-		Url:    parsed.URL,
-		Prefix: []byte(parsed.Prefix),
-		Options: &consensus.SubscribeOptions{
-			Batch:          parsed.Batch,
-			RetryAttempts:  parsed.RetryAttempts,
-			RetryAfterBase: durationpb.New(parsed.RetryAfterBase),
-			Auth:           parsed.Auth,
-		},
-	}
-
-	// Write subscription to the user's prefix key
-	// The consensus layer will handle routing this to the appropriate magic key
-	qm := consensus.GetDefaultQuorumManager(ctx)
-	q, err := qm.GetQuorum(ctx, consensus.KeyName(parsed.Prefix))
-	if err != nil {
-		options.Logger.Error("failed to get quorum for subscription",
-			zap.Error(err),
-			zap.String("prefix", parsed.Prefix))
-		return nil, fmt.Errorf("failed to get quorum for subscription: %w", err)
-	}
-
-	// Write subscription to the quorum
-	resp, err := q.WriteKey(ctx, &consensus.WriteKeyRequest{
-		Sender: nil,
-		Table:  consensus.KeyName(parsed.Prefix),
-		Value: &consensus.KVChange{
-			Operation: &consensus.KVChange_Sub{
-				Sub: sub,
-			},
-		},
+	err = atlas.Subscribe(ctx, consensus.KeyName(parsed.Prefix), parsed.URL, atlas.SubscribeOptions{
+		RetryAttempts:  int(parsed.RetryAttempts),
+		RetryAfterBase: parsed.RetryAfterBase,
+		Auth:           parsed.Auth,
 	})
 	if err != nil {
-		options.Logger.Error("failed to write subscription to quorum",
-			zap.Error(err),
-			zap.String("prefix", parsed.Prefix),
-			zap.String("url", parsed.URL))
-		return nil, fmt.Errorf("failed to write subscription to quorum: %w", err)
-	}
-	if resp.Error != "" {
-		options.Logger.Error("failed to write subscription from quorum",
-			zap.Error(errors.New(resp.Error)),
-			zap.String("prefix", parsed.Prefix),
-			zap.String("url", parsed.URL))
-		return nil, fmt.Errorf("failed to write subscription from quorum: %s", resp.Error)
+		return nil, err
 	}
 
 	options.Logger.Info("created subscription",

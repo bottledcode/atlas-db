@@ -29,6 +29,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"testing"
 	"time"
 )
 
@@ -43,9 +44,10 @@ type Node struct {
 	started     bool
 	logFile     *os.File
 	caddyBinary string
+	t           *testing.T
 }
 
-func NewNode(config NodeConfig, caddyBinary string) (*Node, error) {
+func NewNode(config NodeConfig, caddyBinary string, t *testing.T) (*Node, error) {
 	if err := os.MkdirAll(config.DBPath, 0755); err != nil {
 		return nil, fmt.Errorf("create db path: %w", err)
 	}
@@ -62,6 +64,7 @@ func NewNode(config NodeConfig, caddyBinary string) (*Node, error) {
 		caddyfile:   caddyfilePath,
 		client:      NewSocketClient(config.SocketPath),
 		caddyBinary: caddyBinary,
+		t:           t,
 	}, nil
 }
 
@@ -136,10 +139,16 @@ func (n *Node) logOutput(prefix string, reader io.Reader) {
 	for scanner.Scan() {
 		line := scanner.Text()
 		timestamp := time.Now().Format("15:04:05.000")
-		logLine := fmt.Sprintf("[%s][node-%d][%s] %s\n", timestamp, n.Config.ID, prefix, line)
+		logLine := fmt.Sprintf("[%s][node-%d][%s] %s", timestamp, n.Config.ID, prefix, line)
 
+		// Write to log file
 		if n.logFile != nil {
-			_, _ = n.logFile.WriteString(logLine)
+			_, _ = n.logFile.WriteString(logLine + "\n")
+		}
+
+		// Also output to test logger for visibility
+		if n.t != nil {
+			n.t.Log(logLine)
 		}
 	}
 }

@@ -35,13 +35,13 @@ type MigrationRepository interface {
 	// GetMigrationVersion returns all migrations for a given version.
 	GetMigrationVersion(version *MigrationVersion) ([]*Migration, error)
 	// CommitAllMigrations commits all migrations for a given table.
-	CommitAllMigrations(table string) error
+	CommitAllMigrations(table KeyName) error
 	// CommitMigrationExact commits a migration for a given version.
 	CommitMigrationExact(version *MigrationVersion) error
 	// AddGossipMigration adds a migration to the migration table as a gossiped migration.
 	AddGossipMigration(migration *Migration) error
 	// GetNextVersion returns the next version for a given table.
-	GetNextVersion(table string) (int64, error)
+	GetNextVersion(table KeyName) (int64, error)
 }
 
 // NewMigrationRepositoryKV creates a new KV-based migration repository
@@ -110,10 +110,10 @@ func gossipFromBool(b bool) gossipValue {
 	return gossipValueFalse
 }
 
-func (m *MigrationR) getUncommittedMigrationPrefix(table string, version int64, node int64, gossip gossipValue) Prefix {
+func (m *MigrationR) getUncommittedMigrationPrefix(table []byte, version int64, node int64, gossip gossipValue) Prefix {
 	key := kv.NewKeyBuilder().Meta().Index().
 		Append("migu").
-		Append("t").Append(table)
+		Append("t").AppendBytes(table)
 
 	switch gossip {
 	case gossipValueUnset:
@@ -223,7 +223,7 @@ func (m *MigrationR) GetMigrationVersion(version *MigrationVersion) ([]*Migratio
 	return migrations, nil
 }
 
-func (m *MigrationR) CommitAllMigrations(table string) error {
+func (m *MigrationR) CommitAllMigrations(table KeyName) error {
 	prefix := m.getUncommittedMigrationPrefix(table, 0, 0, gossipValueFalse)
 	err := m.ScanIndex(prefix, true, func(primaryKey []byte, txn *kv.Transaction) error {
 		return m.Update(MigrationKey{GenericKey{raw: primaryKey}}, func(batch *StoredMigrationBatch, txn kv.Transaction) (*StoredMigrationBatch, error) {
@@ -260,7 +260,7 @@ func (m *MigrationR) AddGossipMigration(migration *Migration) (err error) {
 	return m.Put(storedMigration)
 }
 
-func (m *MigrationR) GetNextVersion(table string) (int64, error) {
+func (m *MigrationR) GetNextVersion(table KeyName) (int64, error) {
 	prefix := m.getMigrationPrefix(&MigrationVersion{
 		TableName: table,
 	})

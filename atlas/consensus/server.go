@@ -19,12 +19,12 @@
 package consensus
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -39,17 +39,22 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-const NodeTable = "atlas.nodes"
+var NodeTable = KeyName("atlas.nodes")
 
 type Server struct {
 	UnimplementedConsensusServer
+	namedLocker *namedLocker
 }
 
 func NewServer() *Server {
-	return &Server{}
+	return &Server{
+		namedLocker: newNamedLocker(),
+	}
 }
 
 func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnershipRequest) (*StealTableOwnershipResponse, error) {
+	s.namedLocker.lock(string(req.GetTable().GetName()))
+	defer s.namedLocker.unlock(string(req.GetTable().GetName()))
 	// Get KV store for metadata operations
 	kvPool := kv.GetPool()
 	if kvPool == nil {
@@ -124,7 +129,7 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 	if existingTable.GetVersion() > req.GetTable().GetVersion() {
 		options.Logger.Info(
 			"the existing table version is higher than the requested version",
-			zap.String("table", existingTable.GetName()),
+			zap.ByteString("table", existingTable.GetName()),
 			zap.Int64("existing_version", existingTable.GetVersion()),
 			zap.Int64("requested_version", req.GetTable().GetVersion()),
 		)
@@ -221,6 +226,8 @@ func (s *Server) stealTableOperation(tr TableRepository, mr MigrationRepository,
 }
 
 func (s *Server) WriteMigration(ctx context.Context, req *WriteMigrationRequest) (*WriteMigrationResponse, error) {
+	s.namedLocker.lock(string(req.GetMigration().GetVersion().GetTableName()))
+	defer s.namedLocker.unlock(string(req.GetMigration().GetVersion().GetTableName()))
 	// Get KV store for metadata operations
 	kvPool := kv.GetPool()
 	if kvPool == nil {
@@ -239,7 +246,7 @@ func (s *Server) WriteMigration(ctx context.Context, req *WriteMigrationRequest)
 	}
 
 	if existingTable == nil {
-		options.Logger.Warn("the table isn't found, but expected", zap.String("table", req.GetMigration().GetVersion().GetTableName()))
+		options.Logger.Warn("the table isn't found, but expected", zap.ByteString("table", req.GetMigration().GetVersion().GetTableName()))
 
 		return &WriteMigrationResponse{
 			Success: false,
@@ -276,6 +283,8 @@ func (s *Server) WriteMigration(ctx context.Context, req *WriteMigrationRequest)
 }
 
 func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest) (*emptypb.Empty, error) {
+	s.namedLocker.lock(string(req.GetMigration().GetVersion().GetTableName()))
+	defer s.namedLocker.unlock(string(req.GetMigration().GetVersion().GetTableName()))
 	// Get the appropriate KV store for the migration
 	var kvStore kv.Store
 	kvPool := kv.GetPool()
@@ -289,7 +298,7 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 		return nil, fmt.Errorf("metadata store not available")
 	}
 
-	if strings.HasPrefix(req.GetMigration().GetVersion().GetTableName(), "atlas.") {
+	if bytes.HasPrefix(req.GetMigration().GetVersion().GetTableName(), []byte("atlas.")) {
 		// Use metadata store for atlas tables
 		kvStore = metaStore
 	} else {
@@ -307,7 +316,7 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 		return nil, err
 	}
 
-	err = s.applyMigration(migrations, kvStore)
+	err = s.applyMigration(ctx, migrations, kvStore)
 	if err != nil {
 		return nil, err
 	}
@@ -320,17 +329,17 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 	return &emptypb.Empty{}, nil
 }
 
-func (s *Server) applyMigration(migrations []*Migration, kvStore kv.Store) error {
+func (s *Server) applyMigration(ctx context.Context, migrations []*Migration, kvStore kv.Store) error {
 	for _, migration := range migrations {
 		switch migration.GetMigration().(type) {
 		case *Migration_Schema:
 			// Schema migrations are not supported in KV mode
 			// Skip silently for backward compatibility during transition
 			options.Logger.Warn("Schema migration ignored in KV mode",
-				zap.String("table", migration.GetVersion().GetTableName()))
+				zap.ByteString("table", migration.GetVersion().GetTableName()))
 			continue
 		case *Migration_Data:
-			err := s.applyKVDataMigration(migration, kvStore)
+			err := s.applyKVDataMigration(ctx, migration, kvStore)
 			if err != nil {
 				return fmt.Errorf("failed to apply KV data migration: %w", err)
 			}
@@ -339,14 +348,30 @@ func (s *Server) applyMigration(migrations []*Migration, kvStore kv.Store) error
 	return nil
 }
 
-func (s *Server) applyKVDataMigration(migration *Migration, kvStore kv.Store) error {
-	ctx := context.Background()
+func (s *Server) applyKVDataMigration(ctx context.Context, migration *Migration, kvStore kv.Store) error {
 	dataMigration := migration.GetData()
 	mv := migration.GetVersion()
+
+	if halt, err := sender.maybeHandleMagicKey(ctx, migration); err != nil {
+		return err
+	} else if halt {
+		return nil
+	}
 
 	switch migrationType := dataMigration.GetSession().(type) {
 	case *DataMigration_Change:
 		switch op := migrationType.Change.GetOperation().(type) {
+		case *KVChange_Sub:
+			err := DefaultNotificationSender().Notify(migration)
+			if err != nil {
+				return err
+			}
+		case *KVChange_Notify:
+			sender.notification <- &notification{
+				sub: op.Notify.Origin,
+				pub: op.Notify,
+			}
+			sender.HandleNotifications()
 		case *KVChange_Set:
 			record := op.Set.Data
 			value, err := proto.Marshal(record)
@@ -363,8 +388,14 @@ func (s *Server) applyKVDataMigration(migration *Migration, kvStore kv.Store) er
 				zap.Int64("table_version", mv.GetTableVersion()),
 				zap.Int64("migration_version", mv.GetMigrationVersion()),
 				zap.Int64("node_id", mv.GetNodeId()),
-				zap.String("table", mv.GetTableName()),
+				zap.ByteString("table", mv.GetTableName()),
 			)
+			go func() {
+				err := DefaultNotificationSender().Notify(DefaultNotificationSender().GenerateNotification(migration))
+				if err != nil {
+					options.Logger.Error("failed to notify migration", zap.Error(err))
+				}
+			}()
 		case *KVChange_Del:
 			err := kvStore.Delete(ctx, op.Del.Key)
 			if err != nil {
@@ -375,8 +406,14 @@ func (s *Server) applyKVDataMigration(migration *Migration, kvStore kv.Store) er
 				zap.Int64("table_version", mv.GetTableVersion()),
 				zap.Int64("migration_version", mv.GetMigrationVersion()),
 				zap.Int64("node_id", mv.GetNodeId()),
-				zap.String("table", mv.GetTableName()),
+				zap.ByteString("table", mv.GetTableName()),
 			)
+			go func() {
+				err := DefaultNotificationSender().Notify(DefaultNotificationSender().GenerateNotification(migration))
+				if err != nil {
+					options.Logger.Error("failed to notify migration", zap.Error(err))
+				}
+			}()
 		case *KVChange_Data:
 			sessionData := op.Data.GetData()
 			var operationCheck map[string]any
@@ -478,6 +515,12 @@ func (s *Server) applyKVDataMigration(migration *Migration, kvStore kv.Store) er
 				if err != nil {
 					return fmt.Errorf("failed to SET key %s: %w", op.Acl.GetKey(), err)
 				}
+				go func() {
+					err := DefaultNotificationSender().Notify(DefaultNotificationSender().GenerateNotification(migration))
+					if err != nil {
+						options.Logger.Error("failed to notify migration", zap.Error(err))
+					}
+				}()
 			case *AclChange_Deletion:
 				var record Record
 				val, err := kvStore.Get(ctx, op.Acl.GetKey())
@@ -539,11 +582,19 @@ func (s *Server) applyKVDataMigration(migration *Migration, kvStore kv.Store) er
 				if err != nil {
 					return fmt.Errorf("failed to SET key %s: %w", op.Acl.GetKey(), err)
 				}
+				go func() {
+					err := DefaultNotificationSender().Notify(DefaultNotificationSender().GenerateNotification(migration))
+					if err != nil {
+						options.Logger.Error("failed to notify migration", zap.Error(err))
+					}
+				}()
 			}
 		default:
 			return fmt.Errorf("unknown KV operation: %s", op)
 		}
 	}
+
+	DefaultNotificationSender().HandleNotifications()
 
 	return nil
 }
@@ -730,6 +781,54 @@ func (s *Server) JoinCluster(ctx context.Context, req *Node) (*JoinClusterRespon
 		return nil, err
 	}
 
+	// Immediately broadcast the new node to all known nodes to ensure they can forward requests
+	// This avoids reliance on gossip propagation delays
+	go func() {
+		broadcastCtx := context.Background()
+		nodeRepo := NewNodeRepository(broadcastCtx, metaStore)
+		// Get all nodes to broadcast to
+		err := nodeRepo.Iterate(false, func(node *Node, txn *kv.Transaction) error {
+			// Skip the newly joined node and ourselves
+			if node.GetId() == req.GetId() || node.GetId() == options.CurrentOptions.ServerId {
+				return nil
+			}
+
+			// Send gossip to this node to immediately update its node list
+			client, closer, err := getNewClient(fmt.Sprintf("%s:%d", node.GetAddress(), node.GetPort()))
+			if err != nil {
+				options.Logger.Warn("Failed to connect to node for immediate broadcast",
+					zap.Int64("node_id", node.GetId()),
+					zap.Error(err))
+				return nil // Continue with other nodes
+			}
+			defer closer()
+
+			gossipMig := &GossipMigration{
+				MigrationRequest:  migration,
+				Table:             nodeTable,
+				PreviousMigration: nil, // This will be handled by gossip ordering
+				Ttl:               0,    // Don't cascade further
+				Sender:            constructCurrentNode(),
+			}
+
+			_, err = client.Gossip(broadcastCtx, gossipMig)
+			if err != nil {
+				options.Logger.Warn("Failed to broadcast new node to peer",
+					zap.Int64("target_node_id", node.GetId()),
+					zap.Int64("new_node_id", req.GetId()),
+					zap.Error(err))
+			} else {
+				options.Logger.Info("Successfully broadcast new node to peer",
+					zap.Int64("target_node_id", node.GetId()),
+					zap.Int64("new_node_id", req.GetId()))
+			}
+			return nil
+		})
+		if err != nil {
+			options.Logger.Error("Failed to iterate nodes for broadcast", zap.Error(err))
+		}
+	}()
+
 	return &JoinClusterResponse{
 		Success: true,
 		NodeId:  req.GetId(),
@@ -739,7 +838,7 @@ func (s *Server) JoinCluster(ctx context.Context, req *Node) (*JoinClusterRespon
 var gossipQueue sync.Map
 
 type gossipKey struct {
-	table        string
+	table        KeyName
 	tableVersion int64
 	version      int64
 	by           int64
@@ -808,7 +907,7 @@ func (s *Server) applyGossipMigration(ctx context.Context, req *GossipMigration)
 		return fmt.Errorf("KV pool not initialized")
 	}
 
-	if strings.HasPrefix(req.GetMigrationRequest().GetVersion().GetTableName(), "atlas.") {
+	if bytes.HasPrefix(req.GetMigrationRequest().GetVersion().GetTableName(), KeyName("atlas.")) {
 		// Use metadata store for atlas tables
 		kvStore = kvPool.MetaStore()
 	} else {
@@ -821,7 +920,7 @@ func (s *Server) applyGossipMigration(ctx context.Context, req *GossipMigration)
 	}
 
 	// we have a previous migration, so apply this one
-	err = s.applyMigration([]*Migration{req.GetMigrationRequest()}, kvStore)
+	err = s.applyMigration(ctx, []*Migration{req.GetMigrationRequest()}, kvStore)
 	if err != nil {
 		return err
 	}
@@ -886,7 +985,7 @@ func SendGossip(ctx context.Context, req *GossipMigration, kvStore kv.Store) err
 	// wait for gossip to complete
 	wg.Wait()
 
-	options.Logger.Info("gossip complete", zap.String("table", req.GetTable().GetName()), zap.Int64("version", req.GetTable().GetVersion()))
+	options.Logger.Info("gossip complete", zap.ByteString("table", req.GetTable().GetName()), zap.Int64("version", req.GetTable().GetVersion()))
 
 	return errors.Join(errs...)
 }
@@ -1024,7 +1123,7 @@ func (s *Server) ReadKey(ctx context.Context, req *ReadKeyRequest) (*ReadKeyResp
 
 	// Check if we're actually the leader for this table
 	tr := NewTableRepositoryKV(ctx, metaStore)
-	table, err := tr.GetTable(req.GetTable())
+	table, err := tr.GetTable(req.GetKey())
 	if err != nil {
 		return &ReadKeyResponse{
 			Success: false,
@@ -1131,7 +1230,7 @@ func (s *Server) ReadKey(ctx context.Context, req *ReadKeyRequest) (*ReadKeyResp
 }
 
 func (s *Server) PrefixScan(ctx context.Context, req *PrefixScanRequest) (*PrefixScanResponse, error) {
-	if req.GetTablePrefix() == "" && req.GetRowPrefix() != "" {
+	if req.GetPrefix() == nil {
 		return &PrefixScanResponse{
 			Success: false,
 			Error:   "row prefix must be specified with the table prefix",
@@ -1178,16 +1277,12 @@ func (s *Server) PrefixScan(ctx context.Context, req *PrefixScanRequest) (*Prefi
 	}
 
 	options.Logger.Info("PrefixScan request",
-		zap.String("table prefix", req.GetTablePrefix()),
-		zap.String("row prefix", req.GetRowPrefix()),
+		zap.ByteString("table prefix", req.GetPrefix()),
 		zap.Int64("node_id", currentNode.Id))
 
-	keyPrefix := kv.NewKeyBuilder().Table(req.GetTablePrefix())
-	if req.GetRowPrefix() != "" {
-		keyPrefix = keyPrefix.Row(req.GetRowPrefix())
-	}
+	keyPrefix := req.GetPrefix()
 
-	matchingKeys, err := dataStore.PrefixScan(ctx, keyPrefix.Build())
+	matchingKeys, err := dataStore.PrefixScan(ctx, keyPrefix)
 	if err != nil {
 		return &PrefixScanResponse{
 			Success: false,
@@ -1202,7 +1297,7 @@ func (s *Server) PrefixScan(ctx context.Context, req *PrefixScanRequest) (*Prefi
 	}
 	defer txn.Discard()
 
-	var ownedKeys []string
+	var ownedKeys [][]byte
 	var record Record
 	for key, val := range matchingKeys {
 		err = proto.Unmarshal(val, &record)
@@ -1210,14 +1305,12 @@ func (s *Server) PrefixScan(ctx context.Context, req *PrefixScanRequest) (*Prefi
 			return nil, err
 		}
 		if canRead(ctx, &record) {
-			kb := kv.NewKeyBuilderFromBytes([]byte(key))
-			ownedKeys = append(ownedKeys, kb.DottedKey())
+			ownedKeys = append(ownedKeys, []byte(key))
 		}
 	}
 
 	options.Logger.Info("PrefixScan completed",
-		zap.String("table prefix", req.GetTablePrefix()),
-		zap.String("row prefix", req.GetRowPrefix()),
+		zap.ByteString("table prefix", req.GetPrefix()),
 		zap.Int("matched", len(matchingKeys)),
 		zap.Int("owned", len(ownedKeys)))
 

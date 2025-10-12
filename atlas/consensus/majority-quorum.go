@@ -59,14 +59,7 @@ func (m *majorityQuorum) CurrentNodeInMigrationQuorum() bool {
 var ErrKVPoolNotInitialized = errors.New("KV pool not initialized")
 var ErrMetadataStoreClosed = errors.New("metadata store closed")
 var ErrCannotStealGroupOwnership = errors.New("cannot steal ownership of a table in a group")
-
-type ErrStealTableOwnershipFailed struct {
-	Table *Table
-}
-
-func (e ErrStealTableOwnershipFailed) Error() string {
-	return "failed to steal ownership of table " + e.Table.String()
-}
+var ErrStealTableOwnershipFailed = errors.New("failed to steal ownership of table")
 
 func (m *majorityQuorum) Gossip(ctx context.Context, in *GossipMigration, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	// Get KV store for metadata operations
@@ -231,7 +224,7 @@ func (m *majorityQuorum) ReadKey(ctx context.Context, in *ReadKeyRequest, opts .
 		return nil, err
 	}
 
-	table, err := tr.GetTable(in.GetTable())
+	table, err := tr.GetTable(in.GetKey())
 	if err != nil {
 		return nil, err
 	}
@@ -244,7 +237,7 @@ func (m *majorityQuorum) ReadKey(ctx context.Context, in *ReadKeyRequest, opts .
 
 	if table == nil {
 		table = &Table{
-			Name:              in.Table,
+			Name:              in.GetKey(),
 			ReplicationLevel:  ReplicationLevel_global,
 			Owner:             currentNode,
 			CreatedAt:         timestamppb.Now(),
@@ -267,7 +260,7 @@ func (m *majorityQuorum) ReadKey(ctx context.Context, in *ReadKeyRequest, opts .
 		return nil, err
 	}
 	if phase1.Promised {
-		return nil, ErrStealTableOwnershipFailed{Table: phase1.GetSuccess().GetTable()}
+		return nil, ErrStealTableOwnershipFailed
 	}
 
 	owner := phase1.GetFailure().GetTable().GetOwner()
@@ -297,104 +290,7 @@ func upsertTable(ctx context.Context, tr TableRepository, table *Table) error {
 }
 
 func (m *majorityQuorum) PrefixScan(ctx context.Context, in *PrefixScanRequest, opts ...grpc.CallOption) (*PrefixScanResponse, error) {
-	nr := NewNodeRepository(ctx, kv.GetPool().MetaStore())
-	qm := GetDefaultQuorumManager(ctx)
-
-	var allNodes []*Node
-	err := nr.Iterate(false, func(node *Node, txn *kv.Transaction) error {
-		allNodes = append(allNodes, node)
-		return nil
-	})
-	if err != nil {
-		options.Logger.Error("Failed to iterate nodes", zap.Error(err))
-		return &PrefixScanResponse{
-			Success: false,
-			Error:   "failed to get nodes: " + err.Error(),
-		}, nil
-	}
-
-	// Edge case: no nodes available
-	if len(allNodes) == 0 {
-		options.Logger.Warn("No nodes available for PrefixScan")
-		return &PrefixScanResponse{
-			Success: true,
-			Keys:    []string{},
-		}, nil
-	}
-
-	allKeys := make(map[string]bool)
-	var mu sync.Mutex
-	wg := sync.WaitGroup{}
-	wg.Add(len(allNodes))
-	errs := make([]error, len(allNodes))
-
-	for i, node := range allNodes {
-		go func(i int, node *Node) {
-			defer wg.Done()
-
-			resp, err := qm.Send(node, func(quorumNode *QuorumNode) (any, error) {
-				return quorumNode.PrefixScan(ctx, in, opts...)
-			})
-
-			if err != nil {
-				errs[i] = err
-				return
-			}
-
-			if scanResp, ok := resp.(*PrefixScanResponse); ok && scanResp.Success {
-				mu.Lock()
-				for _, key := range scanResp.Keys {
-					allKeys[key] = true
-				}
-				mu.Unlock()
-			}
-		}(i, node)
-	}
-
-	wg.Wait()
-
-	// Inspect errors to determine if the broadcast succeeded
-	var nonNilErrs []error
-	successCount := 0
-	for _, err := range errs {
-		if err != nil {
-			nonNilErrs = append(nonNilErrs, err)
-		} else {
-			successCount++
-		}
-	}
-
-	keys := make([]string, 0, len(allKeys))
-	for key := range allKeys {
-		keys = append(keys, key)
-	}
-
-	// If all nodes failed, return failure
-	if successCount == 0 && len(nonNilErrs) > 0 {
-		joinedErr := errors.Join(nonNilErrs...)
-		options.Logger.Error("PrefixScan failed on all nodes",
-			zap.Int("total_nodes", len(allNodes)),
-			zap.Error(joinedErr))
-		return &PrefixScanResponse{
-			Success: false,
-			Error:   joinedErr.Error(),
-		}, nil
-	}
-
-	// If some nodes failed but some succeeded, log the partial failure
-	if len(nonNilErrs) > 0 {
-		joinedErr := errors.Join(nonNilErrs...)
-		options.Logger.Warn("PrefixScan succeeded on some nodes but failed on others",
-			zap.Int("success_count", successCount),
-			zap.Int("error_count", len(nonNilErrs)),
-			zap.Int("total_nodes", len(allNodes)),
-			zap.Error(joinedErr))
-	}
-
-	return &PrefixScanResponse{
-		Success: true,
-		Keys:    keys,
-	}, nil
+	return nil, errors.New("use broadcast prefix scan instead")
 }
 
 func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error) {
@@ -405,6 +301,7 @@ func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts
 	if err != nil {
 		return nil, err
 	}
+	in.Sender = currentNode
 
 	table, err := tr.GetTable(in.GetTable())
 	if err != nil {
@@ -435,7 +332,8 @@ func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts
 	}
 
 	phase1, err := m.StealTableOwnership(ctx, p1r, opts...)
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrStealTableOwnershipFailed) {
+		options.Logger.Error("failed to steal table ownership [critical]", zap.Error(err))
 		return nil, err
 	}
 	if !phase1.Promised {
@@ -445,7 +343,19 @@ func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts
 		if err != nil {
 			return nil, err
 		}
-		return nil, ErrStealTableOwnershipFailed{Table: table}
+		owner := phase1.GetFailure().GetTable().GetOwner()
+		options.Logger.Error("forwarding write key to owner", zap.Int64("owner_id", owner.GetId()))
+		qm := GetDefaultQuorumManager(ctx)
+		resp, err := qm.Send(owner, func(node *QuorumNode) (any, error) {
+			return node.WriteKey(ctx, in, opts...)
+		})
+		if err != nil {
+			return nil, errors.Join(errors.New("failed to forward write key to owner"), err)
+		}
+		if resp == nil {
+			return nil, errors.New("owner returned nil response")
+		}
+		return resp.(*WriteKeyResponse), nil
 	}
 
 	// we are promised the table, but we may be missing migrations
@@ -454,7 +364,7 @@ func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts
 		return nil, err
 	}
 
-	s := Server{}
+	s := NewServer()
 	for _, migration := range phase1.GetSuccess().GetMissingMigrations() {
 		_, err = s.AcceptMigration(ctx, &WriteMigrationRequest{
 			Sender:    currentNode,
@@ -520,6 +430,41 @@ func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts
 		} else if !errors.Is(err, kv.ErrKeyNotFound) {
 			return &WriteKeyResponse{Success: false, Error: fmt.Sprintf("failed to check key: %v", err)}, nil
 		}
+	case *KVChange_Acl:
+		key := op.Acl.GetKey()
+		var record Record
+		store := kv.GetPool().DataStore()
+		val, err := store.Get(ctx, key)
+		if err != nil && errors.Is(err, kv.ErrKeyNotFound) {
+			break
+		}
+		if err != nil {
+			return &WriteKeyResponse{
+				Success: false,
+				Error:   fmt.Sprintf("failed to get key: %v", err),
+			}, nil
+		}
+		err = proto.Unmarshal(val, &record)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal record: %v", err)
+		}
+		if isOwner(ctx, &record) {
+			break
+		}
+		return &WriteKeyResponse{
+			Success: false,
+			Error:   "principal isn't allowed to modify ACLs for this key",
+		}, nil
+	case *KVChange_Notify:
+		// Notifications are internal system operations that bypass ACL checks
+		// They are written to magic keys for subscription processing
+		break
+	case *KVChange_Sub:
+		// Subscriptions are internal system operations that bypass ACL checks
+		// They are written to magic keys for subscription storage
+		break
+	default:
+		panic("unknown operation type")
 	}
 
 	// we have completed phase 1, now we move on to phase 2
@@ -548,7 +493,7 @@ func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts
 		return nil, err
 	}
 	if !p2.Success {
-		return nil, ErrStealTableOwnershipFailed{Table: p2.GetTable()}
+		return nil, ErrStealTableOwnershipFailed
 	}
 
 	_, err = m.AcceptMigration(ctx, p2r, opts...)
@@ -609,7 +554,7 @@ func (m *majorityQuorum) DeleteKey(ctx context.Context, in *WriteKeyRequest, opt
 		if err != nil {
 			return nil, err
 		}
-		return nil, ErrStealTableOwnershipFailed{Table: table}
+		return nil, ErrStealTableOwnershipFailed
 	}
 
 	// we are promised the table, but we may be missing migrations
@@ -681,7 +626,7 @@ func (m *majorityQuorum) DeleteKey(ctx context.Context, in *WriteKeyRequest, opt
 		return nil, err
 	}
 	if !p2.Success {
-		return nil, ErrStealTableOwnershipFailed{Table: p2.GetTable()}
+		return nil, ErrStealTableOwnershipFailed
 	}
 
 	_, err = m.AcceptMigration(ctx, p2r, opts...)

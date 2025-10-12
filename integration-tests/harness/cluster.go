@@ -117,7 +117,7 @@ func NewCluster(t *testing.T, cfg ClusterConfig) (*Cluster, error) {
 			nodeConfig.BootstrapURL = fmt.Sprintf("localhost:%d", bootstrapNode.Config.HTTPSPort)
 		}
 
-		node, err := NewNode(nodeConfig, cfg.CaddyBinary)
+		node, err := NewNode(nodeConfig, cfg.CaddyBinary, t)
 		if err != nil {
 			return nil, fmt.Errorf("create node %d: %w", i, err)
 		}
@@ -271,7 +271,7 @@ func (c *Cluster) AddNode(region string) (*Node, error) {
 		nodeConfig.BootstrapURL = fmt.Sprintf("localhost:%d", bootstrapNode.Config.HTTPSPort)
 	}
 
-	node, err := NewNode(nodeConfig, c.caddyBinary)
+	node, err := NewNode(nodeConfig, c.caddyBinary, c.t)
 	if err != nil {
 		return nil, fmt.Errorf("create node %d: %w", nodeID, err)
 	}

@@ -123,7 +123,6 @@ func (m *Module) Provision(ctx caddy.Context) (err error) {
 }
 
 func (m *Module) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-	fmt.Println("ServeHTTP called")
 	if r.ProtoMajor == 2 && r.Header.Get("content-type") == "application/grpc" {
 		// check authorization
 		authHeader := r.Header.Get("Authorization")
@@ -171,6 +170,10 @@ func (m *Module) UnmarshalCaddyfile(d *caddyfile.Dispenser) (err error) {
 					return d.Errf("db_path: %v", err)
 				} else if err != nil && os.IsExist(err) {
 					err = nil
+				}
+
+				if !strings.HasSuffix(path, "/") {
+					path = path + "/"
 				}
 
 				options.CurrentOptions.DbFilename = path + options.CurrentOptions.DbFilename

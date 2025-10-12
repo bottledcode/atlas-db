@@ -357,8 +357,12 @@ func (s *Server) applyKVDataMigration(ctx context.Context, migration *Migration,
 			if err != nil {
 				return err
 			}
-		case *KVChange_Notification:
-			panic("notification is not supported except by magic key")
+		case *KVChange_Notify:
+			sender.notification <- &notification{
+				sub: op.Notify.Origin,
+				pub: op.Notify,
+			}
+			sender.HandleNotifications()
 		case *KVChange_Set:
 			record := op.Set.Data
 			value, err := proto.Marshal(record)
@@ -767,6 +771,54 @@ func (s *Server) JoinCluster(ctx context.Context, req *Node) (*JoinClusterRespon
 	if err != nil {
 		return nil, err
 	}
+
+	// Immediately broadcast the new node to all known nodes to ensure they can forward requests
+	// This avoids reliance on gossip propagation delays
+	go func() {
+		broadcastCtx := context.Background()
+		nodeRepo := NewNodeRepository(broadcastCtx, metaStore)
+		// Get all nodes to broadcast to
+		err := nodeRepo.Iterate(false, func(node *Node, txn *kv.Transaction) error {
+			// Skip the newly joined node and ourselves
+			if node.GetId() == req.GetId() || node.GetId() == options.CurrentOptions.ServerId {
+				return nil
+			}
+
+			// Send gossip to this node to immediately update its node list
+			client, closer, err := getNewClient(fmt.Sprintf("%s:%d", node.GetAddress(), node.GetPort()))
+			if err != nil {
+				options.Logger.Warn("Failed to connect to node for immediate broadcast",
+					zap.Int64("node_id", node.GetId()),
+					zap.Error(err))
+				return nil // Continue with other nodes
+			}
+			defer closer()
+
+			gossipMig := &GossipMigration{
+				MigrationRequest:  migration,
+				Table:             nodeTable,
+				PreviousMigration: nil, // This will be handled by gossip ordering
+				Ttl:               0,    // Don't cascade further
+				Sender:            constructCurrentNode(),
+			}
+
+			_, err = client.Gossip(broadcastCtx, gossipMig)
+			if err != nil {
+				options.Logger.Warn("Failed to broadcast new node to peer",
+					zap.Int64("target_node_id", node.GetId()),
+					zap.Int64("new_node_id", req.GetId()),
+					zap.Error(err))
+			} else {
+				options.Logger.Info("Successfully broadcast new node to peer",
+					zap.Int64("target_node_id", node.GetId()),
+					zap.Int64("new_node_id", req.GetId()))
+			}
+			return nil
+		})
+		if err != nil {
+			options.Logger.Error("Failed to iterate nodes for broadcast", zap.Error(err))
+		}
+	}()
 
 	return &JoinClusterResponse{
 		Success: true,

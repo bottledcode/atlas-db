@@ -65,6 +65,7 @@ type notificationSender struct {
 	mu            sync.Mutex
 	subscriptions trie.Trie[*Subscribe]
 	notification  chan *notification
+	namedLocker   *namedLocker
 }
 
 type notification struct {
@@ -78,6 +79,7 @@ var sender = &notificationSender{
 	waiters:       make(map[string]chan struct{}),
 	subscriptions: trie.New[*Subscribe](),
 	notification:  make(chan *notification, 10000),
+	namedLocker:   newNamedLocker(),
 }
 
 func (s *notificationSender) HandleNotifications() {
@@ -204,10 +206,11 @@ func (s *notificationSender) Notify(migration *Migration) error {
 	if len(key) == 0 {
 		return nil
 	}
-	prefix := s.currentBucket([]byte(key))
+	prefix := s.currentBucket(key)
 	ctx := context.Background()
 	qm := GetDefaultQuorumManager(ctx)
 	magicKey := kv.NewKeyBuilder().Meta().Table("magic").Append("pb").Append(string(prefix)).Build()
+	options.Logger.Info("sending notification", zap.ByteString("key", key), zap.ByteString("magic_key", magicKey))
 	q, err := qm.GetQuorum(ctx, magicKey)
 	if err != nil {
 		options.Logger.Error("failed to get quorum for notification", zap.Error(err))
@@ -236,8 +239,8 @@ func (s *notificationSender) GenerateNotification(migration *Migration) *Migrati
 		switch op := mig.Data.GetChange().GetOperation().(type) {
 		case *KVChange_Set:
 			change := proto.Clone(migration).(*Migration)
-			change.GetData().GetChange().Operation = &KVChange_Notification{
-				Notification: &Notify{
+			change.GetData().GetChange().Operation = &KVChange_Notify{
+				Notify: &Notify{
 					Key: []byte(migration.GetVersion().GetTableName()),
 					Change: &Notify_Set{
 						Set: op.Set,
@@ -249,8 +252,8 @@ func (s *notificationSender) GenerateNotification(migration *Migration) *Migrati
 			return change
 		case *KVChange_Del:
 			change := proto.Clone(migration).(*Migration)
-			change.GetData().GetChange().Operation = &KVChange_Notification{
-				Notification: &Notify{
+			change.GetData().GetChange().Operation = &KVChange_Notify{
+				Notify: &Notify{
 					Key: migration.GetVersion().GetTableName(),
 					Change: &Notify_Del{
 						Del: op.Del,
@@ -262,7 +265,7 @@ func (s *notificationSender) GenerateNotification(migration *Migration) *Migrati
 			return change
 		case *KVChange_Acl:
 			change := proto.Clone(migration).(*Migration)
-			change.GetData().GetChange().Operation = &KVChange_Notification{
+			change.GetData().GetChange().Operation = &KVChange_Notify{
 				&Notify{
 					Key: []byte(migration.GetVersion().GetTableName()),
 					Change: &Notify_Acl{
@@ -320,6 +323,9 @@ func (s *notificationSender) maybeHandleMagicKey(ctx context.Context, migration 
 	originalKey := migration.GetVersion().GetTableName()[len(prefix.Build())+1:]
 	key := migration.GetVersion().GetTableName()
 
+	s.namedLocker.lock(string(key))
+	defer s.namedLocker.unlock(string(key))
+
 	switch mig := migration.GetMigration().(type) {
 	case *Migration_None:
 		return false, nil
@@ -362,7 +368,7 @@ func (s *notificationSender) maybeHandleMagicKey(ctx context.Context, migration 
 				return true, err
 			}
 			return true, nil
-		case *KVChange_Notification:
+		case *KVChange_Notify:
 			store := kv.GetPool().MetaStore()
 			txn, err := store.Begin(true)
 			if err != nil {
@@ -373,96 +379,127 @@ func (s *notificationSender) maybeHandleMagicKey(ctx context.Context, migration 
 			if err != nil && !errors.Is(err, kv.ErrKeyNotFound) {
 				return true, err
 			}
+			var sendErr error
 			if obj != nil {
-				var list SubscriptionList
-				err = proto.Unmarshal(obj, &list)
-				if err != nil {
-					return true, err
-				}
-				hasher := blake3.New()
-				_, err = hasher.WriteString(op.Notification.Version)
-				if err != nil {
-					return true, err
-				}
-				idHash := hasher.Sum(nil)
-				for _, prev := range list.Log {
-					if bytes.Equal(idHash, prev) {
-						return true, nil
-					}
-				}
-
-				if len(list.Log) > 100 {
-					list.Log = list.Log[1:]
-				}
-
-				list.Log = append(list.Log, idHash)
-				obj, err = proto.Marshal(&list)
-				if err != nil {
-					return true, err
-				}
-
-				for _, sub := range s.subscriptions.PrefixesOf(op.Notification.Key) {
-					// Check if we're actually the leader for this table
-					tr := NewTableRepositoryKV(ctx, store)
-					table, err := tr.GetTable(op.Notification.GetKey())
-					if err != nil {
-						continue
-					}
-					if table.Owner.Id != options.CurrentOptions.ServerId {
-						continue
-					}
-
-					note := &notification{
-						sub: sub,
-						pub: op.Notification,
-					}
-					s.notification <- note
-				}
-				s.HandleNotifications()
+				obj, sendErr = s.sendNotification(ctx, obj, op)
 			}
 
-			// get the next lower power of two prefix
-			nextBucket := s.nextBucket([]byte(originalKey))
-			// If nextBucket is nil, we've reached the end of the cascade (single byte key)
-			if len(nextBucket) > 0 {
-				nextKey := prefix.Append(string(nextBucket)).Build()
-				qm := GetDefaultQuorumManager(ctx)
-				q, err := qm.GetQuorum(ctx, nextKey)
-				if err != nil {
-					return true, err
-				}
-				resp, err := q.WriteKey(ctx, &WriteKeyRequest{
-					Sender: nil,
-					Table:  nextKey,
-					Value: &KVChange{
-						Operation: &KVChange_Notification{
-							Notification: op.Notification,
-						},
-					},
-				})
-				if err != nil {
-					return true, err
-				}
-				if resp.Error != "" {
-					return true, errors.New(resp.Error)
-				}
+			lowerErr := s.notifyLowerPrefixes(ctx, originalKey, *prefix, op)
+
+			if sendErr != nil {
+				sendErr = errors.Join(errors.New("notification send error"), sendErr)
+			}
+			if lowerErr != nil {
+				sendErr = errors.Join(sendErr, errors.New("notification lower error"), lowerErr)
 			}
 
 			if obj != nil {
 				err = txn.Put(ctx, key, obj)
 				if err != nil {
-					return true, err
+					return true, errors.Join(err, sendErr)
 				}
 				err = txn.Commit()
 				if err != nil {
-					return true, err
+					return true, errors.Join(err, sendErr)
 				}
 			}
-			return true, nil
+			return true, sendErr
 		default:
 			panic("unsupported migration type")
 		}
 	default:
 		panic("unsupported migration type")
 	}
+}
+
+func (s *notificationSender) notifyLowerPrefixes(ctx context.Context, originalKey []byte, prefix kv.KeyBuilder, op *KVChange_Notify) error {
+	// get the next lower power of two prefix
+	nextBucket := s.nextBucket(originalKey)
+	// If nextBucket is nil, we've reached the end of the cascade (single byte key)
+	if len(nextBucket) > 0 {
+		nextKey := prefix.Append(string(nextBucket)).Build()
+		qm := GetDefaultQuorumManager(ctx)
+		q, err := qm.GetQuorum(ctx, nextKey)
+		if err != nil {
+			return err
+		}
+		resp, err := q.WriteKey(ctx, &WriteKeyRequest{
+			Sender: nil,
+			Table:  nextKey,
+			Value: &KVChange{
+				Operation: &KVChange_Notify{
+					Notify: op.Notify,
+				},
+			},
+		})
+		if err != nil {
+			return err
+		}
+		if resp.Error != "" {
+			return errors.New(resp.Error)
+		}
+	}
+
+	return nil
+}
+
+func (s *notificationSender) sendNotification(ctx context.Context, obj []byte, op *KVChange_Notify) ([]byte, error) {
+	var list SubscriptionList
+	err := proto.Unmarshal(obj, &list)
+	if err != nil {
+		return obj, err
+	}
+	hasher := blake3.New()
+	_, err = hasher.WriteString(op.Notify.Version)
+	if err != nil {
+		return obj, err
+	}
+	idHash := hasher.Sum(nil)
+	for _, prev := range list.Log {
+		if bytes.Equal(idHash, prev) {
+			return obj, nil
+		}
+	}
+
+	if len(list.Log) > 100 {
+		list.Log = list.Log[1:]
+	}
+
+	list.Log = append(list.Log, idHash)
+	obj, err = proto.Marshal(&list)
+	if err != nil {
+		return obj, err
+	}
+
+	qm := GetDefaultQuorumManager(ctx)
+
+	errs := []error{}
+	for _, sub := range s.subscriptions.PrefixesOf(op.Notify.Key) {
+		q, err := qm.GetQuorum(ctx, op.Notify.GetKey())
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		next := proto.Clone(op.Notify).(*Notify)
+		next.Origin = sub
+		resp, err := q.WriteKey(ctx, &WriteKeyRequest{
+			Sender: nil,
+			Table:  op.Notify.GetKey(),
+			Value: &KVChange{
+				Operation: &KVChange_Notify{
+					Notify: next,
+				},
+			},
+		})
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if resp.GetError() != "" {
+			errs = append(errs, errors.New(resp.GetError()))
+		}
+	}
+
+	s.HandleNotifications()
+	return obj, errors.Join(errs...)
 }

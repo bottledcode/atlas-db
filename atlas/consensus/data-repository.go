@@ -107,7 +107,7 @@ func (d *DataR) ProcessOutgoingMigration(m *Migration) (*Migration, error) {
 			return m, nil
 		case *KVChange_Del:
 			return m, nil
-		case *KVChange_Notification:
+		case *KVChange_Notify:
 			return m, nil
 		case *KVChange_Sub:
 			return m, nil
@@ -149,7 +149,7 @@ func (d *DataR) ProcessIncomingMigration(m *Migration) (*Migration, error) {
 			return m, nil
 		case *KVChange_Del:
 			return m, nil
-		case *KVChange_Notification:
+		case *KVChange_Notify:
 			// Notifications are passed through without content deduplication
 			return m, nil
 		case *KVChange_Sub:

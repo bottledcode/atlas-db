@@ -26,6 +26,7 @@ import (
 
 	"github.com/bottledcode/atlas-db/atlas/kv"
 	"github.com/bottledcode/atlas-db/atlas/options"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -58,14 +59,7 @@ func (m *majorityQuorum) CurrentNodeInMigrationQuorum() bool {
 var ErrKVPoolNotInitialized = errors.New("KV pool not initialized")
 var ErrMetadataStoreClosed = errors.New("metadata store closed")
 var ErrCannotStealGroupOwnership = errors.New("cannot steal ownership of a table in a group")
-
-type ErrStealTableOwnershipFailed struct {
-	Table *Table
-}
-
-func (e ErrStealTableOwnershipFailed) Error() string {
-	return "failed to steal ownership of table " + e.Table.String()
-}
+var ErrStealTableOwnershipFailed = errors.New("failed to steal ownership of table")
 
 func (m *majorityQuorum) Gossip(ctx context.Context, in *GossipMigration, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	// Get KV store for metadata operations
@@ -266,7 +260,7 @@ func (m *majorityQuorum) ReadKey(ctx context.Context, in *ReadKeyRequest, opts .
 		return nil, err
 	}
 	if phase1.Promised {
-		return nil, ErrStealTableOwnershipFailed{Table: phase1.GetSuccess().GetTable()}
+		return nil, ErrStealTableOwnershipFailed
 	}
 
 	owner := phase1.GetFailure().GetTable().GetOwner()
@@ -338,7 +332,8 @@ func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts
 	}
 
 	phase1, err := m.StealTableOwnership(ctx, p1r, opts...)
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrStealTableOwnershipFailed) {
+		options.Logger.Error("failed to steal table ownership [critical]", zap.Error(err))
 		return nil, err
 	}
 	if !phase1.Promised {
@@ -348,7 +343,19 @@ func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts
 		if err != nil {
 			return nil, err
 		}
-		return nil, ErrStealTableOwnershipFailed{Table: table}
+		owner := phase1.GetFailure().GetTable().GetOwner()
+		options.Logger.Error("forwarding write key to owner", zap.Int64("owner_id", owner.GetId()))
+		qm := GetDefaultQuorumManager(ctx)
+		resp, err := qm.Send(owner, func(node *QuorumNode) (any, error) {
+			return node.WriteKey(ctx, in, opts...)
+		})
+		if err != nil {
+			return nil, errors.Join(errors.New("failed to forward write key to owner"), err)
+		}
+		if resp == nil {
+			return nil, errors.New("owner returned nil response")
+		}
+		return resp.(*WriteKeyResponse), nil
 	}
 
 	// we are promised the table, but we may be missing migrations
@@ -448,7 +455,7 @@ func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts
 			Success: false,
 			Error:   "principal isn't allowed to modify ACLs for this key",
 		}, nil
-	case *KVChange_Notification:
+	case *KVChange_Notify:
 		// Notifications are internal system operations that bypass ACL checks
 		// They are written to magic keys for subscription processing
 		break
@@ -486,7 +493,7 @@ func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts
 		return nil, err
 	}
 	if !p2.Success {
-		return nil, ErrStealTableOwnershipFailed{Table: p2.GetTable()}
+		return nil, ErrStealTableOwnershipFailed
 	}
 
 	_, err = m.AcceptMigration(ctx, p2r, opts...)
@@ -547,7 +554,7 @@ func (m *majorityQuorum) DeleteKey(ctx context.Context, in *WriteKeyRequest, opt
 		if err != nil {
 			return nil, err
 		}
-		return nil, ErrStealTableOwnershipFailed{Table: table}
+		return nil, ErrStealTableOwnershipFailed
 	}
 
 	// we are promised the table, but we may be missing migrations
@@ -619,7 +626,7 @@ func (m *majorityQuorum) DeleteKey(ctx context.Context, in *WriteKeyRequest, opt
 		return nil, err
 	}
 	if !p2.Success {
-		return nil, ErrStealTableOwnershipFailed{Table: p2.GetTable()}
+		return nil, ErrStealTableOwnershipFailed
 	}
 
 	_, err = m.AcceptMigration(ctx, p2r, opts...)

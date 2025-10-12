@@ -268,7 +268,7 @@ func TestNotificationSender_GenerateNotification(t *testing.T) {
 				require.NotNil(t, dataMig)
 				change := dataMig.GetChange()
 				require.NotNil(t, change)
-				notifyOp := change.GetNotification()
+				notifyOp := change.GetNotify()
 				require.NotNil(t, notifyOp)
 
 				// Check the change type
@@ -593,8 +593,8 @@ func TestNotificationSender_NotificationDeduplication(t *testing.T) {
 			Data: &DataMigration{
 				Session: &DataMigration_Change{
 					Change: &KVChange{
-						Operation: &KVChange_Notification{
-							Notification: duplicateNotification,
+						Operation: &KVChange_Notify{
+							Notify: duplicateNotification,
 						},
 					},
 				},

@@ -65,6 +65,7 @@ func TestThreeNodeNotifications(t *testing.T) {
 		notificationMutex.Lock()
 		for _, notif := range notifs {
 			notifications[notif["event_id"].(string)] = notif
+			t.Logf("Received notification: %+v", notif)
 		}
 		notificationMutex.Unlock()
 
@@ -136,6 +137,22 @@ func TestThreeNodeNotifications(t *testing.T) {
 		err = node.Client().KeyPut(tc.key, tc.value)
 		require.NoError(t, err, "Failed to put key %s on node %d", tc.key, tc.nodeID)
 		t.Logf("Put key %s=%s on node %d", tc.key, tc.value, tc.nodeID)
+
+		readNode := tc.nodeID - 1
+		if readNode < 0 {
+			readNode = cluster.NumNodes() - 1
+		}
+		node, err = cluster.GetNode(readNode)
+		require.NoError(t, err, "Failed to get node %d", readNode)
+
+		time.Sleep(1 * time.Second)
+
+		resp, err := node.Client().KeyGet(tc.key)
+		//require.NoError(t, err, "Failed to get key %s on node %d", tc.key, readNode)
+		if err == nil {
+			t.Logf("Got key %s=%s on node %d", tc.key, resp, readNode)
+			assert.Equal(t, tc.value, resp, "Value should match for key %s on node %d", tc.key, readNode)
+		}
 	}
 
 	// Wait for notifications to be delivered

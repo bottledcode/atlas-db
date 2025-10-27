@@ -88,7 +88,7 @@ func TestKeyGet_FromKey_Mapping(t *testing.T) {
 	// Normalized() uppercases tokens, so SelectNormalizedCommand(2) yields "TABLE.ROW"
 	key, _ := kgc.SelectNormalizedCommand(2)
 	builder := kgc.FromKey(key)
-	if got := builder.String(); got != "t:TABLE:r:ROW" {
+	if got := string(builder); got != "TABLE.ROW" {
 		t.Fatalf("unexpected key mapping, got %q", got)
 	}
 }
@@ -105,7 +105,7 @@ func TestKeyGet_FromKey_Mapping_MultiPart(t *testing.T) {
 	}
 	key, _ := kgc.SelectNormalizedCommand(2)
 	builder := kgc.FromKey(key)
-	if got := builder.String(); got != "t:TABLE:r:ROW:ATTR.MORE" {
+	if got := string(builder); got != "TABLE.ROW.ATTR.MORE" {
 		t.Fatalf("unexpected key mapping, got %q", got)
 	}
 }
@@ -122,12 +122,12 @@ func TestKeyDel_FromKey_Mapping(t *testing.T) {
 	}
 	key, _ := kd.SelectNormalizedCommand(2)
 	builder := kd.FromKey(key)
-	if got := builder.String(); got != "t:TABLE:r:ROW:ATTR.MORE" {
+	if got := string(builder); got != "TABLE.ROW.ATTR.MORE" {
 		t.Fatalf("unexpected key mapping, got %q", got)
 	}
 }
 
-func TestScan_NotImplemented(t *testing.T) {
+func TestScan_ParseCommand(t *testing.T) {
 	cmd := CommandFromString("SCAN prefix")
 	next, err := cmd.GetNext()
 	if err != nil {
@@ -137,8 +137,16 @@ func TestScan_NotImplemented(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *ScanCommand, got %T", next)
 	}
-	if _, err := sc.Execute(context.Background()); err == nil {
-		t.Fatalf("expected not implemented error for SCAN")
+	// Verify the command structure is correct
+	if err := sc.CheckMinLen(2); err != nil {
+		t.Fatalf("SCAN command should have at least 2 tokens: %v", err)
+	}
+	prefix, ok := sc.SelectNormalizedCommand(1)
+	if !ok {
+		t.Fatalf("expected to select prefix from command")
+	}
+	if prefix != "PREFIX" {
+		t.Fatalf("expected normalized prefix 'PREFIX', got %q", prefix)
 	}
 }
 

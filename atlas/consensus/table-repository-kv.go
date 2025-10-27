@@ -19,6 +19,7 @@
 package consensus
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -47,7 +48,7 @@ func NewTableRepositoryKV(ctx context.Context, store kv.Store) TableRepository {
 
 // TableStorageModel represents how table data is stored in KV format
 type TableStorageModel struct {
-	Name              string            `json:"name"`
+	Name              []byte            `json:"name"`
 	Version           int64             `json:"version"`
 	ReplicationLevel  string            `json:"replication_level"`
 	AllowedRegions    []string          `json:"allowed_regions"`
@@ -71,9 +72,9 @@ type NodeStorageModel struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-func (r *TableRepositoryKV) GetTable(name string) (*Table, error) {
+func (r *TableRepositoryKV) GetTable(name KeyName) (*Table, error) {
 	// Key: meta:table:{table_name}
-	key := kv.NewKeyBuilder().Meta().Append("table").Append(name).Build()
+	key := kv.NewKeyBuilder().Meta().Append("table").AppendBytes(name).Build()
 
 	txn, err := r.store.Begin(false)
 	if err != nil {
@@ -251,7 +252,7 @@ func (r *TableRepositoryKV) convertTableToStorageModel(table *Table) *TableStora
 
 func (r *TableRepositoryKV) UpdateTable(table *Table) error {
 	// Key: meta:table:{table_name}
-	key := kv.NewKeyBuilder().Meta().Append("table").Append(table.Name).Build()
+	key := kv.NewKeyBuilder().Meta().Append("table").AppendBytes(table.Name).Build()
 
 	txn, err := r.store.Begin(true)
 	if err != nil {
@@ -301,7 +302,7 @@ func (r *TableRepositoryKV) UpdateTable(table *Table) error {
 
 func (r *TableRepositoryKV) InsertTable(table *Table) error {
 	// Key: meta:table:{table_name}
-	key := kv.NewKeyBuilder().Meta().Append("table").Append(table.Name).Build()
+	key := kv.NewKeyBuilder().Meta().Append("table").AppendBytes(table.Name).Build()
 
 	txn, err := r.store.Begin(true)
 	if err != nil {
@@ -340,7 +341,7 @@ func (r *TableRepositoryKV) InsertTable(table *Table) error {
 func (r *TableRepositoryKV) updateTableIndex(txn kv.Transaction, table *Table) error {
 	// Index by replication level: meta:index:replication:{level}:{table_name} -> table_name
 	indexKey := kv.NewKeyBuilder().Meta().Append("index").Append("replication").
-		Append(table.ReplicationLevel.String()).Append(table.Name).Build()
+		Append(table.ReplicationLevel.String()).AppendBytes(table.Name).Build()
 
 	if err := txn.Put(r.ctx, indexKey, []byte(table.Name)); err != nil {
 		return err
@@ -349,7 +350,7 @@ func (r *TableRepositoryKV) updateTableIndex(txn kv.Transaction, table *Table) e
 	// Index by group if applicable
 	if table.Group != "" {
 		groupIndexKey := kv.NewKeyBuilder().Meta().Append("index").Append("group").
-			Append(table.Group).Append(table.Name).Build()
+			Append(table.Group).AppendBytes(table.Name).Build()
 		if err := txn.Put(r.ctx, groupIndexKey, []byte(table.Name)); err != nil {
 			return err
 		}
@@ -358,7 +359,7 @@ func (r *TableRepositoryKV) updateTableIndex(txn kv.Transaction, table *Table) e
 	// Index by owner node if applicable
 	if table.Owner != nil {
 		ownerIndexKey := kv.NewKeyBuilder().Meta().Append("index").Append("owner").
-			Append(fmt.Sprintf("%d", table.Owner.Id)).Append(table.Name).Build()
+			Append(fmt.Sprintf("%d", table.Owner.Id)).AppendBytes(table.Name).Build()
 		if err := txn.Put(r.ctx, ownerIndexKey, []byte(table.Name)); err != nil {
 			return err
 		}
@@ -371,7 +372,7 @@ func (r *TableRepositoryKV) updateTableIndex(txn kv.Transaction, table *Table) e
 func (r *TableRepositoryKV) removeTableIndex(txn kv.Transaction, table *Table) error {
 	// Remove replication level index: meta:index:replication:{level}:{table_name}
 	indexKey := kv.NewKeyBuilder().Meta().Append("index").Append("replication").
-		Append(table.ReplicationLevel.String()).Append(table.Name).Build()
+		Append(table.ReplicationLevel.String()).AppendBytes(table.Name).Build()
 
 	if err := txn.Delete(r.ctx, indexKey); err != nil {
 		return err
@@ -380,7 +381,7 @@ func (r *TableRepositoryKV) removeTableIndex(txn kv.Transaction, table *Table) e
 	// Remove group index if applicable
 	if table.Group != "" {
 		groupIndexKey := kv.NewKeyBuilder().Meta().Append("index").Append("group").
-			Append(table.Group).Append(table.Name).Build()
+			Append(table.Group).AppendBytes(table.Name).Build()
 		if err := txn.Delete(r.ctx, groupIndexKey); err != nil {
 			return err
 		}
@@ -389,7 +390,7 @@ func (r *TableRepositoryKV) removeTableIndex(txn kv.Transaction, table *Table) e
 	// Remove owner node index if applicable
 	if table.Owner != nil {
 		ownerIndexKey := kv.NewKeyBuilder().Meta().Append("index").Append("owner").
-			Append(fmt.Sprintf("%d", table.Owner.Id)).Append(table.Name).Build()
+			Append(fmt.Sprintf("%d", table.Owner.Id)).AppendBytes(table.Name).Build()
 		if err := txn.Delete(r.ctx, ownerIndexKey); err != nil {
 			return err
 		}
@@ -398,7 +399,7 @@ func (r *TableRepositoryKV) removeTableIndex(txn kv.Transaction, table *Table) e
 	return nil
 }
 
-func (r *TableRepositoryKV) GetGroup(name string) (*TableGroup, error) {
+func (r *TableRepositoryKV) GetGroup(name KeyName) (*TableGroup, error) {
 	// First get the group details (which is just a table with type=group)
 	groupTable, err := r.GetTable(name)
 	if err != nil {
@@ -419,7 +420,7 @@ func (r *TableRepositoryKV) GetGroup(name string) (*TableGroup, error) {
 
 	// Find all tables in this group using the group index
 	// Key pattern: meta:index:group:{group_name}:{table_name} -> table_name
-	prefix := kv.NewKeyBuilder().Meta().Append("index").Append("group").Append(name).Build()
+	prefix := kv.NewKeyBuilder().Meta().Append("index").Append("group").AppendBytes(name).Build()
 
 	txn, err := r.store.Begin(false)
 	if err != nil {
@@ -441,12 +442,12 @@ func (r *TableRepositoryKV) GetGroup(name string) (*TableGroup, error) {
 		}
 
 		// Skip the group table itself
-		if string(tableName) == name {
+		if bytes.Equal(tableName, name) {
 			continue
 		}
 
 		// Get the full table details
-		table, err := r.GetTable(string(tableName))
+		table, err := r.GetTable(tableName)
 		if err != nil {
 			continue // Log this error but continue processing
 		}
@@ -510,7 +511,8 @@ func (r *TableRepositoryKV) GetShard(shard *Table, principals []*Principal) (*Sh
 	}
 
 	// retrieve the shard table
-	st, err := r.GetTable(shard.GetName() + "_" + hash)
+	tableName := bytes.Join([][]byte{shard.GetName(), []byte("_"), []byte(hash)}, []byte{})
+	st, err := r.GetTable(tableName)
 	if err != nil {
 		return nil, err
 	}
@@ -534,7 +536,7 @@ func (r *TableRepositoryKV) InsertShard(shard *Shard) error {
 	if err != nil {
 		return err
 	}
-	shard.GetShard().Name = shard.GetTable().GetName() + "_" + hash
+	shard.GetShard().Name = bytes.Join([][]byte{shard.GetTable().GetName(), []byte("_"), []byte(hash)}, []byte{})
 
 	return r.InsertTable(shard.GetShard())
 }
@@ -565,7 +567,7 @@ func (r *TableRepositoryKV) GetTablesByReplicationLevel(level ReplicationLevel) 
 			continue
 		}
 
-		table, err := r.GetTable(string(tableName))
+		table, err := r.GetTable(tableName)
 		if err != nil {
 			continue // Log this error but continue
 		}
@@ -603,7 +605,7 @@ func (r *TableRepositoryKV) GetTablesOwnedByNode(nodeID int64) ([]*Table, error)
 			continue
 		}
 
-		table, err := r.GetTable(string(tableName))
+		table, err := r.GetTable(tableName)
 		if err != nil {
 			continue // Log this error but continue
 		}

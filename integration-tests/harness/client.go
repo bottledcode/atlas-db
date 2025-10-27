@@ -332,3 +332,47 @@ func (sc *SocketClient) WaitForValue(key string, expectedValue string, timeout t
 
 	return fmt.Errorf("timeout waiting for key %s to have value %s", key, expectedValue)
 }
+
+func (sc *SocketClient) Subscribe(prefix, url string) error {
+	resp, err := sc.ExecuteCommand(fmt.Sprintf("SUB %s %s", prefix, url))
+	if err != nil {
+		return err
+	}
+
+	if !strings.Contains(resp, "OK") {
+		return fmt.Errorf("unexpected response: %s", resp)
+	}
+
+	return nil
+}
+
+func (sc *SocketClient) SubscribeWithOptions(prefix, url string, batch bool, retryAttempts int32, retryAfter time.Duration, auth string) error {
+	cmd := fmt.Sprintf("SUB %s %s", prefix, url)
+
+	if batch {
+		cmd += " BATCH"
+	}
+
+	if retryAttempts > 0 {
+		cmd += fmt.Sprintf(" RETRY %d", retryAttempts)
+	}
+
+	if retryAfter > 0 {
+		cmd += fmt.Sprintf(" RETRY_AFTER %s", retryAfter.String())
+	}
+
+	if auth != "" {
+		cmd += fmt.Sprintf(" AUTH %s", auth)
+	}
+
+	resp, err := sc.ExecuteCommand(cmd)
+	if err != nil {
+		return err
+	}
+
+	if !strings.Contains(resp, "OK") {
+		return fmt.Errorf("unexpected response: %s", resp)
+	}
+
+	return nil
+}

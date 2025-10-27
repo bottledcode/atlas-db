@@ -23,7 +23,7 @@ import (
 	"fmt"
 
 	"github.com/bottledcode/atlas-db/atlas"
-	"github.com/bottledcode/atlas-db/atlas/kv"
+	"github.com/bottledcode/atlas-db/atlas/consensus"
 )
 
 type ACLCommand struct {
@@ -58,16 +58,16 @@ func (c *ACLGrantCommand) Execute(ctx context.Context) ([]byte, error) {
 		return nil, err
 	}
 
-	tableKey, _ := c.SelectNormalizedCommand(2)
+	keyName, _ := c.SelectNormalizedCommand(2)
 	principal := c.SelectCommand(3)
 	permsKeyword, _ := c.SelectNormalizedCommand(4)
 	permissions := c.SelectCommand(5)
 
-	if tableKey == "" || principal == "" || permsKeyword != "PERMS" || permissions == "" {
+	if keyName == "" || principal == "" || permsKeyword != "PERMS" || permissions == "" {
 		return nil, fmt.Errorf("ACL GRANT requires format: ACL GRANT <table> <name> PERMS <permissions>")
 	}
 
-	key := kv.FromDottedKey(tableKey)
+	key := consensus.KeyName(keyName)
 
 	switch permissions {
 	case "READ":
@@ -116,7 +116,7 @@ func (c *ACLRevokeCommand) Execute(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("ACL REVOKE requires format: ACL REVOKE <table> <name> PERMS <permissions>")
 	}
 
-	key := kv.FromDottedKey(tableKey)
+	key := consensus.KeyName(tableKey)
 	switch permissions {
 	case "READ":
 		err := atlas.RevokeReader(ctx, key, principal)

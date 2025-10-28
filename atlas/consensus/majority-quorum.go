@@ -56,37 +56,7 @@ func (m *majorityQuorum) CurrentNodeInMigrationQuorum() bool {
 	return false
 }
 
-var ErrKVPoolNotInitialized = errors.New("KV pool not initialized")
-var ErrMetadataStoreClosed = errors.New("metadata store closed")
 var ErrCannotStealGroupOwnership = errors.New("cannot steal ownership of a table in a group")
-
-type ErrStealTableOwnershipFailed struct {
-	Table *Table
-}
-
-func (e ErrStealTableOwnershipFailed) Error() string {
-	return "failed to steal ownership of table " + e.Table.String()
-}
-
-func (m *majorityQuorum) Gossip(ctx context.Context, in *GossipMigration, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	// Get KV store for metadata operations
-	kvPool := kv.GetPool()
-	if kvPool == nil {
-		return nil, ErrKVPoolNotInitialized
-	}
-
-	metaStore := kvPool.MetaStore()
-	if metaStore == nil {
-		return nil, ErrMetadataStoreClosed
-	}
-
-	err := SendGossip(ctx, in, metaStore)
-	if err != nil {
-		return nil, err
-	}
-
-	return &emptypb.Empty{}, nil
-}
 
 func broadcast[T any, U any](nodes []*QuorumNode, send func(node *QuorumNode) (T, error), coalesce func(T, U) (U, error)) (U, error) {
 	wg := sync.WaitGroup{}

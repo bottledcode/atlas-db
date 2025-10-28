@@ -34,7 +34,6 @@ service Consensus {
   rpc Ping(PingRequest) returns (PingResponse) {}
   rpc ReadKey(ReadKeyRequest) returns (ReadKeyResponse) {}
   rpc WriteKey(WriteKeyRequest) returns (WriteKeyResponse) {}
-  rpc DeleteKey(WriteKeyRequest) returns (WriteKeyResponse) {}
   rpc PrefixScan(PrefixScanRequest) returns (PrefixScanResponse) {}
 }
 
@@ -62,7 +61,7 @@ message PingRequest {
 
 message PingResponse {
   bool success = 1; // Whether the ping was successful
-  int64 responder_node_id = 2; // The ID of the node responding
+  uint64 responder_node_id = 2; // The ID of the node responding
   google.protobuf.Timestamp timestamp = 3; // Timestamp of the response
 }
 
@@ -117,9 +116,10 @@ message RecordMutation {
 }
 
 message Record {
-  Slot derivedFrom = 1;
+  uint64 maxSlot = 4;
   Acl acl = 2;
   DataReference data = 3;
+  Record baseRecord = 5;
 }
 
 // ownership messages
@@ -131,7 +131,7 @@ message StealTableOwnershipResponse {
   bool promised = 1;
   repeated RecordMutation missingRecords = 2;
   Ballot highestBallot = 3;
-  RecordMutation highestSlot = 4;
+  Slot highestSlot = 4;
 }
 
 message WriteMigrationRequest {
@@ -349,33 +349,30 @@ message StoredMigrationBatch {
 // Remote read messages for leader-based reads
 message ReadKeyRequest {
   Node sender = 1; // The node requesting the read
-  string key = 2; // The key to read
-  string table = 3; // The table the key belongs to
+  bytes key = 2; // The key to read
+  uint64 watermark = 3; // The watermark for read consistency
 }
 
 message ReadKeyResponse {
   bool success = 1; // Whether the read was successful
-  bytes value = 2; // The value if found, empty if not found
-  string error = 3; // Error message if not successful
+  DataReference value = 2; // The value if found, empty if not found
 }
 
 // Remote prefix scan
 message PrefixScanRequest {
   Node sender = 1;
-  string tablePrefix = 2;
-  string rowPrefix = 3;
+  bytes prefix = 2;
 }
 
 message PrefixScanResponse {
   bool success = 1;
-  repeated string keys = 2;
-  string error = 3;
+  repeated bytes keys = 2;
 }
 
 message WriteKeyRequest {
   Node sender = 1; // The node requesting the write
-  string table = 3; // The table the key belongs to
-  Record record = 4;
+  bytes key = 3; // The table the key belongs to
+  RecordMutation mutation = 4;
 }
 
 message WriteKeyResponse {

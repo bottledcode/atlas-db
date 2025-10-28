@@ -163,6 +163,39 @@ type QuorumNode struct {
 	client ConsensusClient
 }
 
+func (q *QuorumNode) Replicate(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ReplicationRequest, ReplicationResponse], error) {
+	var err error
+	if q.client == nil {
+		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return q.client.Replicate(ctx, opts...)
+}
+
+func (q *QuorumNode) DeReference(ctx context.Context, in *DereferenceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DereferenceResponse], error) {
+	var err error
+	if q.client == nil {
+		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return q.client.DeReference(ctx, in, opts...)
+}
+
+func (q *QuorumNode) DeleteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error) {
+	var err error
+	if q.client == nil {
+		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return q.client.DeleteKey(ctx, in, opts...)
+}
+
 func (q *QuorumNode) StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipResponse, error) {
 	var err error
 	if q.client == nil {
@@ -194,28 +227,6 @@ func (q *QuorumNode) AcceptMigration(ctx context.Context, in *WriteMigrationRequ
 		}
 	}
 	return q.client.AcceptMigration(ctx, in, opts...)
-}
-
-func (q *QuorumNode) JoinCluster(ctx context.Context, in *Node, opts ...grpc.CallOption) (*JoinClusterResponse, error) {
-	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
-	}
-	return q.client.JoinCluster(ctx, in, opts...)
-}
-
-func (q *QuorumNode) Gossip(ctx context.Context, in *GossipMigration, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
-	}
-	return q.client.Gossip(ctx, in, opts...)
 }
 
 func (q *QuorumNode) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {

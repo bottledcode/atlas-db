@@ -32,7 +32,7 @@ type Options struct {
 	MetaFilename                 string
 	DoReset                      bool
 	BootstrapConnect             string
-	ServerId                     int64
+	ServerId                     uint64
 	Region                       string
 	AdvertiseAddress             string
 	AdvertisePort                uint

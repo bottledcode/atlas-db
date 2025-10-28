@@ -272,7 +272,7 @@ func (x *PingRequest) GetTimestamp() *timestamppb.Timestamp {
 type PingResponse struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Success         bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`                                          // Whether the ping was successful
-	ResponderNodeId int64                  `protobuf:"varint,2,opt,name=responder_node_id,json=responderNodeId,proto3" json:"responder_node_id,omitempty"` // The ID of the node responding
+	ResponderNodeId uint64                 `protobuf:"varint,2,opt,name=responder_node_id,json=responderNodeId,proto3" json:"responder_node_id,omitempty"` // The ID of the node responding
 	Timestamp       *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=timestamp,proto3" json:"timestamp,omitempty"`                                       // Timestamp of the response
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
@@ -315,7 +315,7 @@ func (x *PingResponse) GetSuccess() bool {
 	return false
 }
 
-func (x *PingResponse) GetResponderNodeId() int64 {
+func (x *PingResponse) GetResponderNodeId() uint64 {
 	if x != nil {
 		return x.ResponderNodeId
 	}
@@ -893,9 +893,10 @@ func (*RecordMutation_Noop) isRecordMutation_Message() {}
 
 type Record struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	DerivedFrom   *Slot                  `protobuf:"bytes,1,opt,name=derivedFrom,proto3" json:"derivedFrom,omitempty"`
+	MaxSlot       uint64                 `protobuf:"varint,4,opt,name=maxSlot,proto3" json:"maxSlot,omitempty"`
 	Acl           *Acl                   `protobuf:"bytes,2,opt,name=acl,proto3" json:"acl,omitempty"`
 	Data          *DataReference         `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	BaseRecord    *Record                `protobuf:"bytes,5,opt,name=baseRecord,proto3" json:"baseRecord,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -930,11 +931,11 @@ func (*Record) Descriptor() ([]byte, []int) {
 	return file_consensus_consensus_proto_rawDescGZIP(), []int{15}
 }
 
-func (x *Record) GetDerivedFrom() *Slot {
+func (x *Record) GetMaxSlot() uint64 {
 	if x != nil {
-		return x.DerivedFrom
+		return x.MaxSlot
 	}
-	return nil
+	return 0
 }
 
 func (x *Record) GetAcl() *Acl {
@@ -947,6 +948,13 @@ func (x *Record) GetAcl() *Acl {
 func (x *Record) GetData() *DataReference {
 	if x != nil {
 		return x.Data
+	}
+	return nil
+}
+
+func (x *Record) GetBaseRecord() *Record {
+	if x != nil {
+		return x.BaseRecord
 	}
 	return nil
 }
@@ -1001,7 +1009,7 @@ type StealTableOwnershipResponse struct {
 	Promised       bool                   `protobuf:"varint,1,opt,name=promised,proto3" json:"promised,omitempty"`
 	MissingRecords []*RecordMutation      `protobuf:"bytes,2,rep,name=missingRecords,proto3" json:"missingRecords,omitempty"`
 	HighestBallot  *Ballot                `protobuf:"bytes,3,opt,name=highestBallot,proto3" json:"highestBallot,omitempty"`
-	HighestSlot    *RecordMutation        `protobuf:"bytes,4,opt,name=highestSlot,proto3" json:"highestSlot,omitempty"`
+	HighestSlot    *Slot                  `protobuf:"bytes,4,opt,name=highestSlot,proto3" json:"highestSlot,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -1057,7 +1065,7 @@ func (x *StealTableOwnershipResponse) GetHighestBallot() *Ballot {
 	return nil
 }
 
-func (x *StealTableOwnershipResponse) GetHighestSlot() *RecordMutation {
+func (x *StealTableOwnershipResponse) GetHighestSlot() *Slot {
 	if x != nil {
 		return x.HighestSlot
 	}
@@ -1532,9 +1540,9 @@ func (x *Region) GetName() string {
 // Remote read messages for leader-based reads
 type ReadKeyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Sender        *Node                  `protobuf:"bytes,1,opt,name=sender,proto3" json:"sender,omitempty"` // The node requesting the read
-	Key           string                 `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`       // The key to read
-	Table         string                 `protobuf:"bytes,3,opt,name=table,proto3" json:"table,omitempty"`   // The table the key belongs to
+	Sender        *Node                  `protobuf:"bytes,1,opt,name=sender,proto3" json:"sender,omitempty"`        // The node requesting the read
+	Key           []byte                 `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`              // The key to read
+	Watermark     uint64                 `protobuf:"varint,3,opt,name=watermark,proto3" json:"watermark,omitempty"` // The watermark for read consistency
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1576,25 +1584,24 @@ func (x *ReadKeyRequest) GetSender() *Node {
 	return nil
 }
 
-func (x *ReadKeyRequest) GetKey() string {
+func (x *ReadKeyRequest) GetKey() []byte {
 	if x != nil {
 		return x.Key
 	}
-	return ""
+	return nil
 }
 
-func (x *ReadKeyRequest) GetTable() string {
+func (x *ReadKeyRequest) GetWatermark() uint64 {
 	if x != nil {
-		return x.Table
+		return x.Watermark
 	}
-	return ""
+	return 0
 }
 
 type ReadKeyResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"` // Whether the read was successful
-	Value         []byte                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`      // The value if found, empty if not found
-	Error         string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`      // Error message if not successful
+	Value         *DataReference         `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`      // The value if found, empty if not found
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1636,26 +1643,18 @@ func (x *ReadKeyResponse) GetSuccess() bool {
 	return false
 }
 
-func (x *ReadKeyResponse) GetValue() []byte {
+func (x *ReadKeyResponse) GetValue() *DataReference {
 	if x != nil {
 		return x.Value
 	}
 	return nil
 }
 
-func (x *ReadKeyResponse) GetError() string {
-	if x != nil {
-		return x.Error
-	}
-	return ""
-}
-
 // Remote prefix scan
 type PrefixScanRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Sender        *Node                  `protobuf:"bytes,1,opt,name=sender,proto3" json:"sender,omitempty"`
-	TablePrefix   string                 `protobuf:"bytes,2,opt,name=tablePrefix,proto3" json:"tablePrefix,omitempty"`
-	RowPrefix     string                 `protobuf:"bytes,3,opt,name=rowPrefix,proto3" json:"rowPrefix,omitempty"`
+	Prefix        []byte                 `protobuf:"bytes,2,opt,name=prefix,proto3" json:"prefix,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1697,25 +1696,17 @@ func (x *PrefixScanRequest) GetSender() *Node {
 	return nil
 }
 
-func (x *PrefixScanRequest) GetTablePrefix() string {
+func (x *PrefixScanRequest) GetPrefix() []byte {
 	if x != nil {
-		return x.TablePrefix
+		return x.Prefix
 	}
-	return ""
-}
-
-func (x *PrefixScanRequest) GetRowPrefix() string {
-	if x != nil {
-		return x.RowPrefix
-	}
-	return ""
+	return nil
 }
 
 type PrefixScanResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
-	Keys          []string               `protobuf:"bytes,2,rep,name=keys,proto3" json:"keys,omitempty"`
-	Error         string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
+	Keys          [][]byte               `protobuf:"bytes,2,rep,name=keys,proto3" json:"keys,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1757,25 +1748,18 @@ func (x *PrefixScanResponse) GetSuccess() bool {
 	return false
 }
 
-func (x *PrefixScanResponse) GetKeys() []string {
+func (x *PrefixScanResponse) GetKeys() [][]byte {
 	if x != nil {
 		return x.Keys
 	}
 	return nil
 }
 
-func (x *PrefixScanResponse) GetError() string {
-	if x != nil {
-		return x.Error
-	}
-	return ""
-}
-
 type WriteKeyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Sender        *Node                  `protobuf:"bytes,1,opt,name=sender,proto3" json:"sender,omitempty"` // The node requesting the write
-	Table         string                 `protobuf:"bytes,3,opt,name=table,proto3" json:"table,omitempty"`   // The table the key belongs to
-	Record        *Record                `protobuf:"bytes,4,opt,name=record,proto3" json:"record,omitempty"`
+	Key           []byte                 `protobuf:"bytes,3,opt,name=key,proto3" json:"key,omitempty"`       // The table the key belongs to
+	Mutation      *RecordMutation        `protobuf:"bytes,4,opt,name=mutation,proto3" json:"mutation,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1817,16 +1801,16 @@ func (x *WriteKeyRequest) GetSender() *Node {
 	return nil
 }
 
-func (x *WriteKeyRequest) GetTable() string {
+func (x *WriteKeyRequest) GetKey() []byte {
 	if x != nil {
-		return x.Table
+		return x.Key
 	}
-	return ""
+	return nil
 }
 
-func (x *WriteKeyRequest) GetRecord() *Record {
+func (x *WriteKeyRequest) GetMutation() *RecordMutation {
 	if x != nil {
-		return x.Record
+		return x.Mutation
 	}
 	return nil
 }
@@ -1893,7 +1877,7 @@ const file_consensus_consensus_proto_rawDesc = "" +
 	"\ttimestamp\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"\x8e\x01\n" +
 	"\fPingResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12*\n" +
-	"\x11responder_node_id\x18\x02 \x01(\x03R\x0fresponderNodeId\x128\n" +
+	"\x11responder_node_id\x18\x02 \x01(\x04R\x0fresponderNodeId\x128\n" +
 	"\ttimestamp\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"<\n" +
 	"\x04Slot\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\fR\x03key\x12\x0e\n" +
@@ -1932,18 +1916,21 @@ const file_consensus_consensus_proto_rawDesc = "" +
 	"compaction\x12+\n" +
 	"\x04noop\x18\x06 \x01(\v2\x15.atlas.consensus.NoopH\x00R\x04noop\x12\x1c\n" +
 	"\tcommitted\x18\a \x01(\bR\tcommittedB\t\n" +
-	"\amessage\"\x9d\x01\n" +
-	"\x06Record\x127\n" +
-	"\vderivedFrom\x18\x01 \x01(\v2\x15.atlas.consensus.SlotR\vderivedFrom\x12&\n" +
+	"\amessage\"\xb7\x01\n" +
+	"\x06Record\x12\x18\n" +
+	"\amaxSlot\x18\x04 \x01(\x04R\amaxSlot\x12&\n" +
 	"\x03acl\x18\x02 \x01(\v2\x14.atlas.consensus.AclR\x03acl\x122\n" +
-	"\x04data\x18\x03 \x01(\v2\x1e.atlas.consensus.DataReferenceR\x04data\"M\n" +
+	"\x04data\x18\x03 \x01(\v2\x1e.atlas.consensus.DataReferenceR\x04data\x127\n" +
+	"\n" +
+	"baseRecord\x18\x05 \x01(\v2\x17.atlas.consensus.RecordR\n" +
+	"baseRecord\"M\n" +
 	"\x1aStealTableOwnershipRequest\x12/\n" +
-	"\x06ballot\x18\x01 \x01(\v2\x17.atlas.consensus.BallotR\x06ballot\"\x84\x02\n" +
+	"\x06ballot\x18\x01 \x01(\v2\x17.atlas.consensus.BallotR\x06ballot\"\xfa\x01\n" +
 	"\x1bStealTableOwnershipResponse\x12\x1a\n" +
 	"\bpromised\x18\x01 \x01(\bR\bpromised\x12G\n" +
 	"\x0emissingRecords\x18\x02 \x03(\v2\x1f.atlas.consensus.RecordMutationR\x0emissingRecords\x12=\n" +
-	"\rhighestBallot\x18\x03 \x01(\v2\x17.atlas.consensus.BallotR\rhighestBallot\x12A\n" +
-	"\vhighestSlot\x18\x04 \x01(\v2\x1f.atlas.consensus.RecordMutationR\vhighestSlot\"P\n" +
+	"\rhighestBallot\x18\x03 \x01(\v2\x17.atlas.consensus.BallotR\rhighestBallot\x127\n" +
+	"\vhighestSlot\x18\x04 \x01(\v2\x15.atlas.consensus.SlotR\vhighestSlot\"P\n" +
 	"\x15WriteMigrationRequest\x127\n" +
 	"\x06record\x18\x01 \x01(\v2\x1f.atlas.consensus.RecordMutationR\x06record\"4\n" +
 	"\x16WriteMigrationResponse\x12\x1a\n" +
@@ -1962,29 +1949,26 @@ const file_consensus_consensus_proto_rawDesc = "" +
 	"\x06active\x18\x05 \x01(\bR\x06active\x12+\n" +
 	"\x03rtt\x18\x06 \x01(\v2\x19.google.protobuf.DurationR\x03rtt\"\x1c\n" +
 	"\x06Region\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\"g\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\"o\n" +
 	"\x0eReadKeyRequest\x12-\n" +
 	"\x06sender\x18\x01 \x01(\v2\x15.atlas.consensus.NodeR\x06sender\x12\x10\n" +
-	"\x03key\x18\x02 \x01(\tR\x03key\x12\x14\n" +
-	"\x05table\x18\x03 \x01(\tR\x05table\"W\n" +
+	"\x03key\x18\x02 \x01(\fR\x03key\x12\x1c\n" +
+	"\twatermark\x18\x03 \x01(\x04R\twatermark\"a\n" +
 	"\x0fReadKeyResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\fR\x05value\x12\x14\n" +
-	"\x05error\x18\x03 \x01(\tR\x05error\"\x82\x01\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x124\n" +
+	"\x05value\x18\x02 \x01(\v2\x1e.atlas.consensus.DataReferenceR\x05value\"Z\n" +
 	"\x11PrefixScanRequest\x12-\n" +
-	"\x06sender\x18\x01 \x01(\v2\x15.atlas.consensus.NodeR\x06sender\x12 \n" +
-	"\vtablePrefix\x18\x02 \x01(\tR\vtablePrefix\x12\x1c\n" +
-	"\trowPrefix\x18\x03 \x01(\tR\trowPrefix\"X\n" +
+	"\x06sender\x18\x01 \x01(\v2\x15.atlas.consensus.NodeR\x06sender\x12\x16\n" +
+	"\x06prefix\x18\x02 \x01(\fR\x06prefix\"B\n" +
 	"\x12PrefixScanResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x12\n" +
-	"\x04keys\x18\x02 \x03(\tR\x04keys\x12\x14\n" +
-	"\x05error\x18\x03 \x01(\tR\x05error\"\x87\x01\n" +
+	"\x04keys\x18\x02 \x03(\fR\x04keys\"\x8f\x01\n" +
 	"\x0fWriteKeyRequest\x12-\n" +
-	"\x06sender\x18\x01 \x01(\v2\x15.atlas.consensus.NodeR\x06sender\x12\x14\n" +
-	"\x05table\x18\x03 \x01(\tR\x05table\x12/\n" +
-	"\x06record\x18\x04 \x01(\v2\x17.atlas.consensus.RecordR\x06record\",\n" +
+	"\x06sender\x18\x01 \x01(\v2\x15.atlas.consensus.NodeR\x06sender\x12\x10\n" +
+	"\x03key\x18\x03 \x01(\fR\x03key\x12;\n" +
+	"\bmutation\x18\x04 \x01(\v2\x1f.atlas.consensus.RecordMutationR\bmutation\",\n" +
 	"\x10WriteKeyResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess2\x8a\a\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess2\xb6\x06\n" +
 	"\tConsensus\x12r\n" +
 	"\x13StealTableOwnership\x12+.atlas.consensus.StealTableOwnershipRequest\x1a,.atlas.consensus.StealTableOwnershipResponse\"\x00\x12c\n" +
 	"\x0eWriteMigration\x12&.atlas.consensus.WriteMigrationRequest\x1a'.atlas.consensus.WriteMigrationResponse\"\x00\x12S\n" +
@@ -1993,8 +1977,7 @@ const file_consensus_consensus_proto_rawDesc = "" +
 	"\vDeReference\x12#.atlas.consensus.DereferenceRequest\x1a$.atlas.consensus.DereferenceResponse\"\x000\x01\x12E\n" +
 	"\x04Ping\x12\x1c.atlas.consensus.PingRequest\x1a\x1d.atlas.consensus.PingResponse\"\x00\x12N\n" +
 	"\aReadKey\x12\x1f.atlas.consensus.ReadKeyRequest\x1a .atlas.consensus.ReadKeyResponse\"\x00\x12Q\n" +
-	"\bWriteKey\x12 .atlas.consensus.WriteKeyRequest\x1a!.atlas.consensus.WriteKeyResponse\"\x00\x12R\n" +
-	"\tDeleteKey\x12 .atlas.consensus.WriteKeyRequest\x1a!.atlas.consensus.WriteKeyResponse\"\x00\x12W\n" +
+	"\bWriteKey\x12 .atlas.consensus.WriteKeyRequest\x1a!.atlas.consensus.WriteKeyResponse\"\x00\x12W\n" +
 	"\n" +
 	"PrefixScan\x12\".atlas.consensus.PrefixScanRequest\x1a#.atlas.consensus.PrefixScanResponse\"\x00B\fZ\n" +
 	"/consensusb\x06proto3"
@@ -2062,30 +2045,30 @@ var file_consensus_consensus_proto_depIdxs = []int32{
 	13, // 12: atlas.consensus.RecordMutation.aclUpdated:type_name -> atlas.consensus.Acl
 	15, // 13: atlas.consensus.RecordMutation.compaction:type_name -> atlas.consensus.Record
 	12, // 14: atlas.consensus.RecordMutation.noop:type_name -> atlas.consensus.Noop
-	6,  // 15: atlas.consensus.Record.derivedFrom:type_name -> atlas.consensus.Slot
-	13, // 16: atlas.consensus.Record.acl:type_name -> atlas.consensus.Acl
-	10, // 17: atlas.consensus.Record.data:type_name -> atlas.consensus.DataReference
+	13, // 15: atlas.consensus.Record.acl:type_name -> atlas.consensus.Acl
+	10, // 16: atlas.consensus.Record.data:type_name -> atlas.consensus.DataReference
+	15, // 17: atlas.consensus.Record.baseRecord:type_name -> atlas.consensus.Record
 	7,  // 18: atlas.consensus.StealTableOwnershipRequest.ballot:type_name -> atlas.consensus.Ballot
 	14, // 19: atlas.consensus.StealTableOwnershipResponse.missingRecords:type_name -> atlas.consensus.RecordMutation
 	7,  // 20: atlas.consensus.StealTableOwnershipResponse.highestBallot:type_name -> atlas.consensus.Ballot
-	14, // 21: atlas.consensus.StealTableOwnershipResponse.highestSlot:type_name -> atlas.consensus.RecordMutation
+	6,  // 21: atlas.consensus.StealTableOwnershipResponse.highestSlot:type_name -> atlas.consensus.Slot
 	14, // 22: atlas.consensus.WriteMigrationRequest.record:type_name -> atlas.consensus.RecordMutation
 	7,  // 23: atlas.consensus.OwnershipTracking.promised:type_name -> atlas.consensus.Ballot
 	22, // 24: atlas.consensus.Node.region:type_name -> atlas.consensus.Region
 	30, // 25: atlas.consensus.Node.rtt:type_name -> google.protobuf.Duration
 	21, // 26: atlas.consensus.ReadKeyRequest.sender:type_name -> atlas.consensus.Node
-	21, // 27: atlas.consensus.PrefixScanRequest.sender:type_name -> atlas.consensus.Node
-	21, // 28: atlas.consensus.WriteKeyRequest.sender:type_name -> atlas.consensus.Node
-	15, // 29: atlas.consensus.WriteKeyRequest.record:type_name -> atlas.consensus.Record
-	16, // 30: atlas.consensus.Consensus.StealTableOwnership:input_type -> atlas.consensus.StealTableOwnershipRequest
-	18, // 31: atlas.consensus.Consensus.WriteMigration:input_type -> atlas.consensus.WriteMigrationRequest
-	18, // 32: atlas.consensus.Consensus.AcceptMigration:input_type -> atlas.consensus.WriteMigrationRequest
-	0,  // 33: atlas.consensus.Consensus.Replicate:input_type -> atlas.consensus.ReplicationRequest
-	2,  // 34: atlas.consensus.Consensus.DeReference:input_type -> atlas.consensus.DereferenceRequest
-	4,  // 35: atlas.consensus.Consensus.Ping:input_type -> atlas.consensus.PingRequest
-	23, // 36: atlas.consensus.Consensus.ReadKey:input_type -> atlas.consensus.ReadKeyRequest
-	27, // 37: atlas.consensus.Consensus.WriteKey:input_type -> atlas.consensus.WriteKeyRequest
-	27, // 38: atlas.consensus.Consensus.DeleteKey:input_type -> atlas.consensus.WriteKeyRequest
+	10, // 27: atlas.consensus.ReadKeyResponse.value:type_name -> atlas.consensus.DataReference
+	21, // 28: atlas.consensus.PrefixScanRequest.sender:type_name -> atlas.consensus.Node
+	21, // 29: atlas.consensus.WriteKeyRequest.sender:type_name -> atlas.consensus.Node
+	14, // 30: atlas.consensus.WriteKeyRequest.mutation:type_name -> atlas.consensus.RecordMutation
+	16, // 31: atlas.consensus.Consensus.StealTableOwnership:input_type -> atlas.consensus.StealTableOwnershipRequest
+	18, // 32: atlas.consensus.Consensus.WriteMigration:input_type -> atlas.consensus.WriteMigrationRequest
+	18, // 33: atlas.consensus.Consensus.AcceptMigration:input_type -> atlas.consensus.WriteMigrationRequest
+	0,  // 34: atlas.consensus.Consensus.Replicate:input_type -> atlas.consensus.ReplicationRequest
+	2,  // 35: atlas.consensus.Consensus.DeReference:input_type -> atlas.consensus.DereferenceRequest
+	4,  // 36: atlas.consensus.Consensus.Ping:input_type -> atlas.consensus.PingRequest
+	23, // 37: atlas.consensus.Consensus.ReadKey:input_type -> atlas.consensus.ReadKeyRequest
+	27, // 38: atlas.consensus.Consensus.WriteKey:input_type -> atlas.consensus.WriteKeyRequest
 	25, // 39: atlas.consensus.Consensus.PrefixScan:input_type -> atlas.consensus.PrefixScanRequest
 	17, // 40: atlas.consensus.Consensus.StealTableOwnership:output_type -> atlas.consensus.StealTableOwnershipResponse
 	19, // 41: atlas.consensus.Consensus.WriteMigration:output_type -> atlas.consensus.WriteMigrationResponse
@@ -2095,13 +2078,12 @@ var file_consensus_consensus_proto_depIdxs = []int32{
 	5,  // 45: atlas.consensus.Consensus.Ping:output_type -> atlas.consensus.PingResponse
 	24, // 46: atlas.consensus.Consensus.ReadKey:output_type -> atlas.consensus.ReadKeyResponse
 	28, // 47: atlas.consensus.Consensus.WriteKey:output_type -> atlas.consensus.WriteKeyResponse
-	28, // 48: atlas.consensus.Consensus.DeleteKey:output_type -> atlas.consensus.WriteKeyResponse
-	26, // 49: atlas.consensus.Consensus.PrefixScan:output_type -> atlas.consensus.PrefixScanResponse
-	40, // [40:50] is the sub-list for method output_type
-	30, // [30:40] is the sub-list for method input_type
-	30, // [30:30] is the sub-list for extension type_name
-	30, // [30:30] is the sub-list for extension extendee
-	0,  // [0:30] is the sub-list for field type_name
+	26, // 48: atlas.consensus.Consensus.PrefixScan:output_type -> atlas.consensus.PrefixScanResponse
+	40, // [40:49] is the sub-list for method output_type
+	31, // [31:40] is the sub-list for method input_type
+	31, // [31:31] is the sub-list for extension type_name
+	31, // [31:31] is the sub-list for extension extendee
+	0,  // [0:31] is the sub-list for field type_name
 }
 
 func init() { file_consensus_consensus_proto_init() }

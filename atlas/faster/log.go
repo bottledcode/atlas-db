@@ -21,7 +21,9 @@ package faster
 import (
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"os"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -286,6 +288,276 @@ func (l *FasterLog) ScanUncommitted() ([]*LogEntry, error) {
 	}
 
 	return l.mutableBuffer.GetAllUncommittedWithIndex(indexCheck)
+}
+
+// IterateCommitted iterates over committed entries in slot order (ZERO-ALLOCATION)
+// The callback receives each entry but MUST NOT store the pointer - it's reused!
+// Use cases:
+//   - State machine reconstruction: fn(entry) { applyToStateMachine(entry.Value) }
+//   - Snapshot creation: fn(entry) { serialize(entry.Slot, entry.Value) }
+//   - Learner bootstrap: fn(entry) { sendToLearner(entry) }
+//
+// CRITICAL: The entry parameter is REUSED between calls for zero allocation.
+// If you need to keep data, copy it immediately:
+//
+//	valueCopy := make([]byte, len(entry.Value))
+//	copy(valueCopy, entry.Value)
+//
+// The iterator:
+//  1. Collects slot numbers from index (committed entries only)
+//  2. Sorts slots numerically
+//  3. Iterates in order, calling fn(entry) for each
+//  4. Stops on first error from fn()
+//
+// Options control iteration range and behavior (see IterateOptions)
+func (l *FasterLog) IterateCommitted(fn func(entry *LogEntry) error, opts IterateOptions) error {
+	if l.closed.Load() {
+		return ErrClosed
+	}
+
+	// Enter epoch for safe iteration
+	threadID := 0
+	currentEpoch := l.epoch.Load()
+	l.threadEpochs[threadID].Store(currentEpoch)
+	defer l.threadEpochs[threadID].Store(0)
+
+	// Step 1: Collect committed slot numbers from index
+	// We need to sort them, so we must collect first (small allocation - just uint64s)
+	committedSlots := make([]uint64, 0, 1024) // Pre-allocate reasonable size
+	l.index.Range(func(key, value interface{}) bool {
+		slot := key.(uint64)
+		offset := value.(uint64)
+
+		// Apply filters
+		if opts.MinSlot > 0 && slot < opts.MinSlot {
+			return true // Skip, too low
+		}
+		if opts.MaxSlot > 0 && slot > opts.MaxSlot {
+			return true // Skip, too high
+		}
+
+		// Check if committed (in tail = committed)
+		isInTail := (offset & mutableFlag) == 0
+		if isInTail {
+			committedSlots = append(committedSlots, slot)
+		} else if opts.IncludeUncommitted {
+			// Optionally include uncommitted entries from mutable region
+			committedSlots = append(committedSlots, slot)
+		}
+
+		return true
+	})
+
+	// Step 2: Sort slots numerically
+	// Use standard library sort which implements introsort (hybrid quicksort + heapsort)
+	// This guarantees O(n log n) worst case and bounded recursion depth
+	// Critical for consensus logs which are often already sorted!
+	sort.Slice(committedSlots, func(i, j int) bool {
+		return committedSlots[i] < committedSlots[j]
+	})
+
+	// Step 3: Iterate in order, calling fn() for each entry
+	// CRITICAL: Reuse single entry to avoid allocations!
+	entry := &LogEntry{}
+	for _, slot := range committedSlots {
+		// Read entry into reused struct
+		err := l.readInto(slot, entry)
+		if err != nil {
+			if opts.SkipErrors {
+				continue
+			}
+			return fmt.Errorf("failed to read slot %d: %w", slot, err)
+		}
+
+		// Call user function with reused entry
+		// WARNING: fn() must not store the entry pointer!
+		err = fn(entry)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// readInto reads an entry into a pre-allocated LogEntry (ZERO-ALLOCATION)
+// This avoids heap allocations by reusing the provided entry struct
+// Only entry.Value is allocated (unavoidable - it's variable size)
+func (l *FasterLog) readInto(slot uint64, entry *LogEntry) error {
+	// Look up in index
+	offsetVal, ok := l.index.Load(slot)
+	if !ok {
+		return ErrSlotNotFound
+	}
+
+	offset := offsetVal.(uint64)
+
+	// Check if in mutable region or tail
+	if (offset & mutableFlag) != 0 {
+		// In mutable region - read from buffer
+		tmp, err := l.mutableBuffer.Read(offset &^ mutableFlag)
+		if err != nil {
+			return err
+		}
+		// Copy fields into provided entry
+		entry.Slot = tmp.Slot
+		entry.Ballot = tmp.Ballot
+		entry.Committed = tmp.Committed
+		// Value must be copied (it's a slice)
+		if cap(entry.Value) < len(tmp.Value) {
+			entry.Value = make([]byte, len(tmp.Value))
+		} else {
+			entry.Value = entry.Value[:len(tmp.Value)]
+		}
+		copy(entry.Value, tmp.Value)
+		return nil
+	}
+
+	// In tail - deserialize directly into entry
+	return l.readFromTailInto(offset, entry)
+}
+
+// readFromTailInto reads from tail into provided entry (ZERO-ALLOCATION)
+func (l *FasterLog) readFromTailInto(offset uint64, entry *LogEntry) error {
+	tailSize := l.tailSize.Load()
+	if offset >= tailSize {
+		return ErrInvalidOffset
+	}
+
+	if offset+entryHeaderSize > tailSize {
+		return ErrCorruptedEntry
+	}
+
+	// Read header directly from mmap
+	data := l.tailMmap[offset:]
+	slot := binary.LittleEndian.Uint64(data[0:8])
+	ballotID := binary.LittleEndian.Uint64(data[8:16])
+	ballotNode := binary.LittleEndian.Uint64(data[16:24])
+	valueLen := binary.LittleEndian.Uint32(data[24:28])
+	committed := data[28] == 1
+
+	// Validate size
+	totalSize := entryHeaderSize + int(valueLen) + checksumSize
+	if len(data) < totalSize {
+		return ErrCorruptedEntry
+	}
+
+	// Verify checksum
+	checksumOffset := entryHeaderSize + int(valueLen)
+	storedChecksum := binary.LittleEndian.Uint32(data[checksumOffset : checksumOffset+checksumSize])
+
+	// Calculate checksum
+	calculatedChecksum := crc32.ChecksumIEEE(data[0:checksumOffset])
+	if storedChecksum != calculatedChecksum {
+		return ErrCorruptedEntry
+	}
+
+	// Fill entry fields
+	entry.Slot = slot
+	entry.Ballot.ID = ballotID
+	entry.Ballot.NodeID = ballotNode
+	entry.Committed = committed
+
+	// Copy value (unavoidable allocation)
+	if cap(entry.Value) < int(valueLen) {
+		entry.Value = make([]byte, valueLen)
+	} else {
+		entry.Value = entry.Value[:valueLen]
+	}
+	copy(entry.Value, data[entryHeaderSize:entryHeaderSize+int(valueLen)])
+
+	return nil
+}
+
+// GetCommittedRange returns the range of committed slots (min, max, count)
+// Useful for learners to know what they need to catch up on
+// Returns (0, 0, 0) if log is empty
+func (l *FasterLog) GetCommittedRange() (minSlot uint64, maxSlot uint64, count uint64) {
+	if l.closed.Load() {
+		return 0, 0, 0
+	}
+
+	minSlot = ^uint64(0) // Max uint64
+	maxSlot = 0
+	count = 0
+
+	l.index.Range(func(key, value interface{}) bool {
+		slot := key.(uint64)
+		offset := value.(uint64)
+
+		// Only count committed entries (in tail)
+		if (offset & mutableFlag) == 0 {
+			if slot < minSlot {
+				minSlot = slot
+			}
+			if slot > maxSlot {
+				maxSlot = slot
+			}
+			count++
+		}
+		return true
+	})
+
+	if count == 0 {
+		return 0, 0, 0
+	}
+
+	return minSlot, maxSlot, count
+}
+
+// ReplayFromSlot replays committed entries starting from a slot up to current max
+// This is the primary method for learner bootstrap and crash recovery
+//
+// CRITICAL: This captures the max slot BEFORE iteration to ensure a consistent snapshot.
+// New commits that arrive during iteration are NOT included (prevents inconsistent reads).
+//
+// Example - State machine reconstruction:
+//
+//	err := log.ReplayFromSlot(0, func(entry *LogEntry) error {
+//	    return stateMachine.Apply(entry.Slot, entry.Value)
+//	})
+//
+// Example - Learner catching up from slot 1000:
+//
+//	err := log.ReplayFromSlot(1000, func(entry *LogEntry) error {
+//	    return sendToLearner(entry)
+//	})
+//
+// The callback receives entries in slot order and MUST NOT store the entry pointer.
+func (l *FasterLog) ReplayFromSlot(startSlot uint64, fn func(entry *LogEntry) error) error {
+	// Capture upper bound BEFORE iteration to ensure consistent snapshot
+	// If new commits arrive during replay, they won't leak into this iteration
+	_, maxSlot, count := l.GetCommittedRange()
+
+	// Empty log or no entries in range
+	if count == 0 || maxSlot < startSlot {
+		return nil
+	}
+
+	return l.IterateCommitted(fn, IterateOptions{
+		MinSlot:            startSlot,
+		MaxSlot:            maxSlot, // Fixed upper bound
+		IncludeUncommitted: false,
+		SkipErrors:         false,
+	})
+}
+
+// ReplayRange replays committed entries in a specific range [startSlot, endSlot]
+// Use this when you want explicit control over the upper bound (e.g., incremental catch-up)
+//
+// Example - Learner catching up to specific slot:
+//
+//	leaderMax := getLeaderMaxSlot()
+//	err := log.ReplayRange(1000, leaderMax, func(entry *LogEntry) error {
+//	    return applyEntry(entry)
+//	})
+func (l *FasterLog) ReplayRange(startSlot, endSlot uint64, fn func(entry *LogEntry) error) error {
+	return l.IterateCommitted(fn, IterateOptions{
+		MinSlot:            startSlot,
+		MaxSlot:            endSlot,
+		IncludeUncommitted: false,
+		SkipErrors:         false,
+	})
 }
 
 // appendToTail appends an entry to the immutable tail

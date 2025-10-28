@@ -43,7 +43,7 @@ const (
 )
 
 const (
-	MutableSize = 64 * MB
+	MutableSize = 2 * MB  // 2MB per log (100 logs = 200MB total, reasonable for benchmarks)
 	SegmentSize = 1 * GB
 	NumThreads  = 128
 	MaxHotKeys  = 256
@@ -101,6 +101,7 @@ type LogManager struct {
 	lru     *list.List // LRU list of *logHandle (front = oldest, back = newest)
 	lruMu   sync.Mutex // Protects LRU list operations
 	maxOpen int        // Maximum number of open logs
+	baseDir string     // Base directory for log files (empty = use global options)
 	closed  atomic.Bool
 }
 
@@ -109,6 +110,17 @@ func NewLogManager() *LogManager {
 	return &LogManager{
 		lru:     list.New(),
 		maxOpen: MaxHotKeys,
+		baseDir: "", // Use global options
+	}
+}
+
+// NewLogManagerWithDir creates a LogManager with a specific base directory
+// This is useful for tests/benchmarks that need isolated storage
+func NewLogManagerWithDir(dir string) *LogManager {
+	return &LogManager{
+		lru:     list.New(),
+		maxOpen: MaxHotKeys,
+		baseDir: dir,
 	}
 }
 
@@ -271,7 +283,15 @@ func (l *LogManager) generatePath(key []byte) string {
 		safeKey = safeKey[:32]
 	}
 
-	return options.CurrentOptions.DbFilename + "." + safeKey + ".log"
+	// Use baseDir if specified, otherwise use global options
+	var basePath string
+	if l.baseDir != "" {
+		basePath = l.baseDir + "/log"
+	} else {
+		basePath = options.CurrentOptions.DbFilename
+	}
+
+	return basePath + "." + safeKey + ".log"
 }
 
 // CloseAll closes all logs (for shutdown)

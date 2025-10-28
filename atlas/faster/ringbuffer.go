@@ -21,6 +21,7 @@ package faster
 import (
 	"encoding/binary"
 	"fmt"
+	"runtime"
 	"sync/atomic"
 )
 
@@ -91,8 +92,13 @@ func (rb *RingBuffer) Append(entry *LogEntry) (uint64, error) {
 
 		// Check if we have space
 		if newReserved > rb.size {
-			// Buffer full (can't wrap around in this design)
-			return 0, ErrBufferFull
+			// Buffer appears full. Try to reclaim if everything has been flushed.
+			if rb.resetIfDrained() {
+				continue
+			}
+			// Otherwise wait briefly for space to become available.
+			runtime.Gosched()
+			continue
 		}
 
 		// Try to atomically claim this space
@@ -109,8 +115,9 @@ func (rb *RingBuffer) Append(entry *LogEntry) (uint64, error) {
 					// Successfully published! Entry is now visible to scanners
 					break
 				}
-				// Someone ahead of us hasn't published yet, spin-wait
-				// Note: This is safe and fast because the writer is actively working
+				// Someone ahead of us hasn't published yet
+				// Yield to let the publishing goroutine make progress
+				runtime.Gosched()
 			}
 
 			// Update watermark (track highest slot)
@@ -385,14 +392,41 @@ func (rb *RingBuffer) TryAdvanceTail(indexCheck func(uint64) bool) uint64 {
 	return 0
 }
 
-// Reset resets the buffer when all entries have been flushed
-// This reclaims space for new entries by resetting reserved/published/tail
+// Reset attempts to reset the buffer when all entries have been flushed.
+// If writers are active or the buffer still holds data, the reset is skipped.
 func (rb *RingBuffer) Reset() {
-	// Reset all pointers to beginning
-	// Only safe to call when all entries have been committed and flushed
-	rb.reserved.Store(0)
-	rb.published.Store(0)
-	rb.tail.Store(0)
+	rb.resetIfDrained()
+}
+
+// resetIfDrained resets allocator pointers if no in-flight writers exist and
+// the mutable buffer has been fully drained. Returns true when a reset occurs.
+func (rb *RingBuffer) resetIfDrained() bool {
+	for {
+		reserved := rb.reserved.Load()
+		published := rb.published.Load()
+		tail := rb.tail.Load()
+
+		if reserved == 0 && published == 0 && tail == 0 {
+			// Already reset
+			return true
+		}
+
+		// Only reset when no writers are in-flight and the buffer is fully drained.
+		if reserved != published || published != tail {
+			return false
+		}
+
+		// Attempt to claim the reset by moving reserved to 0.
+		if rb.reserved.CompareAndSwap(reserved, 0) {
+			// Safe to zero published/tail after reserved is cleared.
+			rb.published.Store(0)
+			rb.tail.Store(0)
+			return true
+		}
+
+		// Another writer raced the reset; yield and retry.
+		runtime.Gosched()
+	}
 }
 
 // AvailableSpace returns the available space in the buffer

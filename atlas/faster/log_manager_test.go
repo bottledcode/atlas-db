@@ -690,6 +690,7 @@ func TestStressTest(t *testing.T) {
 
 				log, release, err := manager.GetLog(key)
 				if err != nil {
+					t.Logf("Worker %d: GetLog failed: %v", workerID, err)
 					errors.Add(1)
 					continue
 				}
@@ -697,10 +698,11 @@ func TestStressTest(t *testing.T) {
 				// Do some work - accept then commit
 				slot := uint64(workerID)*1000 + uint64(time.Now().UnixNano()%1000)
 				ballot := Ballot{ID: uint64(workerID), NodeID: 1}
-				value := []byte(fmt.Sprintf("value-%d", workerID))
+				value := []byte{1} // Small payload for 2MB buffer
 
 				err = log.Accept(slot, ballot, value)
 				if err != nil {
+					t.Logf("Worker %d: Accept(slot=%d) failed: %v", workerID, slot, err)
 					errors.Add(1)
 					release()
 					continue
@@ -709,10 +711,16 @@ func TestStressTest(t *testing.T) {
 				// Commit to free up mutable buffer space
 				err = log.Commit(slot)
 				if err != nil {
+					t.Logf("Worker %d: Commit(slot=%d) failed: %v", workerID, slot, err)
 					errors.Add(1)
 				}
 
 				release()
+
+				// Periodically checkpoint to reclaim buffer space
+				if slot%100 == 0 {
+					_ = log.Checkpoint()
+				}
 
 				// Small random delay
 				time.Sleep(time.Millisecond * time.Duration(workerID%10))

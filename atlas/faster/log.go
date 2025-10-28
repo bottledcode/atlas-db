@@ -1,3 +1,21 @@
+/*
+ * This file is part of Atlas-DB.
+ *
+ * Atlas-DB is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of
+ * the License, or (at your option) any later version.
+ *
+ * Atlas-DB is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
+ *
+ */
+
 package faster
 
 import (
@@ -9,14 +27,14 @@ import (
 	"syscall"
 )
 
-// FasterLog implements a FASTER-style hybrid log optimized for consensus protocols
+// FasterLog implements a FASTER-style hybrid log optimised for consensus protocols
 // It has three regions:
 // 1. In-memory index (hash map): slot -> offset lookup
 // 2. Mutable region (ring buffer): recent uncommitted entries (LOCK-FREE!)
 // 3. Immutable tail (mmap file): committed entries, append-only
 //
 // LOCK-FREE DESIGN:
-// - Mutable region uses atomic CAS for allocation (no locks!)
+// - a Mutable region uses atomic CAS for allocation (no locks!)
 // - Reads scan buffer sequentially (fast for 64MB region)
 // - Epochs protect against use-after-free during concurrent access
 // - Only tail writes use a mutex (sequential disk writes)
@@ -106,7 +124,6 @@ func NewFasterLog(cfg Config) (*FasterLog, error) {
 
 // Accept writes an accepted (uncommitted) entry to the mutable region
 // This corresponds to WPaxos Phase-2b
-// LOCK-FREE: Uses atomic CAS in ring buffer, no locks needed!
 func (l *FasterLog) Accept(slot uint64, ballot Ballot, value []byte) error {
 	if l.closed.Load() {
 		return ErrClosed
@@ -181,14 +198,25 @@ func (l *FasterLog) Commit(slot uint64) error {
 	// Update index to point to tail (RCU: atomic pointer update)
 	l.index.Store(slot, tailOffset)
 
-	// Remove from mutable buffer tracking (no-op now, but kept for API compat)
-	l.mutableBuffer.Remove(slot)
+	// Try to reclaim space in mutable buffer by advancing tail
+	// This is critical to prevent ErrBufferFull under load!
+	indexCheck := func(checkSlot uint64) bool {
+		offsetVal, ok := l.index.Load(checkSlot)
+		if !ok {
+			return false
+		}
+		offset := offsetVal.(uint64)
+		// Return true if entry is still in mutable region
+		return (offset & mutableFlag) != 0
+	}
+
+	// Advance tail to reclaim space (returns bytes reclaimed)
+	_ = l.mutableBuffer.TryAdvanceTail(indexCheck)
 
 	return nil
 }
 
 // Read reads an entry by slot number
-// LOCK-FREE: Both mutable and tail reads are now lock-free!
 func (l *FasterLog) Read(slot uint64) (*LogEntry, error) {
 	if l.closed.Load() {
 		return nil, ErrClosed
@@ -235,7 +263,6 @@ func (l *FasterLog) ReadCommittedOnly(slot uint64) (*LogEntry, error) {
 
 // ScanUncommitted returns all uncommitted entries
 // This is used for WPaxos Phase-1 recovery
-// LOCK-FREE: Scans mutable buffer without locks
 func (l *FasterLog) ScanUncommitted() ([]*LogEntry, error) {
 	if l.closed.Load() {
 		return nil, ErrClosed

@@ -20,6 +20,8 @@ package kv
 import (
 	"context"
 	"io"
+
+	"github.com/dgraph-io/badger/v4"
 )
 
 // Store defines the key-value storage interface for Atlas-DB
@@ -37,7 +39,7 @@ type Store interface {
 	NewIterator(opts IteratorOptions) Iterator
 
 	// Transaction support
-	Begin(writable bool) (Transaction, error)
+	Begin(writable bool, slot uint64) (Transaction, error)
 
 	// Lifecycle
 	Close() error
@@ -52,6 +54,8 @@ type Transaction interface {
 	Store
 	Commit() error
 	Discard()
+	IterateHistory(ctx context.Context, key []byte) *badger.Iterator
+	IterateHistoryReverse(ctx context.Context, key []byte) *badger.Iterator
 }
 
 // Batch provides atomic batch operations

@@ -23,14 +23,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/bottledcode/atlas-db/atlas/faster"
 	"github.com/bottledcode/atlas-db/atlas/kv"
 	"github.com/bottledcode/atlas-db/atlas/options"
+	"github.com/dgraph-io/badger/v4"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -43,509 +47,534 @@ const NodeTable = "atlas.nodes"
 
 type Server struct {
 	UnimplementedConsensusServer
+	logs       *faster.LogManager
+	cache      map[string]*OwnershipTracking
+	namedLocks lock
 }
 
 func NewServer() *Server {
 	return &Server{}
 }
 
-func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnershipRequest) (*StealTableOwnershipResponse, error) {
-	// Get KV store for metadata operations
-	kvPool := kv.GetPool()
-	if kvPool == nil {
-		return nil, fmt.Errorf("KV pool not initialized")
-	}
-
-	metaStore := kvPool.MetaStore()
-	if metaStore == nil {
-		return nil, fmt.Errorf("metadata store not available")
-	}
-
-	tr := NewTableRepositoryKV(ctx, metaStore)
-	existingTable, err := tr.GetTable(req.GetTable().GetName())
-	if err != nil {
-		return nil, err
-	}
-
-	if existingTable == nil && req.GetReason() == StealReason_queryReason {
-		return &StealTableOwnershipResponse{
-			Promised: false,
-			Response: &StealTableOwnershipResponse_Failure{
-				Failure: &StealTableOwnershipFailure{
-					Table: req.Table,
-				},
-			},
-		}, nil
-	}
-	if existingTable == nil {
-		// this is a new table...
-		err = tr.InsertTable(req.GetTable())
+func (s *Server) Replicate(client grpc.ClientStreamingServer[ReplicationRequest, ReplicationResponse]) error {
+	applied := false
+	db := NewDataRepository(client.Context())
+	for {
+		req, err := client.Recv()
+		if err == io.EOF {
+			applied = true
+			break
+		}
 		if err != nil {
-			return nil, err
+			return status.Errorf(codes.Internal, "failed to receive replication request: %v", err)
 		}
-
-		if req.GetTable().GetType() == TableType_group {
-			// ensure the group is empty
-			var group *TableGroup
-			group, err = tr.GetGroup(req.GetTable().GetName())
-			if err != nil {
-				return nil, err
-			}
-
-			// a new group must be empty
-			if len(group.GetTables()) > 0 {
-				err = errors.New("the new group must be empty")
-				return nil, err
-			}
-		}
-
-		return &StealTableOwnershipResponse{
-			Promised: true,
-			Response: &StealTableOwnershipResponse_Success{
-				Success: &StealTableOwnershipSuccess{
-					Table:             req.Table,
-					MissingMigrations: make([]*Migration, 0),
-				},
-			},
-		}, nil
-	}
-
-	if req.GetReason() == StealReason_queryReason || req.GetReason() == StealReason_discoveryReason {
-		return &StealTableOwnershipResponse{
-			Promised: false,
-			Response: &StealTableOwnershipResponse_Failure{
-				Failure: &StealTableOwnershipFailure{
-					Table: existingTable,
-				},
-			},
-		}, nil
-	}
-
-	if existingTable.GetVersion() > req.GetTable().GetVersion() {
-		options.Logger.Info(
-			"the existing table version is higher than the requested version",
-			zap.String("table", existingTable.GetName()),
-			zap.Int64("existing_version", existingTable.GetVersion()),
-			zap.Int64("requested_version", req.GetTable().GetVersion()),
-		)
-
-		// the ballot number is lower, so reject the steal
-		return &StealTableOwnershipResponse{
-			Promised: false,
-			Response: &StealTableOwnershipResponse_Failure{
-				Failure: &StealTableOwnershipFailure{
-					Table: existingTable,
-				},
-			},
-		}, nil
-	}
-
-	if existingTable.GetVersion() == req.GetTable().GetVersion() {
-		// the ballot number is the same, so compare the node ids of the current stealers and the existing owner
-		if existingTable.GetOwner() != nil && req.GetTable().GetOwner() != nil {
-			if existingTable.GetOwner().GetId() > req.GetTable().GetOwner().GetId() {
-				return &StealTableOwnershipResponse{
-					Promised: false,
-					Response: &StealTableOwnershipResponse_Failure{
-						Failure: &StealTableOwnershipFailure{
-							Table: existingTable,
-						},
-					},
-				}, nil
-			}
-		}
-
-		// the ballot number is the same, and the new owner wins by node id
-	}
-
-	// the ballot number is higher
-
-	// if this table is a group, all tables in the group must be stolen
-	var missing []*Migration
-	dr := NewDataRepository(ctx, kvPool.DataStore())
-	mr := NewMigrationRepositoryKV(ctx, metaStore, dr)
-	if existingTable.GetType() == TableType_group {
-
-		// first we update the table to the new owner
-		err = tr.UpdateTable(req.GetTable())
+		err = db.Put(req.GetData())
 		if err != nil {
-			return nil, err
+			return status.Errorf(codes.Internal, "failed to replicate data: %v", err)
 		}
-
-		// then retrieve the group membership
-		var group *TableGroup
-		group, err = tr.GetGroup(existingTable.GetName())
-		if err != nil {
-			return nil, err
-		}
-
-		// and steal each table in the group
-		var m []*Migration
-		for _, t := range group.GetTables() {
-			m, err = s.stealTableOperation(tr, mr, t)
-			if err != nil {
-				return nil, err
-			}
-			missing = append(missing, m...)
-		}
-	} else {
-		missing, err = s.stealTableOperation(tr, mr, req.GetTable())
-		if err != nil {
-			return nil, err
-		}
+		applied = true
 	}
-
-	return &StealTableOwnershipResponse{
-		Promised: true,
-		Response: &StealTableOwnershipResponse_Success{
-			Success: &StealTableOwnershipSuccess{
-				Table:             req.Table,
-				MissingMigrations: missing,
-			},
-		},
-	}, nil
+	return client.SendAndClose(&ReplicationResponse{
+		Committed: applied,
+	})
 }
 
-func (s *Server) stealTableOperation(tr TableRepository, mr MigrationRepository, table *Table) ([]*Migration, error) {
-	err := tr.UpdateTable(table)
+func (s *Server) DeReference(req *DereferenceRequest, client grpc.ServerStreamingServer[DereferenceResponse]) error {
+	db := NewDataRepository(client.Context())
+	prefix := db.GetPrefix(req.GetReference())
+	err := db.PrefixScan(nil, false, prefix, func(key DataKey, data *Data, transaction *kv.Transaction) error {
+		err := client.Send(&DereferenceResponse{
+			Data: data,
+		})
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to scan data: %v", err)
+	}
+	return nil
+}
+
+func (b *Ballot) Less(other *Ballot) bool {
+	if b.GetId() != other.GetId() {
+		return b.GetId() < other.GetId()
+	}
+	return b.GetNode() < other.GetNode()
+}
+
+func getTrackingKey(key []byte) []byte {
+	return []byte(fmt.Sprintf("b:%s", key))
+}
+
+func getLogKey(key []byte) []byte {
+	return []byte(fmt.Sprintf("log:%s", key))
+}
+
+func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnershipRequest) (*StealTableOwnershipResponse, error) {
+	log, err := s.logs.GetLog(req.GetBallot().GetKey())
 	if err != nil {
 		return nil, err
 	}
 
-	missing, err := mr.GetUncommittedMigrations(table)
+	key := req.GetBallot().GetKey()
+	db := kv.GetPool().MetaStore()
+
+	trackingKey := getTrackingKey(key)
+
+	tx, err := db.Begin(true, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Discard()
+	ballots, err := tx.Get(ctx, trackingKey)
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		// this is a totally new object for us
+		tracking := &OwnershipTracking{
+			Promised:         req.Ballot,
+			Owned:            false,
+			NextSlot:         0,
+			MaxAcceptedSlot:  0,
+			MaxCommittedSlot: 0,
+		}
+		write, err := proto.Marshal(tracking)
+		if err != nil {
+			return nil, err
+		}
+		err = tx.Put(ctx, trackingKey, write)
+		if err != nil {
+			return nil, err
+		}
+		err = tx.Commit()
+		if err != nil {
+			return &StealTableOwnershipResponse{
+				Promised: false,
+			}, err
+		}
+		return &StealTableOwnershipResponse{
+			Promised:       true,
+			MissingRecords: nil,
+		}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
 
-	return missing, nil
+	var tracking OwnershipTracking
+	err = proto.Unmarshal(ballots, &tracking)
+	if err != nil {
+		return nil, err
+	}
+
+	if req.GetBallot().Less(tracking.Promised) {
+		return &StealTableOwnershipResponse{
+			Promised:       false,
+			MissingRecords: nil,
+		}, nil
+	}
+
+	// we give up ownership
+	tracking.Promised = req.GetBallot()
+	tracking.Owned = false
+
+	write, err := proto.Marshal(&tracking)
+	if err != nil {
+		return nil, err
+	}
+	err = tx.Put(ctx, trackingKey, write)
+	if err != nil {
+		return nil, err
+	}
+
+	logKey := getLogKey(key)
+	it := tx.IterateHistory(ctx, logKey)
+	missingBallots := make([]*RecordMutation, 0)
+	success := &StealTableOwnershipResponse{
+		Promised:       true,
+		MissingRecords: make([]*RecordMutation, 0),
+		HighestBallot:  tracking.GetPromised(),
+		HighestSlot:    nil,
+	}
+
+	current := &RecordMutation{}
+	for it.Rewind(); it.Valid(); it.Next() {
+		err = it.Item().Value(func(val []byte) error {
+			err := proto.Unmarshal(val, current)
+			return err
+		})
+		if err != nil {
+			return nil, err
+		}
+		if !current.GetCommitted() {
+			missingBallots = append(missingBallots, proto.Clone(current).(*RecordMutation))
+		}
+	}
+
+	success.HighestSlot = current
+
+	err = tx.Commit()
+	if err != nil {
+		return &StealTableOwnershipResponse{
+			Promised: false,
+		}, err
+	}
+
+	return success, nil
 }
 
 func (s *Server) WriteMigration(ctx context.Context, req *WriteMigrationRequest) (*WriteMigrationResponse, error) {
-	// Get KV store for metadata operations
-	kvPool := kv.GetPool()
-	if kvPool == nil {
-		return nil, fmt.Errorf("KV pool not initialized")
+	record := req.GetRecord()
+	if record == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "missing record")
 	}
 
-	metaStore := kvPool.MetaStore()
-	if metaStore == nil {
-		return nil, fmt.Errorf("metadata store not available")
+	db := kv.GetPool().MetaStore()
+	trackingKey := []byte(fmt.Sprintf("b:%s", record.GetSlot().GetKey()))
+
+	// Phase-2b ballot check: Read tracking to verify we can accept this ballot
+	// This is a read-only check before we commit to any writes
+	otxCheck, err := db.Begin(false, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer otxCheck.Discard()
+
+	bytes, err := otxCheck.Get(ctx, trackingKey)
+	var tracking *OwnershipTracking
+
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		// New object - no prior promise, so we can accept any ballot
+		tracking = &OwnershipTracking{
+			Promised:         record.GetBallot(),
+			Owned:            false,
+			NextSlot:         0,
+			MaxAcceptedSlot:  0,
+			MaxCommittedSlot: 0,
+		}
+		options.Logger.Debug("WriteMigration: new object, accepting ballot",
+			zap.String("key", string(record.GetSlot().GetKey())),
+			zap.Uint64("ballot_id", record.GetSlot().GetId()),
+			zap.Uint64("ballot_node", record.GetSlot().GetNode()))
+	} else if err != nil {
+		return nil, err
+	} else {
+		// Existing object - check ballot against promise
+		tracking = &OwnershipTracking{}
+		err = proto.Unmarshal(bytes, tracking)
+		if err != nil {
+			return nil, err
+		}
+
+		// WPaxos Phase-2b requirement: await m.b >= ballots[m.o]
+		// Reject if the incoming ballot is less than the promised ballot
+		if record.GetBallot().Less(tracking.Promised) {
+			options.Logger.Info("WriteMigration: rejecting lower ballot",
+				zap.String("key", string(record.GetSlot().GetKey())),
+				zap.Uint64("incoming_ballot_id", record.GetSlot().GetId()),
+				zap.Uint64("incoming_ballot_node", record.GetSlot().GetNode()),
+				zap.Uint64("promised_ballot_id", tracking.Promised.GetId()),
+				zap.Uint64("promised_ballot_node", tracking.Promised.GetNode()))
+			return &WriteMigrationResponse{
+				Accepted: false,
+			}, nil
+		}
+
+		options.Logger.Debug("WriteMigration: accepting ballot",
+			zap.String("key", string(record.GetSlot().GetKey())),
+			zap.Uint64("incoming_ballot_id", record.GetSlot().GetId()),
+			zap.Uint64("promised_ballot_id", tracking.Promised.GetId()))
 	}
 
-	tableRepo := NewTableRepositoryKV(ctx, metaStore)
-	existingTable, err := tableRepo.GetTable(req.GetMigration().GetVersion().GetTableName())
+	// Ballot check passed - now write to log (source of truth)
+	// Transaction 1: Write to versioned log at the specific slot ID
+	tx, err := db.Begin(true, record.GetSlot().GetId())
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Discard()
+
+	logKey := getLogKey(req.GetRecord().GetSlot().GetKey())
+	logBytes, err := proto.Marshal(record)
 	if err != nil {
 		return nil, err
 	}
 
-	if existingTable == nil {
-		options.Logger.Warn("the table isn't found, but expected", zap.String("table", req.GetMigration().GetVersion().GetTableName()))
-
-		return &WriteMigrationResponse{
-			Success: false,
-			Table:   nil,
-		}, fmt.Errorf("table %s not found", req.GetMigration().GetVersion().GetTableName())
-	}
-
-	if existingTable.GetVersion() > req.GetMigration().GetVersion().GetTableVersion() {
-		// the table version is higher than the requested version, so reject the migration since it isn't the owner
-		return &WriteMigrationResponse{
-			Success: false,
-			Table:   existingTable,
-		}, nil
-	} else if existingTable.GetOwner() != nil && existingTable.GetVersion() == req.GetMigration().GetVersion().GetTableVersion() && existingTable.GetOwner().GetId() != req.GetSender().GetId() {
-		// the table version is the same, but the owner is different, so reject the migration
-		return &WriteMigrationResponse{
-			Success: false,
-			Table:   existingTable,
-		}, nil
-	}
-
-	// insert the migration
-	dr := NewDataRepository(ctx, kvPool.DataStore())
-	migrationRepo := NewMigrationRepositoryKV(ctx, metaStore, dr)
-	err = migrationRepo.AddMigration(req.GetMigration())
+	err = tx.Put(ctx, logKey, logBytes)
 	if err != nil {
+		return nil, err
+	}
+
+	// DO NOT commit log yet - we need tracking update to be atomic with it
+	// Instead, prepare tracking update first
+
+	// Retry loop for tracking update with conflict resolution
+	// We've already decided to accept based on the initial ballot check
+	// Now we must ensure tracking reflects our acceptance
+	for {
+		// Update tracking with new ballot and max accepted slot
+		// Use max() to handle concurrent updates correctly
+		if tracking.Promised == nil || record.GetBallot().Less(tracking.Promised) {
+			// Keep existing promise if it's higher
+		} else {
+			tracking.Promised = record.GetBallot()
+		}
+
+		if tracking.MaxAcceptedSlot < record.GetSlot().GetId() {
+			tracking.MaxAcceptedSlot = record.GetSlot().GetId()
+		}
+
+		trackingBytes, err := proto.Marshal(tracking)
+		if err != nil {
+			return nil, err
+		}
+
+		// Transaction 2: Update tracking metadata (BEFORE committing log)
+		otx, err := db.Begin(true, 0)
+		if err != nil {
+			return nil, err
+		}
+		defer otx.Discard()
+
+		err = otx.Put(ctx, trackingKey, trackingBytes)
+		if err != nil {
+			return nil, err
+		}
+
+		// CRITICAL: Commit tracking FIRST, then log
+		// This ensures ballot promise is persisted before the log entry
+		err = otx.Commit()
+		if err == nil {
+			// Success! Break out of retry loop
+			break
+		}
+
+		if !errors.Is(err, badger.ErrConflict) {
+			// Real error (not a conflict) - fail
+			options.Logger.Error("WriteMigration: failed to commit tracking update",
+				zap.String("key", string(record.GetSlot().GetKey())),
+				zap.Error(err))
+			return nil, err
+		}
+
+		// Conflict detected - someone else updated tracking concurrently
+		// Re-read tracking to get the latest values and retry
+		options.Logger.Debug("WriteMigration: tracking conflict, re-reading and retrying",
+			zap.String("key", string(record.GetSlot().GetKey())))
+
+		otxRetry, err := db.Begin(false, 0)
+		if err != nil {
+			return nil, err
+		}
+		defer otxRetry.Discard()
+
+		bytes, err = otxRetry.Get(ctx, trackingKey)
+		if err != nil {
+			options.Logger.Error("WriteMigration: failed to re-read tracking after conflict",
+				zap.String("key", string(record.GetSlot().GetKey())),
+				zap.Error(err))
+			return nil, err
+		}
+
+		tracking = &OwnershipTracking{}
+		err = proto.Unmarshal(bytes, tracking)
+		if err != nil {
+			return nil, err
+		}
+
+		// Loop will retry with updated tracking values
+		// We'll take max(existing, ours) for both Promised and MaxAcceptedSlot
+	}
+
+	// Now commit the log - if this fails, we have promise but no log entry
+	// This is safe: we'll reject lower ballots, and leader can retry
+	err = tx.Commit()
+	if err != nil {
+		options.Logger.Error("WriteMigration: failed to commit log entry (tracking already committed)",
+			zap.String("key", string(record.GetSlot().GetKey())),
+			zap.Error(err))
+		// This is problematic but safer than the reverse
+		// We promised a ballot but didn't accept the value
+		// The leader will retry and we'll reject lower ballots
 		return nil, err
 	}
 
 	return &WriteMigrationResponse{
-		Success: true,
-		Table:   nil,
+		Accepted: true,
 	}, nil
 }
 
-func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest) (*emptypb.Empty, error) {
-	// Get the appropriate KV store for the migration
-	var kvStore kv.Store
-	kvPool := kv.GetPool()
-	if kvPool == nil {
-		return nil, fmt.Errorf("KV pool not initialized")
+func (s *Server) reconstructRecord(ctx context.Context, tx kv.Transaction, key []byte) (*Record, error) {
+	it := tx.IterateHistoryReverse(ctx, key)
+
+	// walk history backwards until we arrive at a completed record
+	completed := &Record{
+		DerivedFrom: nil,
+		Acl:         nil,
+		Data:        nil,
 	}
 
-	// Use metadata store for consensus operations
-	metaStore := kvPool.MetaStore()
-	if metaStore == nil {
-		return nil, fmt.Errorf("metadata store not available")
-	}
+	gotData := false
+	gotAcl := false
+	gotDerivedFrom := false
 
-	if strings.HasPrefix(req.GetMigration().GetVersion().GetTableName(), "atlas.") {
-		// Use metadata store for atlas tables
-		kvStore = metaStore
-	} else {
-		// Use data store for user tables
-		kvStore = kvPool.DataStore()
-		if kvStore == nil {
-			return nil, fmt.Errorf("data store not available")
+	slot := &RecordMutation{}
+
+	for it.Rewind(); it.Valid(); it.Next() {
+		err := it.Item().Value(func(v []byte) error {
+			return proto.Unmarshal(v, slot)
+		})
+
+		if err != nil {
+			return nil, err
 		}
-	}
 
-	dr := NewDataRepository(ctx, kvStore)
-	mr := NewMigrationRepositoryKV(ctx, metaStore, dr)
-	migrations, err := mr.GetMigrationVersion(req.GetMigration().GetVersion())
-	if err != nil {
-		return nil, err
-	}
-
-	err = s.applyMigration(migrations, kvStore)
-	if err != nil {
-		return nil, err
-	}
-
-	err = mr.CommitMigrationExact(req.GetMigration().GetVersion())
-	if err != nil {
-		return nil, err
-	}
-
-	return &emptypb.Empty{}, nil
-}
-
-func (s *Server) applyMigration(migrations []*Migration, kvStore kv.Store) error {
-	for _, migration := range migrations {
-		switch migration.GetMigration().(type) {
-		case *Migration_Schema:
-			// Schema migrations are not supported in KV mode
-			// Skip silently for backward compatibility during transition
-			options.Logger.Warn("Schema migration ignored in KV mode",
-				zap.String("table", migration.GetVersion().GetTableName()))
-			continue
-		case *Migration_Data:
-			err := s.applyKVDataMigration(migration, kvStore)
-			if err != nil {
-				return fmt.Errorf("failed to apply KV data migration: %w", err)
+		switch m := slot.GetMessage().(type) {
+		case *RecordMutation_Compaction:
+			completed = m.Compaction
+			gotData = true
+			gotAcl = true
+		case *RecordMutation_Tombstone:
+			if !gotData {
+				gotData = true
 			}
-		}
-	}
-	return nil
-}
-
-func (s *Server) applyKVDataMigration(migration *Migration, kvStore kv.Store) error {
-	ctx := context.Background()
-	dataMigration := migration.GetData()
-	mv := migration.GetVersion()
-
-	switch migrationType := dataMigration.GetSession().(type) {
-	case *DataMigration_Change:
-		switch op := migrationType.Change.GetOperation().(type) {
-		case *KVChange_Set:
-			record := op.Set.Data
-			value, err := proto.Marshal(record)
-			if err != nil {
-				return fmt.Errorf("failed to marshal KV record: %w", err)
+		case *RecordMutation_AclUpdated:
+			if !gotAcl {
+				gotAcl = true
+				completed.Acl = m.AclUpdated
 			}
-			err = kvStore.Put(ctx, op.Set.Key, value)
-			if err != nil {
-				return fmt.Errorf("failed to SET key %s: %w", op.Set.Key, err)
+		case *RecordMutation_ValueAddress:
+			if !gotData {
+				gotData = true
+				completed.Data = m.ValueAddress
 			}
-			options.Logger.Info("Applied KV SET migration",
-				zap.String("key", string(op.Set.Key)),
-				zap.Int("value_size", len(value)),
-				zap.Int64("table_version", mv.GetTableVersion()),
-				zap.Int64("migration_version", mv.GetMigrationVersion()),
-				zap.Int64("node_id", mv.GetNodeId()),
-				zap.String("table", mv.GetTableName()),
-			)
-		case *KVChange_Del:
-			err := kvStore.Delete(ctx, op.Del.Key)
-			if err != nil {
-				return fmt.Errorf("failed to DELETE key %s: %w", op.Del.Key, err)
-			}
-			options.Logger.Info("Applied KV DELETE migration",
-				zap.String("key", string(op.Del.Key)),
-				zap.Int64("table_version", mv.GetTableVersion()),
-				zap.Int64("migration_version", mv.GetMigrationVersion()),
-				zap.Int64("node_id", mv.GetNodeId()),
-				zap.String("table", mv.GetTableName()),
-			)
-		case *KVChange_Data:
-			sessionData := op.Data.GetData()
-			var operationCheck map[string]any
-			err := json.Unmarshal(sessionData, &operationCheck)
-			if err != nil {
-				return fmt.Errorf("failed to unmarshal operation data: %w", err)
-			}
-			operation, ok := operationCheck["operation"].(string)
-			if !ok {
-				return fmt.Errorf("missing or invalid operation field")
-			}
-			switch operation {
-			case "ADD_NODE":
-				err := s.applyAddNodeOperation(ctx, sessionData, kvStore)
-				if err != nil {
-					return fmt.Errorf("failed to apply the ADD_NODE operation: %w", err)
-				}
-			default:
-				return fmt.Errorf("unknown KV operation: %s", operation)
-			}
-		case *KVChange_Acl:
-			switch change := op.Acl.GetChange().(type) {
-			case *AclChange_Addition:
-				var record Record
-				val, err := kvStore.Get(ctx, op.Acl.GetKey())
-				if err != nil && !errors.Is(err, kv.ErrKeyNotFound) {
-					return fmt.Errorf("failed to GET key %s: %w", op.Acl.GetKey(), err)
-				}
-				if err == nil {
-					// Key exists - unmarshal existing record
-					err = proto.Unmarshal(val, &record)
-					if err != nil {
-						return fmt.Errorf("failed to unmarshal ACL record: %w", err)
-					}
-				}
-				// If key doesn't exist, record remains zero-value (empty record with ACL to be added)
-
-				// Initialize AccessControl if it doesn't exist
-				if record.AccessControl == nil {
-					record.AccessControl = &ACL{}
-				}
-				now := timestamppb.Now()
-
-				// Handle Owners
-				if change.Addition.Owners != nil {
-					if record.AccessControl.Owners == nil {
-						record.AccessControl.Owners = &ACLData{
-							Principals: []string{},
-							CreatedAt:  now,
-							UpdatedAt:  now,
-						}
-					}
-					for _, r := range change.Addition.Owners.GetPrincipals() {
-						if !slices.Contains(record.AccessControl.Owners.Principals, r) {
-							record.AccessControl.Owners.Principals = append(record.AccessControl.Owners.Principals, r)
-							record.AccessControl.Owners.UpdatedAt = now
-						}
-					}
-				}
-
-				// Handle Readers
-				if change.Addition.Readers != nil {
-					if record.AccessControl.Readers == nil {
-						record.AccessControl.Readers = &ACLData{
-							Principals: []string{},
-							CreatedAt:  now,
-							UpdatedAt:  now,
-						}
-					}
-					for _, r := range change.Addition.Readers.GetPrincipals() {
-						if !slices.Contains(record.AccessControl.Readers.Principals, r) {
-							record.AccessControl.Readers.Principals = append(record.AccessControl.Readers.Principals, r)
-							record.AccessControl.Readers.UpdatedAt = now
-						}
-					}
-				}
-
-				// Handle Writers
-				if change.Addition.Writers != nil {
-					if record.AccessControl.Writers == nil {
-						record.AccessControl.Writers = &ACLData{
-							Principals: []string{},
-							CreatedAt:  now,
-							UpdatedAt:  now,
-						}
-					}
-					for _, r := range change.Addition.Writers.GetPrincipals() {
-						if !slices.Contains(record.AccessControl.Writers.Principals, r) {
-							record.AccessControl.Writers.Principals = append(record.AccessControl.Writers.Principals, r)
-							record.AccessControl.Writers.UpdatedAt = now
-						}
-					}
-				}
-				value, err := proto.Marshal(&record)
-				if err != nil {
-					return fmt.Errorf("failed to marshal ACL record: %w", err)
-				}
-				err = kvStore.Put(ctx, op.Acl.GetKey(), value)
-				if err != nil {
-					return fmt.Errorf("failed to SET key %s: %w", op.Acl.GetKey(), err)
-				}
-			case *AclChange_Deletion:
-				var record Record
-				val, err := kvStore.Get(ctx, op.Acl.GetKey())
-				if err != nil {
-					return fmt.Errorf("failed to GET key %s: %w", op.Acl.GetKey(), err)
-				}
-				err = proto.Unmarshal(val, &record)
-				if err != nil {
-					return fmt.Errorf("failed to unmarshal ACL record: %w", err)
-				}
-
-				// Only process deletion if AccessControl exists
-				if record.AccessControl != nil {
-					// Handle Owners deletion
-					if change.Deletion.Owners != nil && record.AccessControl.Owners != nil {
-						var next []string
-						for _, r := range record.AccessControl.Owners.Principals {
-							if !slices.Contains(change.Deletion.Owners.GetPrincipals(), r) {
-								next = append(next, r)
-							}
-						}
-						record.AccessControl.Owners.Principals = next
-					}
-
-					// Handle Readers deletion
-					if change.Deletion.Readers != nil && record.AccessControl.Readers != nil {
-						var nextRead []string
-						for _, r := range record.AccessControl.Readers.Principals {
-							if !slices.Contains(change.Deletion.Readers.GetPrincipals(), r) {
-								nextRead = append(nextRead, r)
-							}
-						}
-						record.AccessControl.Readers.Principals = nextRead
-					}
-
-					// Handle Writers deletion
-					if change.Deletion.Writers != nil && record.AccessControl.Writers != nil {
-						var nextWrite []string
-						for _, r := range record.AccessControl.Writers.Principals {
-							if !slices.Contains(change.Deletion.Writers.GetPrincipals(), r) {
-								nextWrite = append(nextWrite, r)
-							}
-						}
-						record.AccessControl.Writers.Principals = nextWrite
-					}
-
-					// If Owners is empty, check if we should remove entire ACL
-					ownersEmpty := record.AccessControl.Owners == nil || len(record.AccessControl.Owners.Principals) == 0
-					if ownersEmpty {
-						// No owners means the record becomes public (remove entire ACL)
-						record.AccessControl = nil
-					}
-				}
-				value, err := proto.Marshal(&record)
-				if err != nil {
-					return fmt.Errorf("failed to marshal ACL record: %w", err)
-				}
-				err = kvStore.Put(ctx, op.Acl.GetKey(), value)
-				if err != nil {
-					return fmt.Errorf("failed to SET key %s: %w", op.Acl.GetKey(), err)
-				}
-			}
+		case *RecordMutation_Noop:
 		default:
-			return fmt.Errorf("unknown KV operation: %s", op)
+			return nil, fmt.Errorf("unknown message type: %T", m)
+		}
+
+		if !gotDerivedFrom {
+			gotDerivedFrom = true
+			completed.DerivedFrom = slot.GetSlot()
+		}
+
+		if gotData && gotAcl && gotDerivedFrom {
+			break
 		}
 	}
 
-	return nil
+	return completed, nil
+}
+
+func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest) (*emptypb.Empty, error) {
+	record := req.GetRecord()
+	if record == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "missing record")
+	}
+
+	mdb := kv.GetPool().MetaStore()
+	vdb := kv.GetPool().DataStore()
+
+	tx, err := mdb.Begin(false, record.GetSlot().GetId())
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Discard()
+
+	logKey := []byte(fmt.Sprintf("log:%s", record.GetSlot().GetKey()))
+
+	newValue, err := s.reconstructRecord(ctx, tx, logKey)
+	if err != nil {
+		return nil, err
+	}
+
+	trackingKey := getTrackingKey(record.GetSlot().GetKey())
+	tracking := &OwnershipTracking{}
+	for {
+		otx, err := mdb.Begin(true, 0)
+		if err != nil {
+			return nil, err
+		}
+
+		bytes, err := otx.Get(ctx, trackingKey)
+		if err != nil {
+			otx.Discard()
+			return nil, err
+		}
+		err = proto.Unmarshal(bytes, tracking)
+		if err != nil {
+			otx.Discard()
+			return nil, err
+		}
+		if tracking.MaxCommittedSlot < req.GetRecord().GetSlot().GetId() {
+			tracking.MaxCommittedSlot = req.GetRecord().GetSlot().GetId()
+			bytes, err = proto.Marshal(tracking)
+			if err != nil {
+				otx.Discard()
+				return nil, err
+			}
+			err = otx.Put(ctx, trackingKey, bytes)
+			if err != nil {
+				otx.Discard()
+				return nil, err
+			}
+
+			err = otx.Commit()
+			if err != nil && errors.Is(err, badger.ErrConflict) {
+				otx.Discard()
+				return nil, err
+			} else if err == nil {
+				otx.Discard()
+				break
+			}
+		} else {
+			otx.Discard()
+			break // a later slot has been committed
+		}
+	}
+
+	currentValue := &Record{}
+	for {
+		vtx, err := vdb.Begin(true, 0)
+		if err != nil {
+			return nil, err
+		}
+		bytes, err := vtx.Get(ctx, newValue.GetDerivedFrom().GetKey())
+		if err != nil {
+			vtx.Discard()
+			return nil, err
+		}
+		err = proto.Unmarshal(bytes, currentValue)
+		if err != nil {
+			vtx.Discard()
+			return nil, err
+		}
+		if currentValue.GetDerivedFrom().GetId() > newValue.GetDerivedFrom().GetId() {
+			// the current value is already beyond this commit. Nothing to do here
+			vtx.Discard()
+			break
+		} else if newValue.GetDerivedFrom().GetId()-currentValue.GetDerivedFrom().GetId() > 1 {
+			// we must keep serialization order, so keep trying.
+			vtx.Discard()
+			continue
+		}
+		err = vtx.Put(ctx, newValue.GetDerivedFrom().GetKey(), bytes)
+		if err != nil {
+			vtx.Discard()
+			return nil, err
+		}
+		err = vtx.Commit()
+		if err != nil && !errors.Is(err, badger.ErrConflict) {
+			vtx.Discard()
+			return nil, err
+		} else if err == nil {
+			vtx.Discard()
+			break
+		}
+		vtx.Discard()
+	}
+
+	return nil, nil
 }
 
 // applyAddNodeOperation handles the ADD_NODE operation by properly adding the node using NodeRepositoryKV

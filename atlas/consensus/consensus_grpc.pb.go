@@ -39,8 +39,8 @@ const (
 	Consensus_StealTableOwnership_FullMethodName = "/atlas.consensus.Consensus/StealTableOwnership"
 	Consensus_WriteMigration_FullMethodName      = "/atlas.consensus.Consensus/WriteMigration"
 	Consensus_AcceptMigration_FullMethodName     = "/atlas.consensus.Consensus/AcceptMigration"
-	Consensus_JoinCluster_FullMethodName         = "/atlas.consensus.Consensus/JoinCluster"
-	Consensus_Gossip_FullMethodName              = "/atlas.consensus.Consensus/Gossip"
+	Consensus_Replicate_FullMethodName           = "/atlas.consensus.Consensus/Replicate"
+	Consensus_DeReference_FullMethodName         = "/atlas.consensus.Consensus/DeReference"
 	Consensus_Ping_FullMethodName                = "/atlas.consensus.Consensus/Ping"
 	Consensus_ReadKey_FullMethodName             = "/atlas.consensus.Consensus/ReadKey"
 	Consensus_WriteKey_FullMethodName            = "/atlas.consensus.Consensus/WriteKey"
@@ -55,8 +55,8 @@ type ConsensusClient interface {
 	StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipResponse, error)
 	WriteMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*WriteMigrationResponse, error)
 	AcceptMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	JoinCluster(ctx context.Context, in *Node, opts ...grpc.CallOption) (*JoinClusterResponse, error)
-	Gossip(ctx context.Context, in *GossipMigration, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	Replicate(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ReplicationRequest, ReplicationResponse], error)
+	DeReference(ctx context.Context, in *DereferenceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DereferenceResponse], error)
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
 	ReadKey(ctx context.Context, in *ReadKeyRequest, opts ...grpc.CallOption) (*ReadKeyResponse, error)
 	WriteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error)
@@ -102,25 +102,37 @@ func (c *consensusClient) AcceptMigration(ctx context.Context, in *WriteMigratio
 	return out, nil
 }
 
-func (c *consensusClient) JoinCluster(ctx context.Context, in *Node, opts ...grpc.CallOption) (*JoinClusterResponse, error) {
+func (c *consensusClient) Replicate(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ReplicationRequest, ReplicationResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(JoinClusterResponse)
-	err := c.cc.Invoke(ctx, Consensus_JoinCluster_FullMethodName, in, out, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Consensus_ServiceDesc.Streams[0], Consensus_Replicate_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &grpc.GenericClientStream[ReplicationRequest, ReplicationResponse]{ClientStream: stream}
+	return x, nil
 }
 
-func (c *consensusClient) Gossip(ctx context.Context, in *GossipMigration, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Consensus_ReplicateClient = grpc.ClientStreamingClient[ReplicationRequest, ReplicationResponse]
+
+func (c *consensusClient) DeReference(ctx context.Context, in *DereferenceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DereferenceResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, Consensus_Gossip_FullMethodName, in, out, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Consensus_ServiceDesc.Streams[1], Consensus_DeReference_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &grpc.GenericClientStream[DereferenceRequest, DereferenceResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Consensus_DeReferenceClient = grpc.ServerStreamingClient[DereferenceResponse]
 
 func (c *consensusClient) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -179,8 +191,8 @@ type ConsensusServer interface {
 	StealTableOwnership(context.Context, *StealTableOwnershipRequest) (*StealTableOwnershipResponse, error)
 	WriteMigration(context.Context, *WriteMigrationRequest) (*WriteMigrationResponse, error)
 	AcceptMigration(context.Context, *WriteMigrationRequest) (*emptypb.Empty, error)
-	JoinCluster(context.Context, *Node) (*JoinClusterResponse, error)
-	Gossip(context.Context, *GossipMigration) (*emptypb.Empty, error)
+	Replicate(grpc.ClientStreamingServer[ReplicationRequest, ReplicationResponse]) error
+	DeReference(*DereferenceRequest, grpc.ServerStreamingServer[DereferenceResponse]) error
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
 	ReadKey(context.Context, *ReadKeyRequest) (*ReadKeyResponse, error)
 	WriteKey(context.Context, *WriteKeyRequest) (*WriteKeyResponse, error)
@@ -205,11 +217,11 @@ func (UnimplementedConsensusServer) WriteMigration(context.Context, *WriteMigrat
 func (UnimplementedConsensusServer) AcceptMigration(context.Context, *WriteMigrationRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AcceptMigration not implemented")
 }
-func (UnimplementedConsensusServer) JoinCluster(context.Context, *Node) (*JoinClusterResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method JoinCluster not implemented")
+func (UnimplementedConsensusServer) Replicate(grpc.ClientStreamingServer[ReplicationRequest, ReplicationResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method Replicate not implemented")
 }
-func (UnimplementedConsensusServer) Gossip(context.Context, *GossipMigration) (*emptypb.Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Gossip not implemented")
+func (UnimplementedConsensusServer) DeReference(*DereferenceRequest, grpc.ServerStreamingServer[DereferenceResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method DeReference not implemented")
 }
 func (UnimplementedConsensusServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Ping not implemented")
@@ -301,41 +313,23 @@ func _Consensus_AcceptMigration_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Consensus_JoinCluster_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(Node)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ConsensusServer).JoinCluster(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Consensus_JoinCluster_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ConsensusServer).JoinCluster(ctx, req.(*Node))
-	}
-	return interceptor(ctx, in, info, handler)
+func _Consensus_Replicate_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(ConsensusServer).Replicate(&grpc.GenericServerStream[ReplicationRequest, ReplicationResponse]{ServerStream: stream})
 }
 
-func _Consensus_Gossip_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GossipMigration)
-	if err := dec(in); err != nil {
-		return nil, err
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Consensus_ReplicateServer = grpc.ClientStreamingServer[ReplicationRequest, ReplicationResponse]
+
+func _Consensus_DeReference_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(DereferenceRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
 	}
-	if interceptor == nil {
-		return srv.(ConsensusServer).Gossip(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Consensus_Gossip_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ConsensusServer).Gossip(ctx, req.(*GossipMigration))
-	}
-	return interceptor(ctx, in, info, handler)
+	return srv.(ConsensusServer).DeReference(m, &grpc.GenericServerStream[DereferenceRequest, DereferenceResponse]{ServerStream: stream})
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Consensus_DeReferenceServer = grpc.ServerStreamingServer[DereferenceResponse]
 
 func _Consensus_Ping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PingRequest)
@@ -447,14 +441,6 @@ var Consensus_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Consensus_AcceptMigration_Handler,
 		},
 		{
-			MethodName: "JoinCluster",
-			Handler:    _Consensus_JoinCluster_Handler,
-		},
-		{
-			MethodName: "Gossip",
-			Handler:    _Consensus_Gossip_Handler,
-		},
-		{
 			MethodName: "Ping",
 			Handler:    _Consensus_Ping_Handler,
 		},
@@ -475,6 +461,17 @@ var Consensus_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Consensus_PrefixScan_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Replicate",
+			Handler:       _Consensus_Replicate_Handler,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "DeReference",
+			Handler:       _Consensus_DeReference_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "consensus/consensus.proto",
 }

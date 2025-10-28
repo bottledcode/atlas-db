@@ -20,6 +20,7 @@ package kv
 
 import (
 	"context"
+	"errors"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -57,7 +58,7 @@ func (s *BadgerStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 	err := s.db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(key)
 		if err != nil {
-			if err == badger.ErrKeyNotFound {
+			if errors.Is(err, badger.ErrKeyNotFound) {
 				return ErrKeyNotFound
 			}
 			return err
@@ -130,7 +131,16 @@ func (s *BadgerStore) NewIterator(opts IteratorOptions) Iterator {
 	}
 }
 
-func (s *BadgerStore) Begin(writable bool) (Transaction, error) {
+func (s *BadgerStore) Begin(writable bool, slot uint64) (Transaction, error) {
+	if slot > 0 {
+		txn := s.db.NewTransactionAt(slot, writable)
+		return &BadgerTransaction{
+			txn:      txn,
+			writable: writable,
+			store:    s,
+		}, nil
+	}
+
 	txn := s.db.NewTransaction(writable)
 	return &BadgerTransaction{
 		txn:      txn,
@@ -169,6 +179,26 @@ func (t *BadgerTransaction) Get(ctx context.Context, key []byte) ([]byte, error)
 	}
 
 	return item.ValueCopy(nil)
+}
+
+func (t *BadgerTransaction) IterateHistory(ctx context.Context, key []byte) *badger.Iterator {
+	opts := badger.DefaultIteratorOptions
+	opts.AllVersions = true
+	opts.PrefetchValues = true
+	opts.Prefix = key
+
+	return t.txn.NewIterator(opts)
+}
+
+func (t *BadgerTransaction) IterateHistoryReverse(ctx context.Context, key []byte) *badger.Iterator {
+	opts := badger.DefaultIteratorOptions
+	opts.AllVersions = true
+	opts.PrefetchValues = true
+
+	opts.Reverse = true
+	opts.Prefix = key
+
+	return t.txn.NewIterator(opts)
 }
 
 func (t *BadgerTransaction) Put(ctx context.Context, key, value []byte) error {
@@ -222,7 +252,7 @@ func (t *BadgerTransaction) NewIterator(opts IteratorOptions) Iterator {
 	return &BadgerIterator{iter: iter}
 }
 
-func (t *BadgerTransaction) Begin(writable bool) (Transaction, error) {
+func (t *BadgerTransaction) Begin(writable bool, slot uint64) (Transaction, error) {
 	return nil, ErrNestedTransaction
 }
 

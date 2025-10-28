@@ -13,6 +13,7 @@
  *
  * You should have received a copy of the GNU Affero General Public License
  * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
+ *
  */
 
 package consensus
@@ -26,7 +27,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bottledcode/atlas-db/atlas/kv"
 	"github.com/bottledcode/atlas-db/atlas/options"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -123,7 +123,7 @@ func (m *ManagedNode) Close() {
 	defer m.mu.Unlock()
 
 	options.Logger.Info("Closing managed node connection",
-		zap.Int64("node_id", m.Id),
+		zap.Uint64("node_id", m.Id),
 		zap.String("address", m.GetAddress()),
 		zap.Bool("closer_nil", m.closer == nil),
 		zap.Bool("client_nil", m.client == nil))
@@ -140,9 +140,8 @@ func (m *ManagedNode) Close() {
 // NodeConnectionManager centralizes all node connection management
 type NodeConnectionManager struct {
 	mu          sync.RWMutex
-	nodes       map[int64]*ManagedNode
+	nodes       map[uint64]*ManagedNode
 	activeNodes map[string][]*ManagedNode // keyed by region name
-	storage     NodeRepository
 	healthCheck *HealthChecker
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -152,57 +151,6 @@ var (
 	connectionManager     *NodeConnectionManager
 	connectionManagerOnce sync.Once
 )
-
-// GetNodeConnectionManager returns the singleton connection manager
-func GetNodeConnectionManager(ctx context.Context) *NodeConnectionManager {
-	connectionManagerOnce.Do(func() {
-		kvPool := kv.GetPool()
-		if kvPool != nil {
-			metaStore := kvPool.MetaStore()
-			if metaStore != nil {
-				storage := NewNodeRepository(ctx, metaStore)
-
-				// Create context with cancellation for cleanup
-				managerCtx, cancel := context.WithCancel(ctx)
-
-				connectionManager = &NodeConnectionManager{
-					nodes:       make(map[int64]*ManagedNode),
-					activeNodes: make(map[string][]*ManagedNode),
-					storage:     storage,
-					ctx:         managerCtx,
-					cancel:      cancel,
-				}
-
-				// Start health checker
-				connectionManager.healthCheck = NewHealthChecker(connectionManager)
-				go connectionManager.healthCheck.Start(managerCtx)
-
-				// Load existing nodes from storage
-				connectionManager.loadNodesFromStorage(managerCtx)
-			}
-		}
-	})
-	return connectionManager
-}
-
-func (ncm *NodeConnectionManager) loadNodesFromStorage(ctx context.Context) {
-	_ = ncm.storage.Iterate(false, func(node *Node, txn *kv.Transaction) error {
-		managedNode := &ManagedNode{
-			Node:       node,
-			status:     NodeStatusUnknown,
-			rttHistory: make([]time.Duration, 0),
-		}
-
-		ncm.mu.Lock()
-		ncm.nodes[node.Id] = managedNode
-		ncm.mu.Unlock()
-
-		// Try to establish connection in background
-		go ncm.connectToNode(ctx, managedNode)
-
-		return nil
-	})
-}
 
 // AddNode registers a new node and attempts connection
 func (ncm *NodeConnectionManager) AddNode(ctx context.Context, node *Node) error {
@@ -228,13 +176,13 @@ func (ncm *NodeConnectionManager) connectToNode(ctx context.Context, node *Manag
 	address := node.GetAddress() + ":" + strconv.Itoa(int(node.GetPort()))
 
 	options.Logger.Info("Attempting to connect to node",
-		zap.Int64("node_id", node.Id),
+		zap.Uint64("node_id", node.Id),
 		zap.String("address", address))
 
 	client, closer, err := getNewClient(address)
 	if err != nil {
 		options.Logger.Error("Failed to establish gRPC connection to node",
-			zap.Int64("node_id", node.Id),
+			zap.Uint64("node_id", node.Id),
 			zap.String("address", address),
 			zap.Error(err),
 			zap.String("error_type", fmt.Sprintf("%T", err)))
@@ -249,7 +197,7 @@ func (ncm *NodeConnectionManager) connectToNode(ctx context.Context, node *Manag
 	node.mu.Unlock()
 
 	options.Logger.Info("Client successfully assigned to node",
-		zap.Int64("node_id", node.Id),
+		zap.Uint64("node_id", node.Id),
 		zap.String("address", address),
 		zap.Bool("client_nil", client == nil))
 
@@ -258,7 +206,7 @@ func (ncm *NodeConnectionManager) connectToNode(ctx context.Context, node *Manag
 	ncm.addToActiveNodes(node)
 
 	options.Logger.Info("Successfully connected to node",
-		zap.Int64("node_id", node.Id),
+		zap.Uint64("node_id", node.Id),
 		zap.String("address", address))
 }
 
@@ -271,7 +219,7 @@ func (ncm *NodeConnectionManager) pingNode(ctx context.Context, node *ManagedNod
 	node.mu.RUnlock()
 
 	options.Logger.Info("Ping attempt - checking client state",
-		zap.Int64("node_id", node.Id),
+		zap.Uint64("node_id", node.Id),
 		zap.String("address", node.GetAddress()),
 		zap.Bool("client_nil", client == nil),
 		zap.Bool("closer_nil", closer == nil),
@@ -279,13 +227,13 @@ func (ncm *NodeConnectionManager) pingNode(ctx context.Context, node *ManagedNod
 
 	if client == nil {
 		options.Logger.Debug("Ping failed: no gRPC client available",
-			zap.Int64("node_id", node.Id),
+			zap.Uint64("node_id", node.Id),
 			zap.String("address", node.GetAddress()))
 		return errors.New("no client available")
 	}
 
 	options.Logger.Debug("Sending Ping to node",
-		zap.Int64("node_id", node.Id),
+		zap.Uint64("node_id", node.Id),
 		zap.String("address", node.GetAddress()))
 
 	// Measure RTT by capturing start time
@@ -302,17 +250,17 @@ func (ncm *NodeConnectionManager) pingNode(ctx context.Context, node *ManagedNod
 
 	if err != nil {
 		options.Logger.Debug("Ping failed",
-			zap.Int64("node_id", node.Id),
+			zap.Uint64("node_id", node.Id),
 			zap.String("address", node.GetAddress()),
 			zap.Error(err))
 		return err
 	}
 
 	options.Logger.Debug("Ping successful",
-		zap.Int64("node_id", node.Id),
+		zap.Uint64("node_id", node.Id),
 		zap.String("address", node.GetAddress()),
 		zap.Bool("success", response.Success),
-		zap.Int64("responder_id", response.ResponderNodeId),
+		zap.Uint64("responder_id", response.ResponderNodeId),
 		zap.Duration("rtt", rtt))
 
 	// Record RTT measurement on successful ping
@@ -349,7 +297,7 @@ func (ncm *NodeConnectionManager) addToActiveNodes(node *ManagedNode) {
 	ncm.activeNodes[regionName] = append(ncm.activeNodes[regionName], node)
 }
 
-func (ncm *NodeConnectionManager) removeFromActiveNodes(nodeID int64) {
+func (ncm *NodeConnectionManager) removeFromActiveNodes(nodeID uint64) {
 	ncm.mu.Lock()
 	defer ncm.mu.Unlock()
 
@@ -388,7 +336,7 @@ func (ncm *NodeConnectionManager) GetAllActiveNodes() map[string][]*ManagedNode 
 }
 
 // ExecuteOnNode executes a consensus operation on a specific node
-func (ncm *NodeConnectionManager) ExecuteOnNode(nodeID int64, operation func(ConsensusClient) error) error {
+func (ncm *NodeConnectionManager) ExecuteOnNode(nodeID uint64, operation func(ConsensusClient) error) error {
 	ncm.mu.RLock()
 	node, exists := ncm.nodes[nodeID]
 	ncm.mu.RUnlock()
@@ -414,7 +362,7 @@ func (ncm *NodeConnectionManager) ExecuteOnNode(nodeID int64, operation func(Con
 		// Check if this is a connection-related error
 		if isConnectionError(err) {
 			options.Logger.Warn("Connection error detected during operation, marking node as failed",
-				zap.Int64("node_id", nodeID),
+				zap.Uint64("node_id", nodeID),
 				zap.Error(err))
 
 			// Mark node as failed and remove from active list
@@ -475,12 +423,12 @@ func (ncm *NodeConnectionManager) Shutdown() {
 	ncm.mu.Lock()
 	for nodeID, node := range ncm.nodes {
 		options.Logger.Debug("Closing connection to node during shutdown",
-			zap.Int64("node_id", nodeID))
+			zap.Uint64("node_id", nodeID))
 		node.Close()
 	}
 
 	// Clear all maps
-	ncm.nodes = make(map[int64]*ManagedNode)
+	ncm.nodes = make(map[uint64]*ManagedNode)
 	ncm.activeNodes = make(map[string][]*ManagedNode)
 	ncm.mu.Unlock()
 

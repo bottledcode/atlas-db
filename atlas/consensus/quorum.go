@@ -39,7 +39,7 @@ import (
 type QuorumManager interface {
 	GetQuorum(ctx context.Context, table string) (Quorum, error)
 	AddNode(ctx context.Context, node *Node) error
-	RemoveNode(nodeID int64) error
+	RemoveNode(nodeID uint64) error
 	Send(node *Node, do func(quorumNode *QuorumNode) (any, error)) (any, error)
 }
 
@@ -116,7 +116,7 @@ func (q *defaultQuorumManager) AddNode(ctx context.Context, node *Node) error {
 	return nil
 }
 
-func (q *defaultQuorumManager) RemoveNode(nodeID int64) error {
+func (q *defaultQuorumManager) RemoveNode(nodeID uint64) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -183,17 +183,6 @@ func (q *QuorumNode) DeReference(ctx context.Context, in *DereferenceRequest, op
 		}
 	}
 	return q.client.DeReference(ctx, in, opts...)
-}
-
-func (q *QuorumNode) DeleteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error) {
-	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
-	}
-	return q.client.DeleteKey(ctx, in, opts...)
 }
 
 func (q *QuorumNode) StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipResponse, error) {

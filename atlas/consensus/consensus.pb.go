@@ -219,7 +219,7 @@ func (x *DereferenceResponse) GetData() *Data {
 // Ping messages for health checks
 type PingRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	SenderNodeId  int64                  `protobuf:"varint,1,opt,name=sender_node_id,json=senderNodeId,proto3" json:"sender_node_id,omitempty"` // The ID of the node sending the ping
+	SenderNodeId  uint64                 `protobuf:"varint,1,opt,name=sender_node_id,json=senderNodeId,proto3" json:"sender_node_id,omitempty"` // The ID of the node sending the ping
 	Timestamp     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=timestamp,proto3" json:"timestamp,omitempty"`                              // Timestamp of the ping
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -255,7 +255,7 @@ func (*PingRequest) Descriptor() ([]byte, []int) {
 	return file_consensus_consensus_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *PingRequest) GetSenderNodeId() int64 {
+func (x *PingRequest) GetSenderNodeId() uint64 {
 	if x != nil {
 		return x.SenderNodeId
 	}
@@ -1411,7 +1411,7 @@ func (x *OwnershipTracking) GetMaxCommittedSlot() uint64 {
 // }
 type Node struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`          // The ID of the node
+	Id            uint64                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`          // The ID of the node
 	Address       string                 `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"` // The address of the node
 	Region        *Region                `protobuf:"bytes,3,opt,name=region,proto3" json:"region,omitempty"`   // The region the node is in
 	Port          int64                  `protobuf:"varint,4,opt,name=port,proto3" json:"port,omitempty"`      // The port the node listens on
@@ -1451,7 +1451,7 @@ func (*Node) Descriptor() ([]byte, []int) {
 	return file_consensus_consensus_proto_rawDescGZIP(), []int{21}
 }
 
-func (x *Node) GetId() int64 {
+func (x *Node) GetId() uint64 {
 	if x != nil {
 		return x.Id
 	}
@@ -1873,7 +1873,7 @@ const file_consensus_consensus_proto_rawDesc = "" +
 	"\x13DereferenceResponse\x12)\n" +
 	"\x04data\x18\x01 \x01(\v2\x15.atlas.consensus.DataR\x04data\"m\n" +
 	"\vPingRequest\x12$\n" +
-	"\x0esender_node_id\x18\x01 \x01(\x03R\fsenderNodeId\x128\n" +
+	"\x0esender_node_id\x18\x01 \x01(\x04R\fsenderNodeId\x128\n" +
 	"\ttimestamp\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"\x8e\x01\n" +
 	"\fPingResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12*\n" +
@@ -1942,7 +1942,7 @@ const file_consensus_consensus_proto_rawDesc = "" +
 	"\x0fmaxAcceptedSlot\x18\x04 \x01(\x04R\x0fmaxAcceptedSlot\x12*\n" +
 	"\x10maxCommittedSlot\x18\x05 \x01(\x04R\x10maxCommittedSlot\"\xba\x01\n" +
 	"\x04Node\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x18\n" +
+	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x18\n" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\x12/\n" +
 	"\x06region\x18\x03 \x01(\v2\x17.atlas.consensus.RegionR\x06region\x12\x12\n" +
 	"\x04port\x18\x04 \x01(\x03R\x04port\x12\x16\n" +

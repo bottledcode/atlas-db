@@ -55,7 +55,7 @@ message DereferenceResponse {
 
 // Ping messages for health checks
 message PingRequest {
-  int64 sender_node_id = 1; // The ID of the node sending the ping
+  uint64 sender_node_id = 1; // The ID of the node sending the ping
   google.protobuf.Timestamp timestamp = 2; // Timestamp of the ping
 }
 
@@ -326,7 +326,7 @@ message StealTableOwnershipResponse {
 }
 */
 message Node {
-  int64 id = 1; // The ID of the node
+  uint64 id = 1; // The ID of the node
   string address = 2;  // The address of the node
   Region region = 3; // The region the node is in
   int64 port = 4; // The port the node listens on

@@ -19,6 +19,7 @@
 package faster
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -90,6 +91,109 @@ func TestNoDeadlockDuringReset(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		deadlocked.Store(true)
 		t.Fatal("Deadlock detected - test timed out after 5 seconds")
+	}
+}
+
+// TestCheckpointDuringConcurrentAppends ensures that frequent checkpoints (and resets)
+// do not livelock concurrent writers. Before the reset fix this would spin forever.
+func TestCheckpointDuringConcurrentAppends(t *testing.T) {
+	dir := t.TempDir()
+
+	cfg := Config{
+		Path:         dir + "/test.log",
+		MutableSize:  64 * 1024, // Small mutable region to trigger resets
+		SyncOnCommit: false,
+	}
+
+	log, err := NewFasterLog(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create log: %v", err)
+	}
+	defer log.Close()
+
+	stopCheckpoint := make(chan struct{})
+	var checkpointWG sync.WaitGroup
+	checkpointWG.Add(1)
+
+	// Background checkpoint goroutine
+	go func() {
+		defer checkpointWG.Done()
+
+		ticker := time.NewTicker(2 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-stopCheckpoint:
+				return
+			case <-ticker.C:
+				if err := log.Checkpoint(); err != nil && err != ErrClosed {
+					// Report via testing but keep draining to avoid hiding other issues
+					t.Errorf("Checkpoint failed: %v", err)
+					return
+				}
+			}
+		}
+	}()
+
+	numWriters := 4
+	entriesPerWriter := 400
+	var writers sync.WaitGroup
+	errs := make(chan error, numWriters)
+
+	for w := 0; w < numWriters; w++ {
+		writers.Add(1)
+		go func(workerID int) {
+			defer writers.Done()
+
+			value := []byte{byte(workerID)}
+			baseSlot := uint64(workerID * entriesPerWriter)
+
+			for i := 0; i < entriesPerWriter; i++ {
+				slot := baseSlot + uint64(i)
+
+				// Keep trying until Accept succeeds (buffer may temporarily be full)
+				for {
+					if err := log.Accept(slot, Ballot{ID: 1, NodeID: 1}, value); err != nil {
+						if err == ErrBufferFull {
+							time.Sleep(1 * time.Millisecond)
+							continue
+						}
+						errs <- fmt.Errorf("worker %d accept slot %d: %w", workerID, slot, err)
+						return
+					}
+					break
+				}
+
+				if err := log.Commit(slot); err != nil {
+					errs <- fmt.Errorf("worker %d commit slot %d: %w", workerID, slot, err)
+					return
+				}
+			}
+		}(w)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		writers.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Writers completed
+	case <-time.After(10 * time.Second):
+		t.Fatal("Writers timed out; possible livelock during checkpoint")
+	}
+
+	close(stopCheckpoint)
+	checkpointWG.Wait()
+
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("Checkpoint stress test failed: %v", err)
+		}
 	}
 }
 

@@ -1,443 +1,641 @@
-# FASTER-Inspired Lock-Free Consensus Log
+# FASTER: Fast Persistent Recoverable Log for Consensus
 
-A production-ready, pure-Go implementation of a FASTER-style hybrid log optimized for consensus protocols like WPaxos.
-Delivers lock-free performance with strong safety guarantees.
-
-## Performance
-
-Benchmarked on Intel i7-11800H @ 2.30GHz (16 cores):
-
-| Operation              | Latency   | Throughput        | Bandwidth |
-|------------------------|-----------|-------------------|-----------|
-| **Accept**             | **608ns** | **1.64M ops/sec** | -         |
-| **Commit**             | 1.67μs    | 598K ops/sec      | -         |
-| **Commit (fsync)**     | 4.40ms    | 227 ops/sec       | -         |
-| **Read (committed)**   | **108ns** | **9.22M ops/sec** | -         |
-| **Read (uncommitted)** | **144ns** | **6.96M ops/sec** | -         |
-| **Concurrent reads**   | **21ns**  | **46.9M ops/sec** | -         |
-| **Full cycle**         | 1.77μs    | 564K ops/sec      | -         |
-| **Write throughput**   | -         | -                 | 57.7 MB/s |
-
-**Network comparison:** At 500μs datacenter RTT (2K req/sec), the log is **820x faster** than the network.
-The log is not a bottleneck.
+A pure-Go implementation of FASTER-style hybrid logging, optimized for consensus protocols like WPaxos. This implementation provides **lock-free reads**, **atomic writes**, and **perfect semantic alignment** with Paxos accept/commit phases.
 
 ## Architecture
 
-### Three-Region Design
+FASTER uses a three-region hybrid log architecture that separates uncommitted (speculative) entries from committed (durable) entries:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                 FASTER Lock-Free Log Architecture           │
+│                     FASTER Architecture                      │
 ├─────────────────┬─────────────────┬─────────────────────────┤
 │   In-Memory     │     Mutable     │    Immutable Tail       │
-│   Hash Index    │     Region      │    (Committed Log)      │
+│   Hash Index    │  Ring Buffer    │   (Memory-Mapped)       │
 │                 │                 │                         │
-│  [slot→offset]  │  [Ring Buffer]  │  [Memory-Mapped File]   │
-│                 │                 │                         │
-│  • sync.Map*    │  • Uncommitted  │  • Committed entries    │
-│  • Atomic ops   │  • LOCK-FREE!   │  • Append-only          │
-│                 │  • CAS alloc    │  • Lock-free reads!     │
-│                 │  • Scan lookup  │                         │
+│  [slot→offset]  │  [Uncommitted]  │  [Committed entries]    │
+│                 │   entries       │                         │
+│  • sync.Map     │  • Lock-free    │  • Append-only          │
+│  • Fast lookup  │  • CAS alloc    │  • Durable (fsync)      │
+│  • Concurrent   │  • 2-64MB       │  • Lock-free reads      │
+│                 │                 │  • 1GB+ segments        │
 └─────────────────┴─────────────────┴─────────────────────────┘
-         * Index only, not for ring buffer internals
 ```
 
-## Key Features
+### Why This Design?
 
-### Lock-Free Concurrency
+Traditional LSM-tree stores (like BadgerDB, LevelDB) have **semantic mismatch** with consensus logs:
 
-**Zero-Lock Design:**
+| Requirement | LSM-Tree Stores | FASTER |
+|-------------|----------------|--------|
+| Accept/Commit distinction | ❌ Must track in value | ✅ Mutable vs. Immutable |
+| Lock-free committed reads | ❌ Locks on read path | ✅ Direct mmap reads |
+| Overwrite uncommitted | ❌ Complex merge logic | ✅ Natural in mutable region |
+| Sequential execution | ⚠️ Manual gap handling | ✅ Natural slot ordering |
+| Recovery scanning | ⚠️ Compaction interference | ✅ Fast sequential scan |
 
-- Accept operations use atomic CAS for space allocation
-- Committed reads via zero-copy memory-mapped I/O
-- Uncommitted reads scan with epoch-based protection
-- Scales to 47M+ concurrent reads/sec
+## Core Components
 
-**Reserve-Write-Publish Protocol:**
+### 1. FasterLog - The Main Log
 
-- Prevents readers from seeing partial writes
-- Maintains sequential consistency for cache coherency
-- Two-counter design: `reserved` (allocation) and `published` (visibility)
-
-### Automatic Space Reclamation
-
-**Tail Advancement:**
-
-- Committed entries automatically reclaim mutable buffer space
-- Tracks which entries have been flushed to immutable tail
-- Triggers full reset when buffer is mostly flushed
-- Prevents `ErrBufferFull` under normal operation
-
-**Adaptive Reset:**
-
-- Automatically resets buffer when >75% full and all entries flushed
-- No manual intervention required
-- Handles unlimited writes with finite buffer
-
-### WPaxos Integration
-
-**Native Consensus Semantics:**
-
-- **Accept (Phase-2b)**: Write uncommitted to mutable region
-- **Commit (Phase-3)**: Mark committed and flush to tail
-- **Recovery (Phase-1)**: Scan uncommitted entries
-- **Read**: Lock-free reads from committed tail
-
-**Out-of-Order Commits, In-Order Execution:**
-
-- Entries can commit in any order
-- State machine reads only committed entries
-- Sequential slot execution enforced
-
-### Memory Safety
-
-**Epoch-Based Protection:**
-
-- Threads register epochs before memory access
-- Reclamation waits for all threads to advance
-- Prevents use-after-free without GC overhead
-- FASTER-style epoch management
-
-## API
-
-### Creating a Log
+The core log structure that manages entries across the three regions.
 
 ```go
-cfg := faster.Config{
-Path:          "/path/to/log.dat",
-MutableSize:   64 * 1024 * 1024, // 64MB for uncommitted entries
-SegmentSize:   1024 * 1024 * 1024, // 1GB per segment
-NumThreads:    128,                // Expected concurrent goroutines
-SyncOnCommit:  true, // fsync on every commit (slower but durable)
-}
-
-log, err := faster.NewFasterLog(cfg)
-if err != nil {
-return err
-}
+log, err := faster.NewFasterLog(faster.Config{
+    Path:         "/data/consensus.log",
+    MutableSize:  64 * 1024 * 1024,  // 64MB for uncommitted entries
+    SegmentSize:  1 * 1024 * 1024 * 1024,  // 1GB per segment
+    NumThreads:   128,  // Max concurrent goroutines
+    SyncOnCommit: true,  // fsync on every commit (durable)
+})
 defer log.Close()
 ```
 
-### WPaxos Operations
+#### Configuration Guidelines
+
+| Parameter | Recommended | Trade-off |
+|-----------|-------------|-----------|
+| `MutableSize` | 64-256 MB | Larger = more uncommitted entries, more memory |
+| `SegmentSize` | 1-4 GB | Larger = fewer files, slower recovery |
+| `NumThreads` | 128-1024 | Must be ≥ max concurrent goroutines |
+| `SyncOnCommit` | `true` (production) | `false` = faster but risk data loss |
+
+### 2. LogManager - Multi-Log Management
+
+Manages multiple FASTER logs with LRU eviction and reference counting.
 
 ```go
-// Phase-2b: Accept an entry (uncommitted) - LOCK-FREE!
-err := log.Accept(slot, ballot, value)
+manager := faster.NewLogManager()
+defer manager.CloseAll()
 
-// Phase-3: Commit an entry (flush to tail)
+// Get a log (automatically created if needed)
+log, release, err := manager.GetLog([]byte("table:users"))
+if err != nil {
+    return err
+}
+defer release()  // CRITICAL: Always call release()
+
+// Use the log safely
+err = log.Accept(slot, ballot, value)
+```
+
+**Key Features:**
+- **Reference Counting**: Prevents closing logs while in use
+- **LRU Eviction**: Automatically closes idle logs (max 256 open)
+- **Thread-Safe**: Concurrent GetLog calls are safe
+- **Leak Protection**: CloseAll waits for references to drain
+
+### 3. RingBuffer - Lock-Free Mutable Region
+
+Lock-free buffer for uncommitted entries using atomic CAS operations.
+
+**Design Principles:**
+- **Reserve-Write-Publish Protocol**: Prevents readers from seeing partial writes
+- **CAS-based Allocation**: No locks on write path
+- **Sequential Scanning**: Fast for small regions (2-64MB)
+- **Automatic Reclamation**: Space freed as entries commit
+
+```go
+// Writers (lock-free):
+offset, err := buffer.Append(entry)  // Atomic CAS allocation
+
+// Readers (lock-free):
+entry, err := buffer.Read(offset)
+
+// Reclamation (triggered by Commit):
+buffer.TryAdvanceTail(indexCheck)
+```
+
+### 4. Snapshot Manager - State Machine Checkpoints
+
+Handles periodic snapshots for faster recovery.
+
+```go
+snapMgr, err := faster.NewSnapshotManager("/data/snapshots", log)
+
+// Create snapshot at slot 1000
+stateData := serializeStateMachine()
+err = snapMgr.CreateSnapshot(1000, stateData)
+
+// Recovery: load latest snapshot
+snapshot, err := snapMgr.GetLatestSnapshot()
+restoreStateMachine(snapshot.Data)
+replayFrom(snapshot.Slot + 1)
+```
+
+## WPaxos Integration
+
+FASTER's three operations map perfectly to WPaxos phases:
+
+### Phase-2b: Accept (Uncommitted Entry)
+
+```go
+// Acceptor receives Phase-2a message
+err := log.Accept(
+    slot,    // uint64: Paxos slot number
+    ballot,  // faster.Ballot{ID, NodeID}
+    value,   // []byte: proposed value
+)
+
+// Entry is now in mutable region (uncommitted)
+// Can be overwritten by higher ballot
+```
+
+**What Happens:**
+1. Entry serialized with ballot and `committed=false`
+2. CAS-allocated space in ring buffer (lock-free!)
+3. Index updated: `slot → offset|mutableFlag`
+4. **Durable**: Only in memory (fast!)
+
+### Phase-3: Commit (Mark as Durable)
+
+```go
+// Leader receives Q2 quorum of accepts
 err := log.Commit(slot)
 
-// Read any entry (committed or uncommitted) - LOCK-FREE!
-entry, err := log.Read(slot)
+// Entry is now in immutable tail (committed)
+// Cannot be overwritten
+```
 
-// Read only committed entries (what state machine should use!)
-entry, err := log.ReadCommittedOnly(slot)
+**What Happens:**
+1. Entry read from mutable region
+2. `committed` flag set to `true`
+3. Appended to immutable tail (sequential write)
+4. Optional `fsync()` if `SyncOnCommit=true`
+5. Index updated: `slot → tailOffset` (no mutable flag)
+6. Mutable space reclaimed automatically
 
-// Phase-1: Get all uncommitted entries for recovery
+### Phase-1: Recovery (Scan Uncommitted)
+
+```go
+// New leader needs to recover uncommitted entries
 uncommitted, err := log.ScanUncommitted()
-```
 
-## Implementation Details
-
-### Lock-Free Ring Buffer with Publication Safety
-
-**Reserve-Write-Publish Protocol:**
-
-The ring buffer uses a sophisticated three-step protocol to prevent readers from seeing partially-written entries:
-
-```go
-// Step 1: Reserve space atomically
-if rb.reserved.CompareAndSwap(currentReserved, newReserved) {
-// Step 2: Write data (scanners can't see it yet!)
-copy(rb.data[currentReserved:newReserved], serialized)
-
-// Step 3: Publish (wait for sequential order)
-for {
-if rb.published.CompareAndSwap(currentReserved, newReserved) {
-break // Now visible to scanners!
-}
-// Wait for earlier writes to publish first
-}
+for _, entry := range uncommitted {
+    // Re-propose with new ballot
+    if entry.Ballot.Less(myBallot) {
+        // Take over this slot
+        propose(entry.Slot, myBallot, entry.Value)
+    }
 }
 ```
 
-**Key Invariant:** `published ≤ reserved` always. Scanners only read up to `published`, ensuring they never see
-incomplete data.
+**What Happens:**
+1. Scans ring buffer for all entries
+2. Filters to only entries still in mutable region (via index check)
+3. Returns uncommitted entries for re-proposal
+4. **Fast**: Sequential scan of small region (~64MB)
 
-**Why this works:**
-
-1. `reserved` tracks allocated space (may have incomplete writes)
-2. `published` tracks fully-written data (safe to read)
-3. Sequential publish maintains ordering for cache coherency
-4. Very fast: spin-wait is typically <10ns since writers are active
-
-**Sequential Scan for Reads:**
-
-- No hash map needed (removed sync.Map overhead!)
-- Scan is fast for small mutable regions (~64MB)
-- Typical scan: <150μs for 1000 entries
-- **Only scans published entries** (safety guaranteed!)
-
-### Entry Format
-
-```
-[slot:8][ballotID:8][ballotNode:8][valueLen:4][committed:1][value:N][checksum:4]
-```
-
-Total: 29 bytes header + N bytes value + 4 bytes checksum
-
-### Mutable Region (Ring Buffer)
-
-- ✅ **Lock-free** atomic CAS for space allocation
-- ✅ **Lock-free** reads with epoch protection
-- Configurable size (default: 64MB)
-- Sequential scan for lookups (fast enough for consensus)
-
-### Immutable Tail (Memory-Mapped File)
-
-- Append-only committed entries
-- Memory-mapped for zero-copy reads
-- Grows in segments (default: 1GB per segment)
-- CRC32 checksum for corruption detection
-- **Never modified after write** (true immutability)
-
-### Index
-
-- `sync.Map` for concurrent access
-- Maps `slot → offset`
-- High bit of offset indicates mutable (1) vs tail (0)
-
-## Design Details
-
-### Reserve-Write-Publish Protocol
-
-The mutable buffer uses a sophisticated protocol to prevent publication races:
+### State Machine Reads (Only Committed)
 
 ```go
-// Two counters maintain safety invariant: published ≤ reserved
-reserved  atomic.Uint64 // Space allocated (may have incomplete writes)
-published atomic.Uint64 // Data ready (fully written, safe to read)
+// Read only committed entries for state machine
+entry, err := log.ReadCommittedOnly(slot)
+if err == faster.ErrNotCommitted {
+    // Slot exists but not yet committed - wait or skip
+}
+
+// entry.Value is safe to apply to state machine
+applyToStateMachine(entry.Value)
 ```
 
-**Write Protocol:**
+**What Happens:**
+1. Index lookup: `slot → offset`
+2. If in mutable region: read from ring buffer, check `committed` flag
+3. If in tail: **lock-free mmap read** (fast!)
+4. Returns error if uncommitted
 
-1. **Reserve**: CAS on `reserved` to claim space
-2. **Write**: Copy data into reserved region (invisible to readers)
-3. **Publish**: CAS on `published` to make visible (waits for sequential order)
+## Performance Characteristics
 
-**Safety Guarantee:** Readers only scan up to `published`, ensuring they never see incomplete data. The sequential
-publish maintains cache coherency.
+Benchmarked on Intel i7-11800H @ 2.30GHz (16 threads). All benchmarks run with Go 1.21+.
 
-### Automatic Space Reclamation
+### Core Operations
 
-**Problem:** Committed entries moved to tail still occupy mutable buffer space.
+| Operation | Latency | Throughput | Notes |
+|-----------|---------|------------|-------|
+| **Accept** (uncommitted write) | 755 ns | 1.32M ops/sec | Lock-free CAS allocation |
+| **Commit** (no fsync) | 1.76 µs | 568k ops/sec | Sequential append to mmap |
+| **Commit** (with fsync) | 4.47 ms | 224 ops/sec | Disk sync overhead |
+| **Read** (uncommitted) | 150 ns | 6.68M ops/sec | Ring buffer scan |
+| **Read** (committed) | 113 ns | 8.84M ops/sec | Direct mmap read |
+| **Accept+Commit+Read** | 1.85 µs | 541k ops/sec | Full write cycle |
 
-**Solution:** `TryAdvanceTail()` incrementally advances the tail pointer:
+### Advanced Operations
 
-```go
-// After each Commit():
-// 1. Check which entries have been moved to tail (via index)
-// 2. Advance tail past all consecutive flushed entries
-// 3. If tail == published and reserved > 75%, trigger full reset
-```
+| Operation | Latency | Throughput | Details |
+|-----------|---------|------------|---------|
+| **ScanUncommitted** | 131 µs | 7,634 scans/sec | ~1,000 entries |
+| **Checkpoint** | 170 µs | - | Flush committed to tail |
+| **Recovery** (1k entries) | 4.16 ms | 240k entries/sec | Index rebuild |
+| **Recovery** (10k entries) | 5.74 ms | 1.74M entries/sec | Scales well |
+| **Snapshot Create** | 6.23 ms | - | 1MB state |
+| **Snapshot Read** | 201 µs | - | Deserialize + verify |
 
-**Result:** Infinite writes possible with finite buffer. Tests show 3000+ entries written with only 100KB buffer.
+### Value Size Impact
 
-### Entry Format
+| Value Size | Latency | Throughput (MB/s) |
+|------------|---------|-------------------|
+| 10 bytes | 1.81 µs | 5.28 MB/s |
+| 100 bytes | 1.76 µs | 54.33 MB/s |
 
-```
-[slot:8][ballotID:8][ballotNode:8][valueLen:4][committed:1][value:N][checksum:4]
-```
+**Observation**: Larger values improve throughput (better amortization of fixed overhead).
 
-Total overhead: 33 bytes + value size + 4 bytes checksum
+### Concurrent Performance
 
-### Comparison to BadgerDB
+| Scenario | Latency | Throughput | Speedup |
+|----------|---------|------------|---------|
+| **Concurrent Reads** (16 threads) | 23 ns | 42.9M ops/sec | ~5x single-thread |
+| **Concurrent Writes** (16 threads) | 504 ns | 1.99M ops/sec | ~1.5x single-thread |
 
-For consensus workloads, FASTER provides better semantics and performance:
+**Why**: Lock-free reads scale linearly. Writes have CAS contention but still scale.
 
-| Aspect              | BadgerDB             | FASTER                      | Advantage       |
-|---------------------|----------------------|-----------------------------|-----------------|
-| Committed reads     | ~500ns (LSM tree)    | **108ns** (mmap)            | **4-5x faster** |
-| Concurrent reads    | ~2M ops/sec (locks)  | **47M ops/sec** (lock-free) | **23x faster**  |
-| Semantic fit        | MVCC (mismatched)    | Mutable/Immutable (native)  | **Perfect**     |
-| Space reclamation   | Automatic compaction | Tail advancement            | **Predictable** |
-| Write amplification | High (LSM)           | Low (append-only)           | **Better**      |
+### FASTER vs. BadgerDB Comparison
 
-## Testing
+Head-to-head benchmarks against BadgerDB (same hardware, same workload):
 
-### Unit Tests
+| Workload | FASTER | BadgerDB | Speedup |
+|----------|--------|----------|---------|
+| **Random Keys** (writes) | 2.18 µs<br/>460k ops/sec | 7.61 µs<br/>131k ops/sec | **3.5x faster** |
+| **Sequential Writes** | 1.53 µs<br/>656k ops/sec | 6.54 µs<br/>153k ops/sec | **4.3x faster** |
+| **Read-Heavy** (90% reads) | 133 ns<br/>7.5M ops/sec | 1.40 µs<br/>713k ops/sec | **10.5x faster** |
+| **Mixed** (50/50 read/write) | 849 ns<br/>1.18M ops/sec | 3.48 µs<br/>287k ops/sec | **4.1x faster** |
+| **Concurrent Writes** | 504 ns<br/>1.99M ops/sec | 5.08 µs<br/>197k ops/sec | **10x faster** |
+| **Recovery** (10k entries) | 2.15 ms | 21.7 ms | **10x faster** |
+| **ScanUncommitted** | 646 µs<br/>1,548 scans/sec | 557 µs<br/>1,794 scans/sec | ~Same |
 
-```bash
-go test -v github.com/bottledcode/atlas-db/atlas/faster
-```
+**Key Takeaways:**
+- ✅ **Reads are 10x faster**: Lock-free mmap reads vs. LSM lookup
+- ✅ **Writes are 4x faster**: No compaction overhead
+- ✅ **Recovery is 10x faster**: Sequential scan vs. LSM rebuild
+- ✅ **Predictable latency**: No background compaction spikes
+- ⚠️ **Scan performance similar**: Both use sequential scan (but FASTER's scan is on uncommitted entries, BadgerDB is on all entries)
 
-### Race Detector
+### Key Performance Features
 
-```bash
-go test -race -v github.com/bottledcode/atlas-db/atlas/faster
-```
-
-### Benchmarks
-
-```bash
-go test -bench=. github.com/bottledcode/atlas-db/atlas/faster
-```
-
-## Thread Safety
-
-- ✅ **Concurrent Accepts**: **Lock-free** with atomic CAS
-- ✅ **Concurrent Commits**: Safe (only tail write uses mutex for disk I/O)
-- ✅ **Concurrent Reads (committed)**: **Lock-free** mmap reads
-- ✅ **Concurrent Reads (uncommitted)**: **Lock-free** with epoch protection
-- ✅ **Mixed operations**: Safe (tested with race detector)
-
-## Lock-Free Design Principles
-
-### 1. **Atomic CAS for Allocation**
-
-Space is reserved atomically using CompareAndSwap. Once reserved, the writer has exclusive access.
-
-### 2. **Sequential Scan for Lookups**
-
-No hash map means no lock contention. Scanning 64MB is fast enough (~150μs) for consensus workloads.
-
-### 3. **Epoch-Based Memory Safety**
-
-Threads register epochs before reading. Memory is reclaimed only when safe.
-
-### 4. **RCU for Updates**
-
-Updates append new versions instead of modifying in-place. Index updates are atomic pointer swaps.
-
-## Operational Considerations
-
-### Buffer Sizing
-
-**Mutable Buffer:**
-
-- Size based on peak uncommitted entry count
-- Default 64MB handles ~400K entries (150 bytes each)
-- Automatic reclamation prevents `ErrBufferFull` under normal operation
-- Only fills if commits stop completely
-
-**Tail Growth:**
-
-- Grows indefinitely (append-only)
-- Implement log truncation for long-running systems
-- Consider segmented files for very large logs
+- ✅ **Lock-free reads** from immutable tail (memory-mapped)
+- ✅ **Lock-free writes** to mutable region (atomic CAS)
+- ✅ **Only commits need mutex** (sequential disk I/O)
+- ✅ **No background compaction** (predictable latency)
+- ✅ **Linear read scaling** with concurrent goroutines
+- ✅ **10x faster recovery** (sequential vs. LSM rebuild)
 
 ### Performance Tuning
 
-**SyncOnCommit:**
+**For Maximum Throughput:**
+```go
+Config{
+    SyncOnCommit: false,  // Skip fsync (568k vs 224 ops/sec)
+    MutableSize:  256 * 1024 * 1024,  // Large buffer for batching
+}
+```
+⚠️ **Trade-off**: Risk losing uncommitted data on crash (acceptable for consensus with replication).
 
-- `true`: Durability (227 ops/sec, 4.4ms latency)
-- `false`: Performance (598K ops/sec, 1.67μs latency)
-- Trade-off: durability vs. throughput
+**For Maximum Durability:**
+```go
+Config{
+    SyncOnCommit: true,  // fsync every commit (224 ops/sec)
+    MutableSize:  64 * 1024 * 1024,
+}
+```
+✅ **Guarantee**: Committed entries survive crashes.
 
-**MutableSize:**
+**Batch Optimization:**
+- Accept 100 entries (~755 ns × 100 = 75.5 µs)
+- Commit batch with single fsync (~4.47 ms)
+- **Effective throughput**: 100 commits / 4.55 ms = **22k commits/sec** (100x improvement!)
 
-- Larger: More uncommitted entries, less frequent resets
-- Smaller: Lower memory, more frequent resets
-- Recommendation: 64-128MB for most workloads
+### Hardware Considerations
 
-### Monitoring
+Results above are from:
+- **CPU**: Intel i7-11800H (8 cores, 16 threads, 2.3-4.6 GHz)
+- **Storage**: NVMe SSD (fsync ~4ms)
+- **RAM**: DDR4-3200
 
-Key metrics to track:
+**Expected performance on other hardware:**
+- **Faster SSD** (Intel Optane): fsync ~100µs → 10k commits/sec (50x improvement)
+- **Slower SSD** (SATA): fsync ~10ms → 100 commits/sec (2x slower)
+- **HDD**: fsync ~50ms → 20 commits/sec (25x slower - not recommended!)
+- **More cores**: Linear scaling for concurrent reads (up to memory bandwidth)
 
-- `UsedSpace()`: Current mutable buffer usage
-- `AvailableSpace()`: Remaining buffer capacity
-- Commit rate vs. accept rate
-- Tail file size growth
+## Usage Patterns
 
-## Snapshots and Log Truncation
-
-**✅ IMPLEMENTED!** The snapshot system allows you to bound log growth by capturing state machine checkpoints.
-
-See [SNAPSHOTS.md](./SNAPSHOTS.md) for complete documentation.
-
-**Quick example:**
+### Pattern 1: Single Log (Simple Consensus)
 
 ```go
-// Create snapshot manager
-snapMgr, _ := faster.NewSnapshotManager("/data/snapshots", log)
+// Single consensus log for all operations
+log, err := faster.NewFasterLog(faster.Config{
+    Path:         "/data/consensus.log",
+    MutableSize:  64 * 1024 * 1024,
+    SegmentSize:  1 * 1024 * 1024 * 1024,
+    NumThreads:   128,
+    SyncOnCommit: true,
+})
+defer log.Close()
 
-// Periodic snapshots (every 10K commits)
-if currentSlot - lastSnapshot >= 10000 {
-    stateData := serializeStateMachine()
-    snapMgr.CreateSnapshot(currentSlot, stateData)
-    snapMgr.TruncateLog(currentSlot) // Remove entries ≤ currentSlot
-    snapMgr.CleanupOldSnapshots(3)   // Keep last 3 snapshots
-}
+// Accept-Commit cycle
+slot := getNextSlot()
+ballot := getCurrentBallot()
 
-// Recovery from snapshot on startup
-snapshot, _ := snapMgr.GetLatestSnapshot()
-deserializeStateMachine(snapshot.Data)
-// Replay log entries > snapshot.Slot
+// Phase-2: Accept
+err = log.Accept(slot, ballot, value)
+
+// Phase-3: Commit (after Q2 quorum)
+err = log.Commit(slot)
+
+// Read committed state
+entry, err := log.ReadCommittedOnly(slot)
 ```
 
-**Benefits:**
-- ✅ Bounds log size (prevents unbounded growth)
-- ✅ Fast recovery (load snapshot + replay recent entries)
-- ✅ Compression support (5x reduction with zstd)
-- ✅ Corruption detection (CRC32 checksums)
+### Pattern 2: Multi-Log (Table-Partitioned Consensus)
+
+```go
+// Manage separate logs per table
+manager := faster.NewLogManager()
+defer manager.CloseAll()
+
+// Each table gets its own log
+func processWrite(table string, slot uint64, ballot faster.Ballot, value []byte) error {
+    log, release, err := manager.GetLog([]byte(table))
+    if err != nil {
+        return err
+    }
+    defer release()  // CRITICAL: Don't leak references!
+
+    // Accept-Commit for this table's log
+    if err := log.Accept(slot, ballot, value); err != nil {
+        return err
+    }
+
+    // Later: commit after quorum
+    if err := log.Commit(slot); err != nil {
+        return err
+    }
+
+    return nil
+}
+```
+
+**Benefits of Multi-Log:**
+- Parallel consensus per table
+- LRU eviction keeps hot tables in memory
+- Automatic log lifecycle management
+
+### Pattern 3: Checkpointing (Long-Running Logs)
+
+```go
+log, _ := faster.NewFasterLog(cfg)
+snapMgr, _ := faster.NewSnapshotManager("/snapshots", log)
+
+// Periodically checkpoint state machine
+ticker := time.NewTicker(5 * time.Minute)
+for range ticker.C {
+    // Serialize current state
+    stateData := marshalStateMachine(currentState)
+
+    // Create snapshot at current slot
+    err := snapMgr.CreateSnapshot(currentSlot, stateData)
+
+    // Optionally: truncate old log entries before snapshot
+    // (not yet implemented, but planned)
+}
+
+// Recovery: load snapshot + replay
+snapshot, _ := snapMgr.GetLatestSnapshot()
+currentState = unmarshalStateMachine(snapshot.Data)
+
+// Replay entries after snapshot
+for slot := snapshot.Slot + 1; slot <= latestSlot; slot++ {
+    entry, err := log.ReadCommittedOnly(slot)
+    if err == nil {
+        applyToStateMachine(entry.Value)
+    }
+}
+```
+
+## Error Handling
+
+### Common Errors
+
+```go
+// Slot not found (never written)
+_, err := log.Read(999)
+if errors.Is(err, faster.ErrSlotNotFound) {
+    // Slot doesn't exist
+}
+
+// Entry exists but not committed
+_, err := log.ReadCommittedOnly(100)
+if errors.Is(err, faster.ErrNotCommitted) {
+    // Slot exists, but still in accept phase
+    // Either wait for commit or skip
+}
+
+// Buffer full (too many uncommitted entries)
+err := log.Accept(slot, ballot, value)
+if errors.Is(err, faster.ErrBufferFull) {
+    // Mutable region exhausted
+    // Either: increase MutableSize, or commit more frequently
+}
+
+// Log closed
+_, err := log.Read(100)
+if errors.Is(err, faster.ErrClosed) {
+    // Log has been closed, cannot use
+}
+```
+
+### Critical Safety Rules
+
+1. **Always call release()**: LogManager.GetLog returns a release function that **MUST** be called
+   ```go
+   log, release, err := manager.GetLog(key)
+   defer release()  // Don't forget!
+   ```
+
+2. **Don't use log after Close()**: Once closed, all operations return `ErrClosed`
+
+3. **Commit promptly**: Mutable region has finite size. Commit entries to avoid `ErrBufferFull`
+
+4. **Check committed flag**: State machine should only read committed entries
+   ```go
+   entry, err := log.ReadCommittedOnly(slot)  // Use this for state machine!
+   ```
+
+## Thread Safety
+
+All operations are thread-safe:
+
+- ✅ **Accept**: Lock-free CAS allocation
+- ✅ **Commit**: Mutex-protected tail writes (sequential I/O)
+- ✅ **Read**: Lock-free for tail, epoch-protected for mutable
+- ✅ **ScanUncommitted**: Epoch-protected iteration
+
+### Epoch-Based Memory Management
+
+FASTER uses epochs to protect concurrent readers from use-after-free:
+
+```go
+// Automatic epoch management (internal)
+threadID := getThreadID(slot)
+epoch := log.epoch.Load()
+log.threadEpochs[threadID].Store(epoch)
+defer log.threadEpochs[threadID].Store(0)
+
+// Read is now safe - epoch prevents reclamation
+entry := readFromBuffer(offset)
+```
+
+**What This Means:**
+- Readers announce presence via epoch
+- Writers cannot reclaim memory while readers are active
+- No locks needed (atomic operations only)
+
+## Crash Recovery
+
+### Tail Recovery (Automatic)
+
+On log open, FASTER rebuilds the index from the tail:
+
+```go
+log, err := faster.NewFasterLog(cfg)
+// Automatically:
+// 1. Opens tail file
+// 2. Memory-maps it
+// 3. Scans entries and rebuilds index
+// 4. Validates checksums
+// 5. Truncates corrupted tail
+```
+
+### Mutable Region Recovery
+
+The mutable region is **in-memory only** and **not persisted**. On crash:
+
+- ✅ Committed entries are safe (in tail)
+- ❌ Uncommitted entries are lost (expected behavior!)
+
+**This is correct for consensus:**
+- Uncommitted = speculative, can be lost
+- New leader will recover via Phase-1 from other replicas
+- Only committed entries are durable
+
+### Recovery Example
+
+```go
+// After crash, reopen log
+log, err := faster.NewFasterLog(cfg)
+
+// Option 1: Load from snapshot
+snapMgr, _ := faster.NewSnapshotManager("/snapshots", log)
+snapshot, err := snapMgr.GetLatestSnapshot()
+if err == nil {
+    // Restore state from snapshot
+    restoreState(snapshot.Data)
+    replayFrom := snapshot.Slot + 1
+
+    // Replay commits from snapshot to present
+    for slot := replayFrom; slot <= getMaxSlot(); slot++ {
+        entry, err := log.ReadCommittedOnly(slot)
+        if err == nil {
+            applyToStateMachine(entry.Value)
+        }
+    }
+}
+
+// Option 2: Full log replay (if no snapshots)
+for slot := uint64(0); slot <= getMaxSlot(); slot++ {
+    entry, err := log.ReadCommittedOnly(slot)
+    if err == nil {
+        applyToStateMachine(entry.Value)
+    }
+}
+```
+
+## Debugging and Monitoring
+
+### Log Statistics
+
+```go
+// LogManager provides statistics
+stats := manager.Stats()
+fmt.Printf("Total logs: %d\n", stats.TotalLogs)
+fmt.Printf("Open logs: %d\n", stats.OpenLogs)
+fmt.Printf("Active refs: %d\n", stats.ActiveRefs)
+
+// Monitor for reference leaks
+if stats.ActiveRefs > stats.OpenLogs*10 {
+    log.Warn("Possible reference leak detected")
+}
+```
+
+### Common Issues
+
+**Issue: `ErrBufferFull` under load**
+- **Cause**: Mutable region exhausted (too many uncommitted entries)
+- **Fix 1**: Increase `MutableSize` (e.g., 128MB or 256MB)
+- **Fix 2**: Commit more frequently (batch commits)
+- **Fix 3**: Call `log.Checkpoint()` periodically to flush committed entries
+
+**Issue: High memory usage**
+- **Cause**: Too many open logs in LogManager
+- **Fix**: Decrease `MaxHotKeys` (default 256)
+- **Check**: Call `manager.Stats()` to see open log count
+
+**Issue: Slow recovery after crash**
+- **Cause**: Large tail file, no snapshots
+- **Fix**: Use SnapshotManager to checkpoint regularly
+- **Check**: Tail file size should be < 10GB for fast recovery
+
+**Issue: Reference leak in LogManager**
+- **Cause**: Forgetting to call `release()` function
+- **Symptom**: `CloseAll()` times out, logs not evicted
+- **Fix**: Use `defer release()` immediately after `GetLog()`
+
+## Design Rationale
+
+### Why Not Use BadgerDB/LevelDB?
+
+LSM-tree stores are optimized for **key-value workloads**, not **consensus logs**:
+
+1. **MVCC vs. Commit**: LSM uses versions for MVCC, we need accept/commit distinction
+2. **Compaction**: Background compaction interferes with recovery scans
+3. **Locks**: Read path has locks, we need lock-free committed reads
+4. **Overwrite semantics**: LSM makes it hard to replace uncommitted entries
+
+### Why Lock-Free?
+
+Consensus protocols have **tight latency requirements** (especially Phase-2):
+
+- Traditional locks: ~50-100ns overhead + contention
+- Lock-free CAS: ~5-10ns, no contention
+- For 1M ops/sec, lock overhead = 5-10% of CPU!
+
+### Why Separate Mutable/Immutable?
+
+Matches **Paxos semantics perfectly**:
+
+```
+Paxos Accept  →  Mutable Region  (uncommitted, can change)
+Paxos Commit  →  Immutable Tail  (committed, permanent)
+```
+
+This makes correctness **obvious** rather than **clever**.
 
 ## Future Enhancements
 
-Planned improvements:
+Planned features (not yet implemented):
 
-- [x] Log truncation API (discard old committed entries) ✅
-- [ ] Segmented tail files (easier management)
-- [ ] Background checkpoint worker (async flushing)
-- [ ] Metrics/observability hooks (Prometheus integration)
-- [ ] Batch commit optimization (reduce scan overhead)
+1. **Log Truncation**: Delete entries before snapshots to bound log size
+2. **Batch Commits**: Commit multiple slots in one `fsync()` call
+3. **Remote Snapshots**: Ship snapshots to new replicas for faster bootstrap
+4. **Tiered Storage**: Move old segments to S3/object storage
+5. **Compression**: Optional compression of tail segments
 
-## Why Not BadgerDB?
+## References
 
-BadgerDB is excellent for general-purpose key-value storage, but for consensus logs:
+- [FASTER Paper (Microsoft Research)](https://www.microsoft.com/en-us/research/uploads/prod/2018/03/faster-sigmod18.pdf)
+- [WPaxos Paper](https://www.vldb.org/pvldb/vol11/p1903-ye.pdf)
+- [Paxos Made Simple (Lamport)](https://lamport.azurewebsites.net/pubs/paxos-simple.pdf)
 
-❌ **LSM-tree semantics don't match**
+## License
 
-- Compaction can reorder/merge entries unpredictably
-- No native "committed" vs "uncommitted" distinction
-- Fighting MVCC when you need consensus semantics
-
-❌ **Version-based transactions clash with slots**
-
-- Ballot conflicts ≠ version conflicts
-- Can't easily overwrite uncommitted entries with higher ballots
-
-❌ **Locks limit scalability**
-
-- Read-write locks on hot paths
-- Contention under high concurrency
-
-✅ **FASTER semantics match perfectly**
-
-- Mutable = uncommitted (Phase-2)
-- Immutable = committed (Phase-3)
-- Natural distinction, no filtering needed
-- **Lock-free for maximum throughput!**
-
-## Credits
-
-Inspired by Microsoft Research's FASTER: https://github.com/microsoft/FASTER
-
-This is a from-scratch pure-Go, vibe coded implementation optimized for consensus protocols, not a port of the C++ codebase.
-
-**Key differences from original FASTER:**
-
-- Pure Go (no cgo required!)
-- Optimized for consensus workloads
-- Simplified GC (no complex epoch reclamation yet)
-- Sequential scan instead of hash index (acceptable for consensus)
-
-## Performance Philosophy
-
-> "Premature optimization is the root of all evil" - Donald Knuth
-
-We optimized **after profiling** showed the need. The lock-free implementation adds complexity but delivers:
-
-- **51% faster accepts**
-- **730x faster than network**
-
-For consensus protocols where network RTT dominates, this log is no longer the bottleneck. Mission accomplished! 🎯
+Atlas-DB is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.

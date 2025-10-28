@@ -13,6 +13,7 @@
  *
  * You should have received a copy of the GNU Affero General Public License
  * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
+ *
  */
 
 package kv
@@ -39,7 +40,7 @@ type Store interface {
 	NewIterator(opts IteratorOptions) Iterator
 
 	// Transaction support
-	Begin(writable bool, slot uint64) (Transaction, error)
+	Begin(writable bool) (Transaction, error)
 
 	// Lifecycle
 	Close() error

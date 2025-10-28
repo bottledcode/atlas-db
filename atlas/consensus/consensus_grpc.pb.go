@@ -44,7 +44,6 @@ const (
 	Consensus_Ping_FullMethodName                = "/atlas.consensus.Consensus/Ping"
 	Consensus_ReadKey_FullMethodName             = "/atlas.consensus.Consensus/ReadKey"
 	Consensus_WriteKey_FullMethodName            = "/atlas.consensus.Consensus/WriteKey"
-	Consensus_DeleteKey_FullMethodName           = "/atlas.consensus.Consensus/DeleteKey"
 	Consensus_PrefixScan_FullMethodName          = "/atlas.consensus.Consensus/PrefixScan"
 )
 
@@ -60,7 +59,6 @@ type ConsensusClient interface {
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
 	ReadKey(ctx context.Context, in *ReadKeyRequest, opts ...grpc.CallOption) (*ReadKeyResponse, error)
 	WriteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error)
-	DeleteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error)
 	PrefixScan(ctx context.Context, in *PrefixScanRequest, opts ...grpc.CallOption) (*PrefixScanResponse, error)
 }
 
@@ -164,16 +162,6 @@ func (c *consensusClient) WriteKey(ctx context.Context, in *WriteKeyRequest, opt
 	return out, nil
 }
 
-func (c *consensusClient) DeleteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(WriteKeyResponse)
-	err := c.cc.Invoke(ctx, Consensus_DeleteKey_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *consensusClient) PrefixScan(ctx context.Context, in *PrefixScanRequest, opts ...grpc.CallOption) (*PrefixScanResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PrefixScanResponse)
@@ -196,7 +184,6 @@ type ConsensusServer interface {
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
 	ReadKey(context.Context, *ReadKeyRequest) (*ReadKeyResponse, error)
 	WriteKey(context.Context, *WriteKeyRequest) (*WriteKeyResponse, error)
-	DeleteKey(context.Context, *WriteKeyRequest) (*WriteKeyResponse, error)
 	PrefixScan(context.Context, *PrefixScanRequest) (*PrefixScanResponse, error)
 	mustEmbedUnimplementedConsensusServer()
 }
@@ -231,9 +218,6 @@ func (UnimplementedConsensusServer) ReadKey(context.Context, *ReadKeyRequest) (*
 }
 func (UnimplementedConsensusServer) WriteKey(context.Context, *WriteKeyRequest) (*WriteKeyResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method WriteKey not implemented")
-}
-func (UnimplementedConsensusServer) DeleteKey(context.Context, *WriteKeyRequest) (*WriteKeyResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DeleteKey not implemented")
 }
 func (UnimplementedConsensusServer) PrefixScan(context.Context, *PrefixScanRequest) (*PrefixScanResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PrefixScan not implemented")
@@ -385,24 +369,6 @@ func _Consensus_WriteKey_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Consensus_DeleteKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(WriteKeyRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ConsensusServer).DeleteKey(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Consensus_DeleteKey_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ConsensusServer).DeleteKey(ctx, req.(*WriteKeyRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _Consensus_PrefixScan_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PrefixScanRequest)
 	if err := dec(in); err != nil {
@@ -451,10 +417,6 @@ var Consensus_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "WriteKey",
 			Handler:    _Consensus_WriteKey_Handler,
-		},
-		{
-			MethodName: "DeleteKey",
-			Handler:    _Consensus_DeleteKey_Handler,
 		},
 		{
 			MethodName: "PrefixScan",

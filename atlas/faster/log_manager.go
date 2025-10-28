@@ -43,7 +43,7 @@ const (
 )
 
 const (
-	MutableSize = 2 * MB  // 2MB per log (100 logs = 200MB total, reasonable for benchmarks)
+	MutableSize = 2 * MB // 2MB per log (100 logs = 200MB total, reasonable for benchmarks)
 	SegmentSize = 1 * GB
 	NumThreads  = 128
 	MaxHotKeys  = 256
@@ -292,6 +292,62 @@ func (l *LogManager) generatePath(key []byte) string {
 	}
 
 	return basePath + "." + safeKey + ".log"
+}
+
+func (l *LogManager) getSnapshotPath(fromPath string) string {
+	return strings.TrimSuffix(fromPath, ".log") + ".snapshot"
+}
+
+func (l *LogManager) GetSnapshotManager(key []byte, log *FasterLog) (*SnapshotManager, error) {
+	path := l.getSnapshotPath(l.generatePath(key))
+	return NewSnapshotManager(path, log)
+}
+
+func (l *LogManager) InitKey(key []byte, fromSnapshot func(*Snapshot) error, replay func(*LogEntry) error) (*FasterLog, func(), error) {
+	logPath := l.generatePath(key)
+	snapPath := l.getSnapshotPath(logPath)
+
+	truncatedSlot, err := CompactOnStartup(logPath, snapPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to compact log on startup: %w", err)
+	}
+
+	log, release, err := l.GetLog(key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get log: %w", err)
+	}
+
+	snap, err := l.GetSnapshotManager(key, log)
+	if err != nil {
+		release()
+		return nil, nil, fmt.Errorf("failed to get snapshot manager: %w", err)
+	}
+
+	snapshot, err := snap.GetLatestSnapshot()
+	if err != nil {
+		release()
+		return nil, nil, fmt.Errorf("failed to get latest snapshot: %w", err)
+	}
+	if snapshot != nil {
+		err = fromSnapshot(snapshot)
+		if err != nil {
+			release()
+			return nil, nil, fmt.Errorf("failed to fromSnapshot snapshot: %w", err)
+		}
+	}
+
+	err = log.IterateCommitted(replay, IterateOptions{
+		MinSlot:            truncatedSlot,
+		MaxSlot:            0,
+		IncludeUncommitted: false,
+		SkipErrors:         false,
+	})
+	if err != nil {
+		release()
+		return nil, nil, fmt.Errorf("failed to replay log entries: %w", err)
+	}
+
+	return log, release, err
 }
 
 // CloseAll closes all logs (for shutdown)

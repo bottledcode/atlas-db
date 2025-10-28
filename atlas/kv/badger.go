@@ -131,16 +131,7 @@ func (s *BadgerStore) NewIterator(opts IteratorOptions) Iterator {
 	}
 }
 
-func (s *BadgerStore) Begin(writable bool, slot uint64) (Transaction, error) {
-	if slot > 0 {
-		txn := s.db.NewTransactionAt(slot, writable)
-		return &BadgerTransaction{
-			txn:      txn,
-			writable: writable,
-			store:    s,
-		}, nil
-	}
-
+func (s *BadgerStore) Begin(writable bool) (Transaction, error) {
 	txn := s.db.NewTransaction(writable)
 	return &BadgerTransaction{
 		txn:      txn,
@@ -252,7 +243,7 @@ func (t *BadgerTransaction) NewIterator(opts IteratorOptions) Iterator {
 	return &BadgerIterator{iter: iter}
 }
 
-func (t *BadgerTransaction) Begin(writable bool, slot uint64) (Transaction, error) {
+func (t *BadgerTransaction) Begin(writable bool) (Transaction, error) {
 	return nil, ErrNestedTransaction
 }
 

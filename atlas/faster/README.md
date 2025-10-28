@@ -490,6 +490,282 @@ entry := readFromBuffer(offset)
 - Writers cannot reclaim memory while readers are active
 - No locks needed (atomic operations only)
 
+## State Machine Reconstruction
+
+### The Challenge
+
+WPaxos requires **sequential execution** in slot order (not commit order). FASTER provides efficient iteration over committed entries.
+
+### Zero-Allocation Iterator
+
+FASTER uses a **callback pattern** to iterate without heap allocations:
+
+```go
+// ZERO ALLOCATION: Entry is reused between calls
+err := log.IterateCommitted(func(entry *LogEntry) error {
+    // Process entry immediately
+    applyToStateMachine(entry.Slot, entry.Value)
+
+    // WARNING: Do NOT store entry pointer!
+    // It will be reused on next iteration.
+
+    // If you need to keep data, copy it:
+    valueCopy := make([]byte, len(entry.Value))
+    copy(valueCopy, entry.Value)
+
+    return nil
+}, faster.IterateOptions{
+    MinSlot: 0,    // Start from beginning
+    MaxSlot: 0,    // To end (0 = no limit)
+})
+```
+
+**Key Rules:**
+1. ✅ **Process immediately** in the callback
+2. ✅ **Copy data** if you need to keep it
+3. ❌ **Never store** the `entry` pointer
+4. ❌ **Never access** the entry after callback returns
+
+### Pattern 1: Full State Machine Rebuild
+
+Reconstruct state machine from scratch (e.g., after crash):
+
+```go
+// Example: Key-value store state machine
+type StateMachine struct {
+    data map[string][]byte
+    mu   sync.RWMutex
+}
+
+func (sm *StateMachine) Rebuild(log *faster.FasterLog) error {
+    sm.mu.Lock()
+    defer sm.mu.Unlock()
+
+    // Clear existing state
+    sm.data = make(map[string][]byte)
+
+    // Replay all committed entries in slot order
+    return log.ReplayFromSlot(0, func(entry *faster.LogEntry) error {
+        // Parse command from entry.Value
+        cmd, err := parseCommand(entry.Value)
+        if err != nil {
+            return err
+        }
+
+        // Apply to state machine
+        switch cmd.Type {
+        case "PUT":
+            // Copy value (entry.Value will be reused!)
+            value := make([]byte, len(cmd.Value))
+            copy(value, cmd.Value)
+            sm.data[cmd.Key] = value
+
+        case "DELETE":
+            delete(sm.data, cmd.Key)
+        }
+
+        return nil
+    })
+}
+```
+
+### Pattern 2: Incremental Replay (From Snapshot)
+
+Resume from a snapshot and replay only recent entries:
+
+```go
+func (sm *StateMachine) RecoverFromSnapshot(
+    log *faster.FasterLog,
+    snapMgr *faster.SnapshotManager,
+) error {
+    // Step 1: Load latest snapshot
+    snapshot, err := snapMgr.GetLatestSnapshot()
+    if err != nil {
+        // No snapshot, do full rebuild
+        return sm.Rebuild(log)
+    }
+
+    // Step 2: Restore state from snapshot
+    err = sm.Deserialize(snapshot.Data)
+    if err != nil {
+        return fmt.Errorf("failed to restore snapshot: %w", err)
+    }
+
+    // Step 3: Replay entries after snapshot
+    startSlot := snapshot.Slot + 1
+    return log.ReplayFromSlot(startSlot, func(entry *faster.LogEntry) error {
+        return sm.ApplyCommand(entry.Value)
+    })
+}
+```
+
+### Pattern 3: Learner Bootstrap (Catch-Up)
+
+New node joining cluster needs to catch up:
+
+```go
+// Learner discovers it's behind and needs to catch up
+func (learner *Learner) CatchUp(
+    leaderConn *grpc.ClientConn,
+    localLog *faster.FasterLog,
+) error {
+    // Step 1: Find out what we have locally
+    _, maxLocal, _ := localLog.GetCommittedRange()
+
+    // Step 2: Ask leader for its range
+    resp, err := leaderConn.GetCommittedRange(ctx, &pb.Empty{})
+    if err != nil {
+        return err
+    }
+    leaderMax := resp.MaxSlot
+
+    if maxLocal >= leaderMax {
+        // Already caught up!
+        return nil
+    }
+
+    // Step 3: Stream missing entries from leader
+    stream, err := leaderConn.StreamEntries(ctx, &pb.StreamRequest{
+        StartSlot: maxLocal + 1,
+        EndSlot:   leaderMax,
+    })
+    if err != nil {
+        return err
+    }
+
+    // Step 4: Accept and commit each entry locally
+    for {
+        entry, err := stream.Recv()
+        if err == io.EOF {
+            break
+        }
+        if err != nil {
+            return err
+        }
+
+        // Accept entry (writes to mutable region)
+        err = localLog.Accept(entry.Slot, entry.Ballot, entry.Value)
+        if err != nil {
+            return err
+        }
+
+        // Immediately commit (flushes to tail)
+        err = localLog.Commit(entry.Slot)
+        if err != nil {
+            return err
+        }
+    }
+
+    return nil
+}
+```
+
+### Pattern 4: Leader Serves Learner (Streaming)
+
+Leader implements the streaming endpoint for learners:
+
+```go
+func (server *ConsensusServer) StreamEntries(
+    req *pb.StreamRequest,
+    stream pb.Consensus_StreamEntriesServer,
+) error {
+    log := server.log
+
+    // Use zero-allocation iterator to stream entries
+    return log.IterateCommitted(func(entry *faster.LogEntry) error {
+        // Convert to protobuf (requires copying data)
+        pbEntry := &pb.LogEntry{
+            Slot:      entry.Slot,
+            BallotId:  entry.Ballot.ID,
+            BallotNode: entry.Ballot.NodeID,
+            Value:     append([]byte(nil), entry.Value...), // Copy!
+            Committed: entry.Committed,
+        }
+
+        // Send to learner
+        return stream.Send(pbEntry)
+    }, faster.IterateOptions{
+        MinSlot: req.StartSlot,
+        MaxSlot: req.EndSlot,
+    })
+}
+```
+
+### Pattern 5: Snapshot Creation
+
+Periodically checkpoint state machine:
+
+```go
+func (sm *StateMachine) CreateSnapshot(
+    log *faster.FasterLog,
+    snapMgr *faster.SnapshotManager,
+) error {
+    sm.mu.RLock()
+    defer sm.mu.RUnlock()
+
+    // Find highest committed slot
+    _, maxSlot, _ := log.GetCommittedRange()
+
+    // Serialize current state machine state
+    data, err := sm.Serialize()
+    if err != nil {
+        return err
+    }
+
+    // Create snapshot
+    return snapMgr.CreateSnapshot(maxSlot, data)
+}
+```
+
+### Performance Characteristics
+
+**Iterator Performance:**
+- **Slot collection**: O(N) where N = number of entries in index
+- **Sorting**: O(N log N) for >100 slots, O(N²) for ≤100 slots (insertion sort)
+- **Iteration**: O(N) with zero allocations per entry
+- **Total**: ~1-2 µs per entry for 10,000 entries
+
+**Example: Rebuild 10,000 entries**
+- Collect slots: ~100 µs
+- Sort: ~200 µs
+- Iterate + apply: ~20 ms (assuming 2µs per entry)
+- **Total: ~20.3 ms** (efficient!)
+
+### Advanced: Handling Gaps
+
+WPaxos can have **gaps** in the log (slots never proposed). Handle them gracefully:
+
+```go
+func (sm *StateMachine) RebuildWithGaps(log *faster.FasterLog) error {
+    // Get range of committed slots
+    minSlot, maxSlot, count := log.GetCommittedRange()
+
+    expectedCount := maxSlot - minSlot + 1
+    actualCount := count
+    gapCount := expectedCount - actualCount
+
+    if gapCount > 0 {
+        log.Info("Detected %d gaps in log", gapCount)
+    }
+
+    // Iterate only over committed slots (gaps are skipped automatically)
+    return log.ReplayFromSlot(minSlot, func(entry *faster.LogEntry) error {
+        return sm.ApplyCommand(entry.Value)
+    })
+}
+```
+
+**Why gaps are OK:**
+- Slots may be reserved but never committed (leadership change)
+- WPaxos allows out-of-order commits (slot 7 might commit before slot 5)
+- Iterator only returns committed entries (gaps are invisible)
+
+**Important Distinction:**
+- ❌ **"No gaps in execution"** ≠ Every slot must exist
+- ✅ **"No gaps in execution"** = Must apply committed slots in order
+- Example: If slots 5, 7, 9 are committed (6, 8 missing), apply them as 5→7→9
+- This is what WPaxos paper means by "without any gap" in execution order
+
 ## Crash Recovery
 
 ### Tail Recovery (Automatic)
@@ -518,35 +794,61 @@ The mutable region is **in-memory only** and **not persisted**. On crash:
 - New leader will recover via Phase-1 from other replicas
 - Only committed entries are durable
 
-### Recovery Example
+### Complete Recovery Example
 
 ```go
-// After crash, reopen log
-log, err := faster.NewFasterLog(cfg)
+func RecoverNode(logPath string, snapPath string) (*StateMachine, error) {
+    // Step 1: Open log (rebuilds index automatically)
+    log, err := faster.NewFasterLog(faster.Config{
+        Path:         logPath,
+        MutableSize:  64 * 1024 * 1024,
+        SegmentSize:  1 * 1024 * 1024 * 1024,
+        NumThreads:   128,
+        SyncOnCommit: true,
+    })
+    if err != nil {
+        return nil, fmt.Errorf("failed to open log: %w", err)
+    }
 
-// Option 1: Load from snapshot
-snapMgr, _ := faster.NewSnapshotManager("/snapshots", log)
-snapshot, err := snapMgr.GetLatestSnapshot()
-if err == nil {
-    // Restore state from snapshot
-    restoreState(snapshot.Data)
-    replayFrom := snapshot.Slot + 1
+    // Step 2: Load snapshot (if available)
+    snapMgr, err := faster.NewSnapshotManager(snapPath, log)
+    if err != nil {
+        return nil, fmt.Errorf("failed to open snapshots: %w", err)
+    }
 
-    // Replay commits from snapshot to present
-    for slot := replayFrom; slot <= getMaxSlot(); slot++ {
-        entry, err := log.ReadCommittedOnly(slot)
-        if err == nil {
-            applyToStateMachine(entry.Value)
+    sm := &StateMachine{data: make(map[string][]byte)}
+
+    snapshot, err := snapMgr.GetLatestSnapshot()
+    if err == nil {
+        // Snapshot exists - restore from it
+        log.Info("Restoring from snapshot at slot %d", snapshot.Slot)
+        err = sm.Deserialize(snapshot.Data)
+        if err != nil {
+            return nil, fmt.Errorf("failed to restore snapshot: %w", err)
+        }
+
+        // Step 3: Replay entries after snapshot
+        replayFrom := snapshot.Slot + 1
+        err = log.ReplayFromSlot(replayFrom, func(entry *faster.LogEntry) error {
+            return sm.ApplyCommand(entry.Value)
+        })
+        if err != nil {
+            return nil, fmt.Errorf("failed to replay log: %w", err)
+        }
+    } else {
+        // No snapshot - do full rebuild from log
+        log.Info("No snapshot found, rebuilding from log")
+        err = sm.Rebuild(log)
+        if err != nil {
+            return nil, fmt.Errorf("failed to rebuild: %w", err)
         }
     }
-}
 
-// Option 2: Full log replay (if no snapshots)
-for slot := uint64(0); slot <= getMaxSlot(); slot++ {
-    entry, err := log.ReadCommittedOnly(slot)
-    if err == nil {
-        applyToStateMachine(entry.Value)
-    }
+    // Step 4: Get status
+    _, maxSlot, count := log.GetCommittedRange()
+    log.Info("Recovery complete: %d committed entries, max slot %d", count, maxSlot)
+
+    return sm, nil
 }
 ```
 

@@ -53,6 +53,25 @@ type Config struct {
 	SyncOnCommit bool
 }
 
+// IterateOptions controls iteration behavior for IterateCommitted
+type IterateOptions struct {
+	// MinSlot is the minimum slot to iterate (0 = from beginning)
+	MinSlot uint64
+
+	// MaxSlot is the maximum slot to iterate (0 = to end)
+	MaxSlot uint64
+
+	// IncludeUncommitted includes uncommitted entries from mutable region
+	// Useful for debugging or special recovery scenarios
+	// Default: false (only committed entries)
+	IncludeUncommitted bool
+
+	// SkipErrors continues iteration even if individual entry reads fail
+	// Useful for recovering from partial corruption
+	// Default: false (stop on first error)
+	SkipErrors bool
+}
+
 // entryHeader is the on-disk format for log entries
 // Layout: [slot:8][ballotID:8][ballotNode:8][valueLen:4][committed:1][value:N][checksum:4]
 type entryHeader struct {

@@ -152,6 +152,25 @@ var (
 	connectionManagerOnce sync.Once
 )
 
+// GetNodeConnectionManager returns the singleton NodeConnectionManager instance
+func GetNodeConnectionManager(ctx context.Context) *NodeConnectionManager {
+	connectionManagerOnce.Do(func() {
+		managerCtx, cancel := context.WithCancel(ctx)
+		connectionManager = &NodeConnectionManager{
+			nodes:       make(map[uint64]*ManagedNode),
+			activeNodes: make(map[string][]*ManagedNode),
+			ctx:         managerCtx,
+			cancel:      cancel,
+		}
+		// Start health checker in background
+		connectionManager.healthCheck = NewHealthChecker(connectionManager)
+		go connectionManager.healthCheck.Start(managerCtx)
+
+		options.Logger.Info("NodeConnectionManager initialized (in-memory only)")
+	})
+	return connectionManager
+}
+
 // AddNode registers a new node and attempts connection
 func (ncm *NodeConnectionManager) AddNode(ctx context.Context, node *Node) error {
 	managedNode := &ManagedNode{

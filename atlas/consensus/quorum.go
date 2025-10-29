@@ -105,7 +105,7 @@ func (q *defaultQuorumManager) AddNode(ctx context.Context, node *Node) error {
 		return nil
 	}
 
-	_, _ = qn.JoinCluster(ctx, node)
+	// Connection will be established lazily on first use
 	q.nodes[RegionName(node.GetRegion().GetName())] = append(q.nodes[RegionName(node.GetRegion().GetName())], qn)
 
 	// Also add to the connection manager for health monitoring
@@ -136,7 +136,7 @@ func (q *defaultQuorumManager) RemoveNode(nodeID uint64) error {
 				}
 
 				options.Logger.Info("Removed node from quorum manager",
-					zap.Int64("node_id", nodeID),
+					zap.Uint64("node_id", nodeID),
 					zap.String("region", string(region)))
 
 				return nil
@@ -146,7 +146,7 @@ func (q *defaultQuorumManager) RemoveNode(nodeID uint64) error {
 
 	// Node not found - this is not necessarily an error
 	options.Logger.Debug("Node not found in quorum manager for removal",
-		zap.Int64("node_id", nodeID))
+		zap.Uint64("node_id", nodeID))
 
 	return nil
 }
@@ -370,21 +370,10 @@ func (q *defaultQuorumManager) GetQuorum(ctx context.Context, table string) (Quo
 	Fz := options.CurrentOptions.GetFz()
 	Fn := options.CurrentOptions.GetFn()
 
-	kvPool := kv.GetPool()
-	if kvPool == nil {
-		return nil, fmt.Errorf("KV pool not initialized")
-	}
+	// TODO: In-memory table configuration will be added later if needed
+	// For now, we use all available nodes without table-specific filtering
+	var tableConfig *Table = nil
 
-	metaStore := kvPool.MetaStore()
-	if metaStore == nil {
-		return nil, fmt.Errorf("metaStore is closed")
-	}
-
-	tableRepo := NewTableRepositoryKV(ctx, metaStore)
-	tableConfig, err := tableRepo.GetTable(table)
-	if err != nil {
-		return nil, err
-	}
 	// Create a shallow copy of q.nodes to avoid mutating the original map
 	nodes := make(map[RegionName][]*QuorumNode)
 	maps.Copy(nodes, q.nodes)

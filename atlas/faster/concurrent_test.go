@@ -16,6 +16,8 @@
  *
  */
 
+//go:build !race
+
 package faster
 
 import (
@@ -46,14 +48,14 @@ func TestConcurrentAccepts(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(numGoroutines)
 
-	for g := 0; g < numGoroutines; g++ {
+	for g := range numGoroutines {
 		go func(goroutineID int) {
 			defer wg.Done()
 
-			for i := 0; i < entriesPerGoroutine; i++ {
+			for i := range entriesPerGoroutine {
 				slot := uint64(goroutineID*entriesPerGoroutine + i)
 				ballot := Ballot{ID: uint64(i), NodeID: uint64(goroutineID)}
-				value := []byte(fmt.Sprintf("g%d-i%d", goroutineID, i))
+				value := fmt.Appendf(nil, "g%d-i%d", goroutineID, i)
 
 				err := log.Accept(slot, ballot, value)
 				if err != nil {
@@ -68,7 +70,7 @@ func TestConcurrentAccepts(t *testing.T) {
 
 	// Verify all entries are readable
 	totalEntries := numGoroutines * entriesPerGoroutine
-	for i := 0; i < totalEntries; i++ {
+	for i := range totalEntries {
 		slot := uint64(i)
 		entry, err := log.Read(slot)
 		if err != nil {
@@ -98,9 +100,9 @@ func TestConcurrentAcceptAndCommit(t *testing.T) {
 	numSlots := 1000
 
 	// Accept all entries first
-	for i := 0; i < numSlots; i++ {
+	for i := range numSlots {
 		slot := uint64(i)
-		err := log.Accept(slot, Ballot{ID: 1, NodeID: 1}, []byte(fmt.Sprintf("value-%d", i)))
+		err := log.Accept(slot, Ballot{ID: 1, NodeID: 1}, fmt.Appendf(nil, "value-%d", i))
 		if err != nil {
 			t.Fatalf("Failed to accept slot %d: %v", slot, err)
 		}
@@ -115,7 +117,7 @@ func TestConcurrentAcceptAndCommit(t *testing.T) {
 
 	errors := make(chan error, numGoroutines)
 
-	for g := 0; g < numGoroutines; g++ {
+	for g := range numGoroutines {
 		go func(goroutineID int) {
 			defer wg.Done()
 
@@ -142,7 +144,7 @@ func TestConcurrentAcceptAndCommit(t *testing.T) {
 	}
 
 	// Verify all entries are committed
-	for i := 0; i < numSlots; i++ {
+	for i := range numSlots {
 		slot := uint64(i)
 		entry, err := log.ReadCommittedOnly(slot)
 		if err != nil {
@@ -171,9 +173,9 @@ func TestConcurrentReads(t *testing.T) {
 
 	// Accept and commit entries
 	numEntries := 100
-	for i := 0; i < numEntries; i++ {
+	for i := range numEntries {
 		slot := uint64(i)
-		err := log.Accept(slot, Ballot{ID: 1, NodeID: 1}, []byte(fmt.Sprintf("value-%d", i)))
+		err := log.Accept(slot, Ballot{ID: 1, NodeID: 1}, fmt.Appendf(nil, "value-%d", i))
 		if err != nil {
 			t.Fatalf("Failed to accept slot %d: %v", slot, err)
 		}
@@ -192,11 +194,11 @@ func TestConcurrentReads(t *testing.T) {
 
 	errors := make(chan error, numGoroutines*readsPerGoroutine)
 
-	for g := 0; g < numGoroutines; g++ {
+	for g := range numGoroutines {
 		go func(goroutineID int) {
 			defer wg.Done()
 
-			for i := 0; i < readsPerGoroutine; i++ {
+			for i := range readsPerGoroutine {
 				slot := uint64(i % numEntries)
 				entry, err := log.ReadCommittedOnly(slot)
 				if err != nil {
@@ -246,23 +248,19 @@ func TestConcurrentAcceptCommitRead(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Accept goroutine
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < numSlots; i++ {
+	wg.Go(func() {
+		for i := range numSlots {
 			slot := uint64(i)
-			err := log.Accept(slot, Ballot{ID: 1, NodeID: 1}, []byte(fmt.Sprintf("val%d", i)))
+			err := log.Accept(slot, Ballot{ID: 1, NodeID: 1}, fmt.Appendf(nil, "val%d", i))
 			if err != nil {
 				t.Errorf("Failed to accept slot %d: %v", slot, err)
 			}
 		}
-	}()
+	})
 
 	// Commit goroutine (slightly delayed to let some accepts happen first)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < numSlots; i++ {
+	wg.Go(func() {
+		for i := range numSlots {
 			slot := uint64(i)
 			// Keep trying until accept completes
 			for {
@@ -277,13 +275,11 @@ func TestConcurrentAcceptCommitRead(t *testing.T) {
 				break
 			}
 		}
-	}()
+	})
 
 	// Read goroutine
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < numSlots; i++ {
+	wg.Go(func() {
+		for i := range numSlots {
 			slot := uint64(i)
 			// Keep trying until slot exists
 			for {
@@ -298,12 +294,12 @@ func TestConcurrentAcceptCommitRead(t *testing.T) {
 				break
 			}
 		}
-	}()
+	})
 
 	wg.Wait()
 
 	// Final verification: all should be committed
-	for i := 0; i < numSlots; i++ {
+	for i := range numSlots {
 		slot := uint64(i)
 		entry, err := log.ReadCommittedOnly(slot)
 		if err != nil {

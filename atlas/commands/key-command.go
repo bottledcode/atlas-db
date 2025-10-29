@@ -233,11 +233,11 @@ func (k *KeyDelCommand) Execute(ctx context.Context) ([]byte, error) {
 	if err := k.CheckMinLen(3); err != nil {
 		return nil, err
 	}
-	key, _ := k.SelectNormalizedCommand(2)
-	builder := k.FromKey(key)
-	if err := atlas.DeleteKey(ctx, builder); err != nil {
-		return nil, err
-	}
+	//key, _ := k.SelectNormalizedCommand(2)
+	//builder := k.FromKey(key)
+	///if err := atlas.DeleteKey(ctx, builder); err != nil {
+		///return nil, err
+	///}
 	return nil, nil
 }
 

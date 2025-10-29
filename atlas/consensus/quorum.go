@@ -370,37 +370,9 @@ func (q *defaultQuorumManager) GetQuorum(ctx context.Context, table string) (Quo
 	Fz := options.CurrentOptions.GetFz()
 	Fn := options.CurrentOptions.GetFn()
 
-	// TODO: In-memory table configuration will be added later if needed
-	// For now, we use all available nodes without table-specific filtering
-	var tableConfig *Table = nil
-
 	// Create a shallow copy of q.nodes to avoid mutating the original map
 	nodes := make(map[RegionName][]*QuorumNode)
 	maps.Copy(nodes, q.nodes)
-
-	if tableConfig != nil {
-		// allow regions allowed by the table config
-		if len(tableConfig.GetAllowedRegions()) > 0 {
-			filteredNodes := make(map[RegionName][]*QuorumNode)
-			for _, region := range tableConfig.GetAllowedRegions() {
-				if nodeSlice, ok := nodes[RegionName(region)]; ok {
-					filteredNodes[RegionName(region)] = nodeSlice
-				}
-			}
-			nodes = filteredNodes
-		} else {
-			if len(tableConfig.GetRestrictedRegions()) > 0 {
-				// restrict regions allowed by the table config
-				for region := range nodes {
-					for _, restricted := range tableConfig.GetRestrictedRegions() {
-						if string(region) == restricted {
-							delete(nodes, region)
-						}
-					}
-				}
-			}
-		}
-	}
 
 	// Filter nodes to only include healthy ones from connection manager
 	if q.connectionManager != nil {
@@ -514,8 +486,8 @@ recalculate:
 	}
 
 	return &majorityQuorum{
-		q1: q1,
-		q2: q2,
+		q1: &broadcastQuorum{nodes: q1},
+		q2: &broadcastQuorum{nodes: q2},
 	}, nil
 }
 
@@ -528,7 +500,7 @@ func (q *defaultQuorumManager) filterHealthyNodes(nodes map[RegionName][]*Quorum
 		activeInRegion, hasActiveNodes := activeNodes[string(region)]
 
 		// Create a map of active node IDs for quick lookup
-		activeNodeIDs := make(map[int64]bool)
+		activeNodeIDs := make(map[uint64]bool)
 		if hasActiveNodes {
 			for _, activeNode := range activeInRegion {
 				activeNodeIDs[activeNode.Id] = true
@@ -577,33 +549,6 @@ func (q *defaultQuorumManager) describeQuorumDiagnostic(ctx context.Context, tab
 	metaStore := kvPool.MetaStore()
 	if metaStore == nil {
 		return nil, nil, fmt.Errorf("metaStore is closed")
-	}
-
-	tableRepo := NewTableRepositoryKV(ctx, metaStore)
-	tableConfig, err := tableRepo.GetTable(table)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// Apply table region restrictions to our local copy
-	if tableConfig != nil {
-		if len(tableConfig.GetAllowedRegions()) > 0 {
-			filteredNodes := make(map[RegionName][]*QuorumNode)
-			for _, region := range tableConfig.GetAllowedRegions() {
-				if nodeSlice, ok := nodesCopy[RegionName(region)]; ok {
-					filteredNodes[RegionName(region)] = nodeSlice
-				}
-			}
-			nodesCopy = filteredNodes
-		} else if len(tableConfig.GetRestrictedRegions()) > 0 {
-			for region := range nodesCopy {
-				for _, restricted := range tableConfig.GetRestrictedRegions() {
-					if string(region) == restricted {
-						delete(nodesCopy, region)
-					}
-				}
-			}
-		}
 	}
 
 	// For diagnostic purposes, treat all nodes as healthy (no filtering by connection manager)

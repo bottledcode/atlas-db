@@ -42,10 +42,9 @@ func BenchmarkAccept(b *testing.B) {
 	ballot := Ballot{ID: 1, NodeID: 1}
 	value := make([]byte, 100) // 100 byte values
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		slot := uint64(i)
 		err := log.Accept(slot, ballot, value)
 		if err != nil {
@@ -86,10 +85,9 @@ func BenchmarkCommit(b *testing.B) {
 	ballot := Ballot{ID: 1, NodeID: 1}
 	value := make([]byte, 100)
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		slot := uint64(i)
 
 		// Accept
@@ -134,7 +132,7 @@ func BenchmarkCommitWithSync(b *testing.B) {
 	// Pre-accept all entries
 	ballot := Ballot{ID: 1, NodeID: 1}
 	value := make([]byte, 100)
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		slot := uint64(i)
 		err := log.Accept(slot, ballot, value)
 		if err != nil {
@@ -142,10 +140,9 @@ func BenchmarkCommitWithSync(b *testing.B) {
 		}
 	}
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		slot := uint64(i)
 		err := log.Commit(slot)
 		if err != nil {
@@ -178,7 +175,7 @@ func BenchmarkReadUncommitted(b *testing.B) {
 	ballot := Ballot{ID: 1, NodeID: 1}
 	value := make([]byte, 100)
 	numEntries := 10000
-	for i := 0; i < numEntries; i++ {
+	for i := range numEntries {
 		slot := uint64(i)
 		err := log.Accept(slot, ballot, value)
 		if err != nil {
@@ -186,10 +183,9 @@ func BenchmarkReadUncommitted(b *testing.B) {
 		}
 	}
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		slot := uint64(i % numEntries)
 		_, err := log.Read(slot)
 		if err != nil {
@@ -222,7 +218,7 @@ func BenchmarkReadCommitted(b *testing.B) {
 	ballot := Ballot{ID: 1, NodeID: 1}
 	value := make([]byte, 100)
 	numEntries := 10000
-	for i := 0; i < numEntries; i++ {
+	for i := range numEntries {
 		slot := uint64(i)
 		err := log.Accept(slot, ballot, value)
 		if err != nil {
@@ -234,10 +230,9 @@ func BenchmarkReadCommitted(b *testing.B) {
 		}
 	}
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		slot := uint64(i % numEntries)
 		_, err := log.ReadCommittedOnly(slot)
 		if err != nil {
@@ -269,10 +264,9 @@ func BenchmarkAcceptCommitRead(b *testing.B) {
 	ballot := Ballot{ID: 1, NodeID: 1}
 	value := make([]byte, 100)
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		slot := uint64(i)
 
 		// Accept
@@ -324,7 +318,7 @@ func BenchmarkScanUncommitted(b *testing.B) {
 	ballot := Ballot{ID: 1, NodeID: 1}
 	value := make([]byte, 100)
 	numEntries := 1000
-	for i := 0; i < numEntries; i++ {
+	for i := range numEntries {
 		slot := uint64(i)
 		err := log.Accept(slot, ballot, value)
 		if err != nil {
@@ -332,10 +326,9 @@ func BenchmarkScanUncommitted(b *testing.B) {
 		}
 	}
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		entries, err := log.ScanUncommitted()
 		if err != nil {
 			b.Fatalf("Failed to scan: %v", err)
@@ -376,7 +369,7 @@ func BenchmarkValueSizes(b *testing.B) {
 			b.ResetTimer()
 			b.ReportAllocs()
 
-			for i := 0; i < b.N; i++ {
+			for i := 0; b.Loop(); i++ {
 				slot := uint64(i)
 				err := log.Accept(slot, ballot, value)
 				if err != nil {
@@ -422,7 +415,7 @@ func BenchmarkConcurrentReads(b *testing.B) {
 	ballot := Ballot{ID: 1, NodeID: 1}
 	value := make([]byte, 100)
 	numEntries := 10000
-	for i := 0; i < numEntries; i++ {
+	for i := range numEntries {
 		slot := uint64(i)
 		err := log.Accept(slot, ballot, value)
 		if err != nil {
@@ -474,12 +467,11 @@ func BenchmarkCheckpoint(b *testing.B) {
 	ballot := Ballot{ID: 1, NodeID: 1}
 	value := make([]byte, 100)
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		// Accept and commit some entries
-		for j := 0; j < 100; j++ {
+		for j := range 100 {
 			slot := uint64(i*100 + j)
 			log.Accept(slot, ballot, value)
 			log.Commit(slot)
@@ -519,7 +511,7 @@ func BenchmarkRecovery(b *testing.B) {
 
 			ballot := Ballot{ID: 1, NodeID: 1}
 			value := make([]byte, 100)
-			for i := 0; i < size; i++ {
+			for i := range size {
 				slot := uint64(i)
 				log.Accept(slot, ballot, value)
 				log.Commit(slot)
@@ -530,7 +522,7 @@ func BenchmarkRecovery(b *testing.B) {
 			b.ResetTimer()
 			b.ReportAllocs()
 
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				log, err := NewFasterLog(cfg)
 				if err != nil {
 					b.Fatalf("Failed to recover log: %v", err)

@@ -33,8 +33,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/protobuf/types/known/durationpb"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func JoinCluster(ctx context.Context) error {
@@ -46,7 +44,7 @@ func JoinCluster(ctx context.Context) error {
 		// Check if we're already registered in the cluster
 		existing, err := checkExistingNodeRegistration(ctx)
 		if err == nil && existing != nil {
-			options.Logger.Info("Node already registered in cluster", zap.Int64("node_id", existing.GetId()))
+			options.Logger.Info("Node already registered in cluster", zap.Uint64("node_id", existing.GetId()))
 			options.CurrentOptions.ServerId = existing.GetId()
 			// Load all nodes into quorum manager
 			return loadNodesIntoQuorumManager(ctx)
@@ -65,41 +63,41 @@ func JoinCluster(ctx context.Context) error {
 	}
 
 	// Find the node table to get the current owner (for cluster contact)
-	tableRepo := consensus.NewTableRepositoryKV(ctx, metaStore)
-	nodeTable, err := tableRepo.GetTable(consensus.NodeTable)
-	if err != nil {
-		return fmt.Errorf("failed to get node table: %w", err)
-	}
-	if nodeTable == nil {
-		return fmt.Errorf("no node table found - cannot join cluster")
-	}
+	//tableRepo := consensus.NewTableRepositoryKV(ctx, metaStore)
+	//nodeTable, err := tableRepo.GetTable(consensus.NodeTable)
+	//if err != nil {
+	//	return fmt.Errorf("failed to get node table: %w", err)
+	//}
+	//if nodeTable == nil {
+	//	return fmt.Errorf("no node table found - cannot join cluster")
+	//}
 
 	// Find the next available node ID
-	nodeRepo := consensus.NewNodeRepository(ctx, metaStore)
-	nextID, err := getNextNodeID(nodeRepo)
-	if err != nil {
-		return fmt.Errorf("failed to get next node ID: %w", err)
-	}
+	//nodeRepo := consensus.NewNodeRepository(ctx, metaStore)
+	//nextID, err := getNextNodeID(nodeRepo)
+	//if err != nil {
+	//	return fmt.Errorf("failed to get next node ID: %w", err)
+	//}
 
-	options.Logger.Info("Requesting to join cluster",
-		zap.Int64("next_node_id", nextID),
-		zap.String("owner_address", nodeTable.GetOwner().GetAddress()))
+	//options.Logger.Info("Requesting to join cluster",
+	//	zap.Int64("next_node_id", nextID),
+	//	zap.String("owner_address", nodeTable.GetOwner().GetAddress()))
 
-	options.CurrentOptions.ServerId = nextID
+	//options.CurrentOptions.ServerId = nextID
 
 	// Contact the cluster to request membership
-	err = requestClusterMembership(ctx, nodeTable, nextID)
-	if err != nil {
-		return fmt.Errorf("failed to request cluster membership: %w", err)
-	}
+	//err = requestClusterMembership(ctx, nodeTable, nextID)
+	//if err != nil {
+	//	return fmt.Errorf("failed to request cluster membership: %w", err)
+	//}
 
 	// Load all nodes into quorum manager for future consensus operations
-	err = loadNodesIntoQuorumManager(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to load nodes into quorum manager: %w", err)
-	}
+	//err = loadNodesIntoQuorumManager(ctx)
+	//if err != nil {
+	//	return fmt.Errorf("failed to load nodes into quorum manager: %w", err)
+	//}
 
-	options.Logger.Info("Successfully joined cluster", zap.Int64("node_id", nextID))
+	//options.Logger.Info("Successfully joined cluster", zap.Int64("node_id", nextID))
 	return nil
 }
 
@@ -115,11 +113,12 @@ func checkExistingNodeRegistration(ctx context.Context) (*consensus.Node, error)
 		return nil, fmt.Errorf("metadata store not available")
 	}
 
-	nodeRepo := consensus.NewNodeRepository(ctx, metaStore)
-	return nodeRepo.GetNodeByAddress(
-		options.CurrentOptions.AdvertiseAddress,
-		uint(options.CurrentOptions.AdvertisePort),
-	)
+	//nodeRepo := consensus.NewNodeRepository(ctx, metaStore)
+	//return nodeRepo.GetNodeByAddress(
+	//	options.CurrentOptions.AdvertiseAddress,
+	//	uint(options.CurrentOptions.AdvertisePort),
+	//)
+	return nil, nil
 }
 
 // loadNodesIntoQuorumManager loads all known nodes into the quorum manager cache
@@ -134,128 +133,19 @@ func loadNodesIntoQuorumManager(ctx context.Context) error {
 		return fmt.Errorf("metadata store not available")
 	}
 
-	nodeRepo := consensus.NewNodeRepository(ctx, metaStore)
-	qm := consensus.GetDefaultQuorumManager(ctx)
+	//nodeRepo := consensus.NewNodeRepository(ctx, metaStore)
+	//qm := consensus.GetDefaultQuorumManager(ctx)
 
-	return nodeRepo.Iterate(false, func(node *consensus.Node, txn *kv.Transaction) error {
-		err := qm.AddNode(ctx, node)
-		if err != nil {
-			return fmt.Errorf("failed to add node to quorum manager: %w", err)
-		}
-		options.Logger.Debug("Added node to quorum manager",
-			zap.Int64("node_id", node.GetId()),
-			zap.String("address", node.GetAddress()))
-		return nil
-	})
-}
-
-// getNextNodeID finds the next available node ID
-func getNextNodeID(nodeRepo consensus.NodeRepository) (int64, error) {
-	maxID := int64(0)
-
-	err := nodeRepo.Iterate(false, func(node *consensus.Node, txn *kv.Transaction) error {
-		if node.GetId() > maxID {
-			maxID = node.GetId()
-		}
-		return nil
-	})
-
-	if err != nil {
-		return 0, err
-	}
-
-	return maxID + 1, nil
-}
-
-// requestClusterMembership contacts the cluster to request membership
-func requestClusterMembership(ctx context.Context, nodeTable *consensus.Table, nodeID int64) error {
-	owner := nodeTable.GetOwner()
-	url := fmt.Sprintf("%s:%d", owner.GetAddress(), owner.GetPort())
-
-	options.Logger.Info("Contacting cluster owner for membership", zap.String("url", url))
-
-	tlsConfig, err := options.GetTLSConfig("https://" + url)
-	if err != nil {
-		return fmt.Errorf("failed to create TLS config: %w", err)
-	}
-	creds := credentials.NewTLS(tlsConfig)
-
-	conn, err := grpc.NewClient(url, grpc.WithTransportCredentials(creds),
-		grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-			ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", "Bearer "+options.CurrentOptions.ApiKey)
-			ctx = metadata.AppendToOutgoingContext(ctx, "Atlas-Service", "Consensus")
-			return invoker(ctx, method, req, reply, cc, opts...)
-		}))
-	if err != nil {
-		return fmt.Errorf("failed to connect to cluster owner: %w", err)
-	}
-	defer func() { _ = conn.Close() }()
-
-	client := consensus.NewConsensusClient(conn)
-
-	// Build our node registration request
-	newNode := &consensus.Node{
-		Id:      nodeID,
-		Address: options.CurrentOptions.AdvertiseAddress,
-		Port:    int64(options.CurrentOptions.AdvertisePort),
-		Region:  &consensus.Region{Name: options.CurrentOptions.Region},
-		Active:  true,
-		Rtt:     durationpb.New(0),
-	}
-
-	result, err := client.JoinCluster(ctx, newNode)
-	if err != nil {
-		return fmt.Errorf("cluster join request failed: %w", err)
-	}
-
-	if !result.GetSuccess() {
-		if result.GetTable() != nil {
-			return fmt.Errorf("join request rejected - not the current owner (table version: %d)",
-				result.GetTable().GetVersion())
-		}
-		return fmt.Errorf("join request rejected")
-	}
-
-	options.Logger.Info("Cluster membership request accepted", zap.Int64("assigned_node_id", result.GetNodeId()))
-
-	// Update the node with the server-assigned ID
-	newNode.Id = result.GetNodeId()
-
-	// Update CurrentOptions with the server-assigned node ID
-	options.CurrentOptions.ServerId = result.GetNodeId()
-
-	// Now that we're successfully part of the cluster, add ourselves to our local repository
-	// so that we can participate in consensus and KV operations
-	kvPool := kv.GetPool()
-	if kvPool != nil {
-		metaStore := kvPool.MetaStore()
-		if metaStore != nil {
-			nodeRepo := consensus.NewNodeRepository(ctx, metaStore)
-			err = nodeRepo.AddNode(newNode)
-			if err != nil {
-				options.Logger.Warn("Failed to add self to local node repository after successful join", zap.Error(err))
-			} else {
-				options.Logger.Info("Successfully added self to local node repository")
-			}
-		}
-	}
-
-	// Add ourselves to quorum manager and connection manager for immediate participation
-	connectionManager := consensus.GetNodeConnectionManager(ctx)
-	if connectionManager != nil {
-		quorumManager := consensus.GetDefaultQuorumManager(ctx)
-		if quorumManager != nil {
-			// Add the current node to the quorum manager and connection manager
-			err = quorumManager.AddNode(ctx, newNode)
-			if err != nil {
-				options.Logger.Warn("Failed to add self to quorum manager after successful join", zap.Error(err))
-				// Don't fail the entire join process for this
-			} else {
-				options.Logger.Info("Successfully added self to quorum and connection manager")
-			}
-		}
-	}
-
+	//return nodeRepo.Iterate(false, func(node *consensus.Node, txn *kv.Transaction) error {
+	//	err := qm.AddNode(ctx, node)
+	//	if err != nil {
+	//		return fmt.Errorf("failed to add node to quorum manager: %w", err)
+	//	}
+	//	options.Logger.Debug("Added node to quorum manager",
+	//		zap.Int64("node_id", node.GetId()),
+	//		zap.String("address", node.GetAddress()))
+	//	return nil
+	//})
 	return nil
 }
 
@@ -290,45 +180,45 @@ func InitializeMaybe(ctx context.Context) error {
 	if pool == nil {
 		return fmt.Errorf("KV pool not available")
 	}
-	nodeRepo := consensus.NewNodeRepository(ctx, pool.MetaStore())
+	//nodeRepo := consensus.NewNodeRepository(ctx, pool.MetaStore())
 
-	count, err := nodeRepo.TotalCount()
-	if err != nil {
-		return err
-	}
-	qm := consensus.GetDefaultQuorumManager(ctx)
+	//count, err := nodeRepo.TotalCount()
+	//if err != nil {
+	//	return err
+	//}
+	//qm := consensus.GetDefaultQuorumManager(ctx)
 
-	if count > int64(0) {
-		options.Logger.Info("Atlas database is not empty; skipping initialization and continuing normal operations")
+	//if count > int64(0) {
+	//	options.Logger.Info("Atlas database is not empty; skipping initialization and continuing normal operations")
 
-		self, err := nodeRepo.GetNodeByAddress(options.CurrentOptions.AdvertiseAddress, uint(options.CurrentOptions.AdvertisePort))
-		if err != nil {
-			return err
-		}
+	//	self, err := nodeRepo.GetNodeByAddress(options.CurrentOptions.AdvertiseAddress, uint(options.CurrentOptions.AdvertisePort))
+	//	if err != nil {
+	//		return err
+	//	}
 
-		if self == nil {
-			options.Logger.Fatal("Could not find the current node in the database, but a node currently exists; please connect to the cluster.")
-		}
+	//	if self == nil {
+	//		options.Logger.Fatal("Could not find the current node in the database, but a node currently exists; please connect to the cluster.")
+	//	}
 
-		options.CurrentOptions.ServerId = self.GetId()
+	//	options.CurrentOptions.ServerId = self.GetId()
 
-		// add all known nodes to the internal cache
-		err = nodeRepo.Iterate(false, func(node *consensus.Node, txn *kv.Transaction) error {
-			return qm.AddNode(ctx, node)
-		})
-		if err != nil {
-			return err
-		}
+	//	// add all known nodes to the internal cache
+	//	err = nodeRepo.Iterate(false, func(node *consensus.Node, txn *kv.Transaction) error {
+	//		return qm.AddNode(ctx, node)
+	//	})
+	//	if err != nil {
+	//		return err
+	//	}
 
-		return nil
-	}
+	//	return nil
+	//}
 
 	if options.CurrentOptions.Region == "" {
 		options.CurrentOptions.Region = "default"
 		options.Logger.Warn("No region specified, using default region", zap.String("region", options.CurrentOptions.Region))
 	}
 
-	region := options.CurrentOptions.Region
+	//region := options.CurrentOptions.Region
 
 	if options.CurrentOptions.AdvertisePort == 0 {
 		options.CurrentOptions.AdvertisePort = 8080
@@ -343,50 +233,50 @@ func InitializeMaybe(ctx context.Context) error {
 	// no nodes exist in the database, so we need to configure things here
 
 	// define the new node:
-	node := &consensus.Node{
-		Id:      1,
-		Address: options.CurrentOptions.AdvertiseAddress,
-		Region:  &consensus.Region{Name: region},
-		Port:    int64(options.CurrentOptions.AdvertisePort),
-		Active:  true,
-		Rtt:     durationpb.New(0),
-	}
+	//node := &consensus.Node{
+	//	Id:      1,
+	//	Address: options.CurrentOptions.AdvertiseAddress,
+	//	Region:  &consensus.Region{Name: region},
+	//	Port:    int64(options.CurrentOptions.AdvertisePort),
+	//	Active:  true,
+	//	Rtt:     durationpb.New(0),
+	//}
 
-	table := &consensus.Table{
-		Name:              consensus.NodeTable,
-		ReplicationLevel:  consensus.ReplicationLevel_global,
-		Owner:             node,
-		CreatedAt:         timestamppb.Now(),
-		Version:           1,
-		AllowedRegions:    []string{},
-		RestrictedRegions: []string{},
-	}
+	//table := &consensus.Table{
+	//	Name:              consensus.NodeTable,
+	//	ReplicationLevel:  consensus.ReplicationLevel_global,
+	//	Owner:             node,
+	//	CreatedAt:         timestamppb.Now(),
+	//	Version:           1,
+	//	AllowedRegions:    []string{},
+	//	RestrictedRegions: []string{},
+	//}
 
 	// For the bootstrap node, directly insert into KV stores without consensus
-	options.Logger.Info("Initializing first node directly into KV stores", zap.Int64("node_id", node.Id))
+	//options.Logger.Info("Initializing first node directly into KV stores", zap.Int64("node_id", node.Id))
 
 	// Initialize repositories for direct data insertion
-	tableRepo := consensus.NewTableRepositoryKV(ctx, pool.MetaStore())
-	nodeRepoKV := consensus.NewNodeRepository(ctx, pool.MetaStore())
+	//tableRepo := consensus.NewTableRepositoryKV(ctx, pool.MetaStore())
+	//nodeRepoKV := consensus.NewNodeRepository(ctx, pool.MetaStore())
 
 	// Insert the node table directly (since we're the first node, we own it) -- however, it may already exist
-	_ = tableRepo.InsertTable(table)
+	//_ = tableRepo.InsertTable(table)
 
-	err = nodeRepoKV.AddNode(node)
-	if err != nil {
-		return fmt.Errorf("failed to insert bootstrap node: %w", err)
-	}
+	//err = nodeRepoKV.AddNode(node)
+	//if err != nil {
+	//	return fmt.Errorf("failed to insert bootstrap node: %w", err)
+	//}
 
 	// Set our server ID
-	options.CurrentOptions.ServerId = node.Id
+	//options.CurrentOptions.ServerId = node.Id
 
 	// Add the node to the quorum manager
-	err = qm.AddNode(ctx, node)
-	if err != nil {
-		return fmt.Errorf("failed to add bootstrap node to quorum manager: %w", err)
-	}
+	//err = qm.AddNode(ctx, node)
+	//if err != nil {
+	//	return fmt.Errorf("failed to add bootstrap node to quorum manager: %w", err)
+	//}
 
-	options.Logger.Info("Successfully initialized first node", zap.Int64("node_id", node.Id))
+	//options.Logger.Info("Successfully initialized first node", zap.Int64("node_id", node.Id))
 	return nil
 }
 

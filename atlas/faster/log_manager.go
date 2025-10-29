@@ -364,7 +364,7 @@ func (l *LogManager) CloseAll() error {
 	var firstErr error
 	var wg sync.WaitGroup
 
-	l.handles.Range(func(key, value interface{}) bool {
+	l.handles.Range(func(key, value any) bool {
 		handle := value.(*logHandle)
 
 		wg.Add(1)
@@ -424,7 +424,7 @@ func (l *LogManager) Stats() LogManagerStats {
 	totalLogs := 0
 	activeRefs := 0
 
-	l.handles.Range(func(key, value interface{}) bool {
+	l.handles.Range(func(key, value any) bool {
 		totalLogs++
 		handle := value.(*logHandle)
 		activeRefs += int(handle.refCount.Load())

@@ -216,7 +216,7 @@ func (b *broadcastClientStreamingClient[Req, Res]) Send(req *Req) error {
 	wg.Wait()
 
 	err := make([]error, 0)
-	errs.Range(func(key, value interface{}) bool {
+	errs.Range(func(key, value any) bool {
 		err = append(err, value.(error))
 		return true
 	})
@@ -244,7 +244,7 @@ func (b *broadcastClientStreamingClient[Req, Res]) CloseAndRecv() (*Res, error) 
 	wg.Wait()
 
 	err := make([]error, 0)
-	errs.Range(func(key, value interface{}) bool {
+	errs.Range(func(key, value any) bool {
 		err = append(err, value.(error))
 		return true
 	})
@@ -254,7 +254,7 @@ func (b *broadcastClientStreamingClient[Req, Res]) CloseAndRecv() (*Res, error) 
 
 	// For simplicity, return the response from the first client
 	var firstResp *Res
-	responses.Range(func(key, value interface{}) bool {
+	responses.Range(func(key, value any) bool {
 		firstResp = value.(*Res)
 		return false
 	})
@@ -288,7 +288,7 @@ func (b *broadcastClientStreamingClient[Req, Res]) CloseSend() error {
 	wg.Wait()
 
 	err := make([]error, 0)
-	errs.Range(func(key, value interface{}) bool {
+	errs.Range(func(key, value any) bool {
 		err = append(err, value.(error))
 		return true
 	})
@@ -318,7 +318,7 @@ func (b *broadcastClientStreamingClient[Req, Res]) SendMsg(m any) error {
 	wg.Wait()
 
 	err := make([]error, 0)
-	errs.Range(func(key, value interface{}) bool {
+	errs.Range(func(key, value any) bool {
 		err = append(err, value.(error))
 		return true
 	})
@@ -343,7 +343,7 @@ func (b *broadcastQuorum) aggressiveSteal(ctx context.Context, key []byte) error
 	number := uint64(1)
 	const maxRetries = 10
 
-	for retry := 0; retry < maxRetries; retry++ {
+	for range maxRetries {
 		// Attempt to steal ownership with increasing ballot
 		theft, err := b.StealTableOwnership(ctx, &StealTableOwnershipRequest{
 			Ballot: &Ballot{
@@ -439,7 +439,7 @@ func (b *broadcastQuorum) ReadKey(ctx context.Context, in *ReadKeyRequest, opts 
 		const maxSpins = 100
 		const spinDelay = 10 * time.Millisecond
 
-		for attempt := 0; attempt < maxSpins; attempt++ {
+		for range maxSpins {
 			if record.MaxSlot >= in.Watermark {
 				break
 			}

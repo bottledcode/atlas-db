@@ -269,10 +269,9 @@ func BenchmarkLargeCompaction(b *testing.B) {
 	snapMgr.TruncateLog(25000)
 	log.Close()
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		// Restore log for next iteration
 		if i > 0 {
 			// Copy backup to restore original file

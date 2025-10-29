@@ -23,7 +23,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"os"
-	"sort"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -324,7 +324,7 @@ func (l *FasterLog) IterateCommitted(fn func(entry *LogEntry) error, opts Iterat
 	// Step 1: Collect committed slot numbers from index
 	// We need to sort them, so we must collect first (small allocation - just uint64s)
 	committedSlots := make([]uint64, 0, 1024) // Pre-allocate reasonable size
-	l.index.Range(func(key, value interface{}) bool {
+	l.index.Range(func(key, value any) bool {
 		slot := key.(uint64)
 		offset := value.(uint64)
 
@@ -352,9 +352,7 @@ func (l *FasterLog) IterateCommitted(fn func(entry *LogEntry) error, opts Iterat
 	// Use standard library sort which implements introsort (hybrid quicksort + heapsort)
 	// This guarantees O(n log n) worst case and bounded recursion depth
 	// Critical for consensus logs which are often already sorted!
-	sort.Slice(committedSlots, func(i, j int) bool {
-		return committedSlots[i] < committedSlots[j]
-	})
+	slices.Sort(committedSlots)
 
 	// Step 3: Iterate in order, calling fn() for each entry
 	// CRITICAL: Reuse single entry to avoid allocations!
@@ -481,7 +479,7 @@ func (l *FasterLog) GetCommittedRange() (minSlot uint64, maxSlot uint64, count u
 	maxSlot = 0
 	count = 0
 
-	l.index.Range(func(key, value interface{}) bool {
+	l.index.Range(func(key, value any) bool {
 		slot := key.(uint64)
 		offset := value.(uint64)
 

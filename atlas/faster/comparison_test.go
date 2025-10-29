@@ -42,13 +42,12 @@ func BenchmarkComparison_RandomKeys_FASTER(b *testing.B) {
 	rng := rand.New(rand.NewSource(42))
 	numKeys := 100 // 100 different keys (objects in WPaxos)
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		// Random key (simulates multi-object consensus)
 		keyID := rng.Intn(numKeys)
-		key := []byte(fmt.Sprintf("table:%04d", keyID))
+		key := fmt.Appendf(nil, "table:%04d", keyID)
 
 		// Get log for this key (with reference counting)
 		log, release, err := mgr.GetLog(key)
@@ -101,12 +100,11 @@ func BenchmarkComparison_RandomKeys_BadgerDB(b *testing.B) {
 	rng := rand.New(rand.NewSource(42))
 	keySpace := uint64(10000)
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		slot := uint64(rng.Int63n(int64(keySpace)))
-		key := []byte(fmt.Sprintf("slot:%020d", slot))
+		key := fmt.Appendf(nil, "slot:%020d", slot)
 
 		// Write (Accept + Commit combined in BadgerDB)
 		err := db.Update(func(txn *badger.Txn) error {
@@ -139,10 +137,9 @@ func BenchmarkComparison_SequentialWrites_FASTER(b *testing.B) {
 	}
 	defer release()
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		slot := uint64(i)
 
 		err := log.Accept(slot, ballot, value)
@@ -177,11 +174,10 @@ func BenchmarkComparison_SequentialWrites_BadgerDB(b *testing.B) {
 
 	value := []byte{1} // 1 byte payload to match FASTER benchmarks
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
-		key := []byte(fmt.Sprintf("slot:%020d", i))
+	for i := 0; b.Loop(); i++ {
+		key := fmt.Appendf(nil, "slot:%020d", i)
 
 		err := db.Update(func(txn *badger.Txn) error {
 			return txn.Set(key, value)
@@ -214,7 +210,7 @@ func BenchmarkComparison_ReadHeavy_FASTER(b *testing.B) {
 		b.Fatalf("Failed to get log: %v", err)
 	}
 
-	for i := 0; i < numEntries; i++ {
+	for i := range numEntries {
 		slot := uint64(i)
 		log.Accept(slot, ballot, value)
 		log.Commit(slot)
@@ -222,10 +218,9 @@ func BenchmarkComparison_ReadHeavy_FASTER(b *testing.B) {
 
 	rng := rand.New(rand.NewSource(42))
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		slot := uint64(rng.Int63n(int64(numEntries)))
 
 		_, err := log.ReadCommittedOnly(slot)
@@ -258,8 +253,8 @@ func BenchmarkComparison_ReadHeavy_BadgerDB(b *testing.B) {
 	value := []byte{1} // 1 byte payload to match FASTER benchmarks
 	numEntries := 10000
 
-	for i := 0; i < numEntries; i++ {
-		key := []byte(fmt.Sprintf("slot:%020d", i))
+	for i := range numEntries {
+		key := fmt.Appendf(nil, "slot:%020d", i)
 		db.Update(func(txn *badger.Txn) error {
 			return txn.Set(key, value)
 		})
@@ -267,12 +262,11 @@ func BenchmarkComparison_ReadHeavy_BadgerDB(b *testing.B) {
 
 	rng := rand.New(rand.NewSource(42))
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		slot := uint64(rng.Int63n(int64(numEntries)))
-		key := []byte(fmt.Sprintf("slot:%020d", slot))
+		key := fmt.Appendf(nil, "slot:%020d", slot)
 
 		err := db.View(func(txn *badger.Txn) error {
 			item, err := txn.Get(key)
@@ -311,7 +305,7 @@ func BenchmarkComparison_Mixed_FASTER(b *testing.B) {
 		b.Fatalf("Failed to get log: %v", err)
 	}
 
-	for i := 0; i < initialEntries; i++ {
+	for i := range initialEntries {
 		slot := uint64(i)
 		log.Accept(slot, ballot, value)
 		log.Commit(slot)
@@ -320,10 +314,9 @@ func BenchmarkComparison_Mixed_FASTER(b *testing.B) {
 	rng := rand.New(rand.NewSource(42))
 	writeSlot := uint64(initialEntries)
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if rng.Float64() < 0.7 {
 			// Read (70%)
 			slot := uint64(rng.Int63n(int64(writeSlot)))
@@ -360,8 +353,8 @@ func BenchmarkComparison_Mixed_BadgerDB(b *testing.B) {
 	value := []byte{1} // 1 byte payload to match FASTER benchmarks
 	initialEntries := 5000
 
-	for i := 0; i < initialEntries; i++ {
-		key := []byte(fmt.Sprintf("slot:%020d", i))
+	for i := range initialEntries {
+		key := fmt.Appendf(nil, "slot:%020d", i)
 		db.Update(func(txn *badger.Txn) error {
 			return txn.Set(key, value)
 		})
@@ -370,14 +363,13 @@ func BenchmarkComparison_Mixed_BadgerDB(b *testing.B) {
 	rng := rand.New(rand.NewSource(42))
 	writeSlot := initialEntries
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if rng.Float64() < 0.7 {
 			// Read (70%)
 			slot := rng.Intn(writeSlot)
-			key := []byte(fmt.Sprintf("slot:%020d", slot))
+			key := fmt.Appendf(nil, "slot:%020d", slot)
 
 			db.View(func(txn *badger.Txn) error {
 				item, err := txn.Get(key)
@@ -390,7 +382,7 @@ func BenchmarkComparison_Mixed_BadgerDB(b *testing.B) {
 			})
 		} else {
 			// Write (30%)
-			key := []byte(fmt.Sprintf("slot:%020d", writeSlot))
+			key := fmt.Appendf(nil, "slot:%020d", writeSlot)
 			db.Update(func(txn *badger.Txn) error {
 				return txn.Set(key, value)
 			})
@@ -423,7 +415,7 @@ func BenchmarkComparison_ConcurrentWrites_FASTER(b *testing.B) {
 
 		for pb.Next() {
 			// Each goroutine has its own key (prevents conflicts)
-			key := []byte(fmt.Sprintf("concurrent-table:%04d", goroutineID))
+			key := fmt.Appendf(nil, "concurrent-table:%04d", goroutineID)
 
 			log, release, err := mgr.GetLog(key)
 			if err != nil {
@@ -469,7 +461,7 @@ func BenchmarkComparison_ConcurrentWrites_BadgerDB(b *testing.B) {
 
 		for pb.Next() {
 			slot := (uint64(rng.Int63()) << 32) | localSlot
-			key := []byte(fmt.Sprintf("slot:%020d", slot))
+			key := fmt.Appendf(nil, "slot:%020d", slot)
 
 			db.Update(func(txn *badger.Txn) error {
 				return txn.Set(key, value)
@@ -499,7 +491,7 @@ func BenchmarkComparison_Recovery_FASTER(b *testing.B) {
 		b.Fatalf("Failed to get log: %v", err)
 	}
 
-	for i := 0; i < numEntries; i++ {
+	for i := range numEntries {
 		slot := uint64(i)
 		log.Accept(slot, ballot, value)
 		log.Commit(slot)
@@ -507,10 +499,9 @@ func BenchmarkComparison_Recovery_FASTER(b *testing.B) {
 	release()
 	mgr.CloseAll()
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		// Recovery = reopen log manager and get log (same dir!)
 		mgr := NewLogManagerWithDir(dir)
 		_, release, err := mgr.GetLog(key)
@@ -543,18 +534,17 @@ func BenchmarkComparison_Recovery_BadgerDB(b *testing.B) {
 	value := []byte{1} // 1 byte payload to match FASTER benchmarks
 	numEntries := 10000
 
-	for i := 0; i < numEntries; i++ {
-		key := []byte(fmt.Sprintf("slot:%020d", i))
+	for i := range numEntries {
+		key := fmt.Appendf(nil, "slot:%020d", i)
 		db.Update(func(txn *badger.Txn) error {
 			return txn.Set(key, value)
 		})
 	}
 	db.Close()
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		db, err := badger.Open(opts)
 		if err != nil {
 			b.Fatalf("Failed to open: %v", err)
@@ -584,7 +574,7 @@ func BenchmarkComparison_ScanUncommitted_FASTER(b *testing.B) {
 		b.Fatalf("Failed to get log: %v", err)
 	}
 
-	for i := 0; i < numEntries; i++ {
+	for i := range numEntries {
 		slot := uint64(i)
 		log.Accept(slot, ballot, value)
 
@@ -594,10 +584,9 @@ func BenchmarkComparison_ScanUncommitted_FASTER(b *testing.B) {
 		}
 	}
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		uncommitted, err := log.ScanUncommitted()
 		if err != nil {
 			b.Fatalf("Failed to scan: %v", err)
@@ -632,8 +621,8 @@ func BenchmarkComparison_ScanUncommitted_BadgerDB(b *testing.B) {
 	value := []byte{1} // 1 byte payload to match FASTER benchmarks
 	numEntries := 5000
 
-	for i := 0; i < numEntries; i++ {
-		key := []byte(fmt.Sprintf("slot:%020d", i))
+	for i := range numEntries {
+		key := fmt.Appendf(nil, "slot:%020d", i)
 		committed := (i%2 == 0)
 
 		db.Update(func(txn *badger.Txn) error {
@@ -646,10 +635,9 @@ func BenchmarkComparison_ScanUncommitted_BadgerDB(b *testing.B) {
 		})
 	}
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		uncommitted := make([][]byte, 0)
 
 		err := db.View(func(txn *badger.Txn) error {

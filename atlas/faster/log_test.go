@@ -29,11 +29,11 @@ func TestNewFasterLog(t *testing.T) {
 	logPath := filepath.Join(dir, "test.log")
 
 	cfg := Config{
-		Path:          logPath,
-		MutableSize:   1024 * 1024, // 1MB
-		SegmentSize:   10 * 1024 * 1024, // 10MB
-		NumThreads:    16,
-		SyncOnCommit:  false,
+		Path:         logPath,
+		MutableSize:  1024 * 1024,      // 1MB
+		SegmentSize:  10 * 1024 * 1024, // 10MB
+		NumThreads:   16,
+		SyncOnCommit: false,
 	}
 
 	log, err := NewFasterLog(cfg)
@@ -254,7 +254,7 @@ func TestMultipleEntries(t *testing.T) {
 
 	// Accept and commit many entries
 	numEntries := 1000
-	for i := 0; i < numEntries; i++ {
+	for i := range numEntries {
 		slot := uint64(i)
 		ballot := Ballot{ID: uint64(i / 10), NodeID: uint64(i % 5)}
 		value := []byte{byte(i % 256)}
@@ -271,7 +271,7 @@ func TestMultipleEntries(t *testing.T) {
 	}
 
 	// Verify all entries
-	for i := 0; i < numEntries; i++ {
+	for i := range numEntries {
 		slot := uint64(i)
 		entry, err := log.ReadCommittedOnly(slot)
 		if err != nil {
@@ -303,7 +303,7 @@ func TestPersistence(t *testing.T) {
 		t.Fatalf("Failed to create log: %v", err)
 	}
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		slot := uint64(i)
 		err = log1.Accept(slot, Ballot{ID: 1, NodeID: 1}, []byte{byte(i)})
 		if err != nil {
@@ -325,7 +325,7 @@ func TestPersistence(t *testing.T) {
 	defer log2.Close()
 
 	// Verify all entries are still there
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		slot := uint64(i)
 		entry, err := log2.ReadCommittedOnly(slot)
 		if err != nil {
@@ -354,7 +354,7 @@ func TestCheckpoint(t *testing.T) {
 	defer log.Close()
 
 	// Accept several entries
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		slot := uint64(i)
 		err = log.Accept(slot, Ballot{ID: 1, NodeID: 1}, []byte{byte(i)})
 		if err != nil {
@@ -363,7 +363,7 @@ func TestCheckpoint(t *testing.T) {
 	}
 
 	// Commit some
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		err = log.Commit(uint64(i))
 		if err != nil {
 			t.Fatalf("Failed to commit slot %d: %v", i, err)
@@ -377,7 +377,7 @@ func TestCheckpoint(t *testing.T) {
 	}
 
 	// Verify committed entries are still readable
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		entry, err := log.ReadCommittedOnly(uint64(i))
 		if err != nil {
 			t.Fatalf("Failed to read slot %d after checkpoint: %v", i, err)

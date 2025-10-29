@@ -87,7 +87,7 @@ func (m *Module) Provision(ctx caddy.Context) (err error) {
 		}
 
 		options.Logger.Info("☄️ Atlas bootstrap completed successfully",
-			zap.Int64("NodeID", options.CurrentOptions.ServerId))
+			zap.Uint64("NodeID", options.CurrentOptions.ServerId))
 	} else {
 		options.Logger.Info("🌱 Initializing new Atlas cluster...")
 
@@ -104,7 +104,7 @@ func (m *Module) Provision(ctx caddy.Context) (err error) {
 		}
 
 		options.Logger.Info("🌱 New Atlas cluster initialized",
-			zap.Int64("NodeID", options.CurrentOptions.ServerId))
+			zap.Uint64("NodeID", options.CurrentOptions.ServerId))
 	}
 
 	// Start gRPC servers for bootstrap and consensus

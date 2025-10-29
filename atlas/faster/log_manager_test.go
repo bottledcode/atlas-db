@@ -16,6 +16,8 @@
  *
  */
 
+//go:build !race
+
 package faster
 
 import (
@@ -136,7 +138,7 @@ func TestLogManagerCollisionResistance(t *testing.T) {
 	keys := make([][]byte, numKeys)
 	filenames := make(map[string]int)
 
-	for i := 0; i < numKeys; i++ {
+	for i := range numKeys {
 		// Random 32-byte keys
 		key := make([]byte, 32)
 		_, err := rand.Read(key)
@@ -284,8 +286,7 @@ func BenchmarkLogManagerGetLog(b *testing.B) {
 	lm := NewLogManager()
 	defer lm.CloseAll()
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		key := []byte("test-table")
 		log, release, err := lm.GetLog(key)
 		if err != nil {
@@ -305,12 +306,11 @@ func BenchmarkLogManagerGetLogUnique(b *testing.B) {
 
 	// Pre-generate keys
 	keys := make([][]byte, b.N)
-	for i := 0; i < b.N; i++ {
-		keys[i] = []byte(fmt.Sprintf("key-%d", i))
+	for i := 0; b.Loop(); i++ {
+		keys[i] = fmt.Appendf(nil, "key-%d", i)
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		log, release, err := lm.GetLog(keys[i])
 		if err != nil {
 			b.Fatalf("Failed to get log: %v", err)
@@ -456,7 +456,7 @@ func TestConcurrentAccess(t *testing.T) {
 	var wg sync.WaitGroup
 	errChan := make(chan error, numGoroutines)
 
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
@@ -470,7 +470,7 @@ func TestConcurrentAccess(t *testing.T) {
 
 			// Use the log (write and read)
 			ballot := Ballot{ID: uint64(id), NodeID: 1}
-			value := []byte(fmt.Sprintf("value-%d", id))
+			value := fmt.Appendf(nil, "value-%d", id)
 
 			err = log.Accept(uint64(id), ballot, value)
 			if err != nil {
@@ -517,8 +517,8 @@ func TestLRUEviction(t *testing.T) {
 	keys := make([][]byte, 5)
 	releases := make([]func(), 5)
 
-	for i := 0; i < 5; i++ {
-		keys[i] = []byte(fmt.Sprintf("key-%d", i))
+	for i := range 5 {
+		keys[i] = fmt.Appendf(nil, "key-%d", i)
 		log, release, err := manager.GetLog(keys[i])
 		if err != nil {
 			t.Fatalf("GetLog failed: %v", err)
@@ -536,7 +536,7 @@ func TestLRUEviction(t *testing.T) {
 	}
 
 	// Release the first 4 (but keep last one)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		releases[i]()
 	}
 
@@ -583,8 +583,8 @@ func TestNoEvictionWithActiveRefs(t *testing.T) {
 	keys := make([][]byte, 3)
 	releases := make([]func(), 3)
 
-	for i := 0; i < 3; i++ {
-		keys[i] = []byte(fmt.Sprintf("key-%d", i))
+	for i := range 3 {
+		keys[i] = fmt.Appendf(nil, "key-%d", i)
 		_, release, err := manager.GetLog(keys[i])
 		if err != nil {
 			t.Fatalf("GetLog failed: %v", err)
@@ -594,7 +594,7 @@ func TestNoEvictionWithActiveRefs(t *testing.T) {
 
 	// Try to create 3 more logs while holding refs
 	for i := 3; i < 6; i++ {
-		key := []byte(fmt.Sprintf("key-%d", i))
+		key := fmt.Appendf(nil, "key-%d", i)
 		log, release, err := manager.GetLog(key)
 		if err != nil {
 			t.Fatalf("GetLog failed: %v", err)
@@ -606,14 +606,14 @@ func TestNoEvictionWithActiveRefs(t *testing.T) {
 	}
 
 	// All original 3 should still be in handles (they have active refs)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if _, ok := manager.handles.Load(string(keys[i])); !ok {
 			t.Errorf("Log with active ref (key-%d) was evicted!", i)
 		}
 	}
 
 	// Release all
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		releases[i]()
 	}
 }
@@ -627,8 +627,8 @@ func TestCloseAll(t *testing.T) {
 
 	// Create multiple logs
 	numLogs := 10
-	for i := 0; i < numLogs; i++ {
-		key := []byte(fmt.Sprintf("key-%d", i))
+	for i := range numLogs {
+		key := fmt.Appendf(nil, "key-%d", i)
 		log, release, err := manager.GetLog(key)
 		if err != nil {
 			t.Fatalf("GetLog failed: %v", err)
@@ -678,7 +678,7 @@ func TestStressTest(t *testing.T) {
 	errors := atomic.Int32{}
 
 	// Worker goroutines
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
@@ -686,7 +686,7 @@ func TestStressTest(t *testing.T) {
 			for !stop.Load() {
 				// Random key
 				keyID := workerID % numKeys
-				key := []byte(fmt.Sprintf("stress-key-%d", keyID))
+				key := fmt.Appendf(nil, "stress-key-%d", keyID)
 
 				log, release, err := manager.GetLog(key)
 				if err != nil {
@@ -963,7 +963,7 @@ func TestRefCountNeverNegative(t *testing.T) {
 	}
 
 	// Call release many more times
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		handle.release()
 	}
 
@@ -1003,7 +1003,7 @@ func TestConcurrentReleases(t *testing.T) {
 	numRefs := 100
 	releases := make([]func(), numRefs)
 
-	for i := 0; i < numRefs; i++ {
+	for i := range numRefs {
 		_, release, err := manager.GetLog(key)
 		if err != nil {
 			t.Fatalf("GetLog failed: %v", err)
@@ -1024,7 +1024,7 @@ func TestConcurrentReleases(t *testing.T) {
 
 	// Release all concurrently
 	var wg sync.WaitGroup
-	for i := 0; i < numRefs; i++ {
+	for i := range numRefs {
 		wg.Add(1)
 		go func(release func()) {
 			defer wg.Done()

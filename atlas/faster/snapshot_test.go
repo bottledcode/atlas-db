@@ -52,7 +52,7 @@ func TestSnapshotBasic(t *testing.T) {
 
 	// Write some entries
 	for i := uint64(1); i <= 100; i++ {
-		err := log.Accept(i, Ballot{ID: 1, NodeID: 1}, []byte(fmt.Sprintf("value-%d", i)))
+		err := log.Accept(i, Ballot{ID: 1, NodeID: 1}, fmt.Appendf(nil, "value-%d", i))
 		if err != nil {
 			t.Fatalf("Failed to accept slot %d: %v", i, err)
 		}
@@ -113,7 +113,7 @@ func TestSnapshotTruncation(t *testing.T) {
 
 		// Write 100 entries
 		for i := uint64(1); i <= 100; i++ {
-			err := log.Accept(i, Ballot{ID: 1, NodeID: 1}, []byte(fmt.Sprintf("value-%d", i)))
+			err := log.Accept(i, Ballot{ID: 1, NodeID: 1}, fmt.Appendf(nil, "value-%d", i))
 			if err != nil {
 				t.Fatalf("Failed to accept slot %d: %v", i, err)
 			}
@@ -217,7 +217,7 @@ func TestSnapshotMultiple(t *testing.T) {
 	// Create multiple snapshots
 	snapshots := []uint64{100, 200, 300, 400, 500}
 	for _, slot := range snapshots {
-		data := []byte(fmt.Sprintf("snapshot-%d", slot))
+		data := fmt.Appendf(nil, "snapshot-%d", slot)
 		err := snapMgr.CreateSnapshot(slot, data)
 		if err != nil {
 			t.Fatalf("Failed to create snapshot at %d: %v", slot, err)
@@ -298,7 +298,7 @@ func TestSnapshotRecovery(t *testing.T) {
 
 		// Write 100 entries
 		for i := uint64(1); i <= 100; i++ {
-			_ = log.Accept(i, Ballot{ID: 1, NodeID: 1}, []byte(fmt.Sprintf("value-%d", i)))
+			_ = log.Accept(i, Ballot{ID: 1, NodeID: 1}, fmt.Appendf(nil, "value-%d", i))
 			_ = log.Commit(i)
 		}
 
@@ -443,8 +443,7 @@ func BenchmarkSnapshotCreate(b *testing.B) {
 		data[i] = byte(i % 256)
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		_ = snapMgr.CreateSnapshot(uint64(i), data)
 	}
 }
@@ -471,8 +470,7 @@ func BenchmarkSnapshotRead(b *testing.B) {
 	data := make([]byte, 1024*1024)
 	snapMgr.CreateSnapshot(100, data)
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = snapMgr.GetLatestSnapshot()
 	}
 }

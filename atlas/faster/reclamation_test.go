@@ -46,7 +46,7 @@ func TestSpaceReclamation(t *testing.T) {
 	numEntries := 3000
 	value := make([]byte, 100) // 100-byte values
 
-	for i := 0; i < numEntries; i++ {
+	for i := range numEntries {
 		slot := uint64(i)
 
 		// Accept the entry
@@ -81,7 +81,7 @@ func TestSpaceReclamation(t *testing.T) {
 		numEntries, float64(numEntries*150)/1024/1024, cfg.MutableSize/1024)
 
 	// Verify all entries are readable and committed
-	for i := 0; i < numEntries; i++ {
+	for i := range numEntries {
 		slot := uint64(i)
 		entry, err := log.ReadCommittedOnly(slot)
 		if err != nil {
@@ -122,11 +122,11 @@ func TestSpaceReclamationUnderLoad(t *testing.T) {
 	entriesPerRound := 50
 	value := make([]byte, 100)
 
-	for round := 0; round < numRounds; round++ {
+	for round := range numRounds {
 		baseSlot := uint64(round * entriesPerRound)
 
 		// Accept a batch of entries
-		for i := 0; i < entriesPerRound; i++ {
+		for i := range entriesPerRound {
 			slot := baseSlot + uint64(i)
 			err := log.Accept(slot, Ballot{ID: 1, NodeID: 1}, value)
 			if err != nil {
@@ -135,7 +135,7 @@ func TestSpaceReclamationUnderLoad(t *testing.T) {
 		}
 
 		// Commit all of them in this round (realistic for consensus)
-		for i := 0; i < entriesPerRound; i++ {
+		for i := range entriesPerRound {
 			slot := baseSlot + uint64(i)
 			err := log.Commit(slot)
 			if err != nil {
@@ -268,7 +268,7 @@ func TestBufferFullScenario(t *testing.T) {
 	// But with tail advancement, we should be able to write many more
 
 	successfulWrites := 0
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		slot := uint64(i)
 
 		err = log.Accept(slot, Ballot{ID: 1, NodeID: 1}, value)

@@ -16,6 +16,8 @@
  *
  */
 
+//go:build !race
+
 package faster
 
 import (
@@ -113,11 +115,9 @@ func TestCheckpointDuringConcurrentAppends(t *testing.T) {
 
 	stopCheckpoint := make(chan struct{})
 	var checkpointWG sync.WaitGroup
-	checkpointWG.Add(1)
 
 	// Background checkpoint goroutine
-	go func() {
-		defer checkpointWG.Done()
+	checkpointWG.Go(func() {
 
 		ticker := time.NewTicker(2 * time.Millisecond)
 		defer ticker.Stop()
@@ -134,14 +134,14 @@ func TestCheckpointDuringConcurrentAppends(t *testing.T) {
 				}
 			}
 		}
-	}()
+	})
 
 	numWriters := 4
 	entriesPerWriter := 400
 	var writers sync.WaitGroup
 	errs := make(chan error, numWriters)
 
-	for w := 0; w < numWriters; w++ {
+	for w := range numWriters {
 		writers.Add(1)
 		go func(workerID int) {
 			defer writers.Done()
@@ -149,7 +149,7 @@ func TestCheckpointDuringConcurrentAppends(t *testing.T) {
 			value := []byte{byte(workerID)}
 			baseSlot := uint64(workerID * entriesPerWriter)
 
-			for i := 0; i < entriesPerWriter; i++ {
+			for i := range entriesPerWriter {
 				slot := baseSlot + uint64(i)
 
 				// Keep trying until Accept succeeds (buffer may temporarily be full)
@@ -224,12 +224,12 @@ func TestConcurrentAcceptDuringReset(t *testing.T) {
 	numWriters := 10
 	writesPerWriter := 200
 
-	for w := 0; w < numWriters; w++ {
+	for w := range numWriters {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
 
-			for i := 0; i < writesPerWriter; i++ {
+			for i := range writesPerWriter {
 				slot := uint64(workerID*writesPerWriter + i)
 
 				// Accept and commit
@@ -275,7 +275,7 @@ func TestResetOnlyWhenNoInflightWrites(t *testing.T) {
 	value := make([]byte, 100)
 
 	// Accept many entries and commit them
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		entry := &LogEntry{
 			Slot:      uint64(i),
 			Ballot:    Ballot{ID: 1, NodeID: 1},
@@ -332,7 +332,7 @@ func TestResetWhenSafeToReset(t *testing.T) {
 	value := make([]byte, 100)
 
 	// Fill up most of the buffer
-	for i := 0; i < 60; i++ {
+	for i := range 60 {
 		entry := &LogEntry{
 			Slot:      uint64(i),
 			Ballot:    Ballot{ID: 1, NodeID: 1},

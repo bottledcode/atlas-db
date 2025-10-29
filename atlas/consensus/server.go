@@ -340,35 +340,8 @@ func (s *Server) Ping(ctx context.Context, req *PingRequest) (*PingResponse, err
 		connectionManager.mu.RUnlock()
 
 		if !exists {
-			// Node doesn't exist, we need to discover it from the node repository
-			nodeRepo := connectionManager.storage
-			if nodeRepo != nil {
-				var discoveredNode *Node
-				_ = nodeRepo.Iterate(false, func(node *Node, txn *kv.Transaction) error {
-					if node.Id == req.SenderNodeId {
-						discoveredNode = node
-						return nil // found it, stop iterating
-					}
-					return nil // continue searching
-				})
-
-				if discoveredNode != nil {
-					options.Logger.Info("Discovered node through ping, adding to connection manager",
-						zap.Int64("sender_node_id", req.SenderNodeId),
-						zap.String("address", discoveredNode.GetAddress()))
-
-					// Add the discovered node to our connection manager
-					err := connectionManager.AddNode(ctx, discoveredNode)
-					if err != nil {
-						options.Logger.Warn("Failed to add discovered node to connection manager",
-							zap.Int64("sender_node_id", req.SenderNodeId),
-							zap.Error(err))
-					}
-				} else {
-					options.Logger.Debug("Received ping from unknown node not in repository",
-						zap.Int64("sender_node_id", req.SenderNodeId))
-				}
-			}
+			options.Logger.Debug("Received ping from unknown node",
+				zap.Uint64("sender_node_id", req.SenderNodeId))
 		} else {
 			// Node exists, update its last seen time to prevent health checks
 			existingNode.mu.Lock()
@@ -381,7 +354,7 @@ func (s *Server) Ping(ctx context.Context, req *PingRequest) (*PingResponse, err
 				connectionManager.addToActiveNodes(existingNode)
 
 				options.Logger.Info("Node recovered through ping",
-					zap.Int64("sender_node_id", req.SenderNodeId),
+					zap.Uint64("sender_node_id", req.SenderNodeId),
 					zap.String("address", existingNode.GetAddress()))
 			}
 		}

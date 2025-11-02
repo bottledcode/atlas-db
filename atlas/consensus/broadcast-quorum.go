@@ -41,6 +41,11 @@ type broadcastQuorum struct {
 	nodes []*QuorumNode
 }
 
+func (b *broadcastQuorum) Follow(ctx context.Context, in *SlotRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RecordMutation], error) {
+	//TODO implement me
+	panic("implement me")
+}
+
 func (b *broadcastQuorum) broadcast(f func(node *QuorumNode) error) error {
 	errs := make([]error, len(b.nodes))
 
@@ -472,11 +477,8 @@ func (b *broadcastQuorum) ReadKey(ctx context.Context, in *ReadKeyRequest, opts 
 	}, nil
 }
 
-// softSteal tries to query all nodes for the highest ballot
-// and updates local ownership state accordingly without
-// actually stealing ownership.
-func (b *broadcastQuorum) softSteal(ctx context.Context, key []byte) error {
-	ownVal, _ := ownership.LoadOrStore(key, &OwnershipState{
+func getCurrentOwnershipState(key []byte) *OwnershipState {
+	v, _ := ownership.LoadOrStore(key, &OwnershipState{
 		mu: sync.RWMutex{},
 		promised: &Ballot{
 			Key:  key,
@@ -485,8 +487,16 @@ func (b *broadcastQuorum) softSteal(ctx context.Context, key []byte) error {
 		},
 		owned:          false,
 		maxAppliedSlot: 0,
+		followers:      make([]chan *RecordMutation, 0),
 	})
-	owned := ownVal.(*OwnershipState)
+	return v.(*OwnershipState)
+}
+
+// softSteal tries to query all nodes for the highest ballot
+// and updates local ownership state accordingly without
+// actually stealing ownership.
+func (b *broadcastQuorum) softSteal(ctx context.Context, key []byte) error {
+	owned := getCurrentOwnershipState(key)
 
 	return b.broadcast(func(node *QuorumNode) error {
 		p, err := node.StealTableOwnership(ctx, &StealTableOwnershipRequest{
@@ -518,17 +528,7 @@ func (b *broadcastQuorum) softSteal(ctx context.Context, key []byte) error {
 // friendlySteal tries to steal ownership of the given key by
 // requesting all nodes to hand over ownership cooperatively.
 func (b *broadcastQuorum) friendlySteal(ctx context.Context, key []byte) (bool, error) {
-	ownVal, _ := ownership.LoadOrStore(key, &OwnershipState{
-		mu: sync.RWMutex{},
-		promised: &Ballot{
-			Key:  key,
-			Id:   0,
-			Node: options.CurrentOptions.ServerId,
-		},
-		owned:          false,
-		maxAppliedSlot: 0,
-	})
-	owned := ownVal.(*OwnershipState)
+	owned := getCurrentOwnershipState(key)
 
 	owned.mu.RLock()
 	nextBallot := proto.Clone(owned.promised).(*Ballot)
@@ -633,17 +633,7 @@ func (b *broadcastQuorum) friendlySteal(ctx context.Context, key []byte) (bool, 
 }
 
 func (b *broadcastQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error) {
-	ownedVal, _ := ownership.LoadOrStore(in.Key, &OwnershipState{
-		mu: sync.RWMutex{},
-		promised: &Ballot{
-			Key:  in.Key,
-			Id:   0,
-			Node: options.CurrentOptions.ServerId,
-		},
-		owned:          false,
-		maxAppliedSlot: 0,
-	})
-	owned := ownedVal.(*OwnershipState)
+	owned := getCurrentOwnershipState(in.Key)
 
 	// Ensure we own the key before proceeding
 	if !owned.owned {

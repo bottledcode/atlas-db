@@ -39,8 +39,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-const NodeTable = "atlas.nodes"
-
 type Server struct {
 	UnimplementedConsensusServer
 }
@@ -54,6 +52,7 @@ type OwnershipState struct {
 	promised       *Ballot
 	owned          bool
 	maxAppliedSlot uint64
+	followers      []chan *RecordMutation
 }
 
 func init() {
@@ -64,6 +63,263 @@ func init() {
 
 func NewServer() *Server {
 	return &Server{}
+}
+
+type GapTracker struct {
+	mu   sync.RWMutex
+	gaps map[string]*GapSet
+}
+
+func (g *GapTracker) registerGap(key []byte, gapRange GapRange) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if _, ok := g.gaps[string(key)]; !ok {
+		g.gaps[string(key)] = &GapSet{
+			repairChan: make(chan GapRange),
+		}
+	}
+
+	g.gaps[string(key)].repairChan <- gapRange
+}
+
+type GapSet struct {
+	mu         sync.RWMutex
+	ranges     []GapRange
+	repairChan chan GapRange
+	key        []byte
+}
+
+func newGapSet(key []byte) *GapSet {
+	set := &GapSet{
+		repairChan: make(chan GapRange),
+		key:        key,
+	}
+
+	go set.repair()
+
+	return set
+}
+
+var gapSets = &GapTracker{
+	gaps: make(map[string]*GapSet),
+	mu:   sync.RWMutex{},
+}
+
+func (s *GapSet) repair() {
+	for {
+		select {
+		case <-time.After(100 * time.Millisecond):
+			// take the highest priority repair
+			s.mu.RLock()
+			var highest *GapRange
+			for _, n := range s.ranges {
+				if highest == nil || highest.Priority < n.Priority {
+					highest = &n
+				}
+			}
+			if highest != nil {
+				highest.InProgress = true
+			}
+			s.mu.RUnlock()
+
+			// determine still missing slots
+			if highest == nil {
+				continue
+			}
+
+			var slots []uint64
+			log, release, err := logs.GetLog(s.key)
+			if err != nil {
+				options.Logger.Warn("failed to get log", zap.Error(err))
+				continue
+			}
+			for i := highest.StartSlot; i <= highest.EndSlot; i++ {
+				// check that we actually don't have the slot
+				_, err := log.Read(i)
+				if err != nil {
+					slots = append(slots, i)
+				}
+			}
+			release()
+
+			//ctx := context.Background()
+			//ctx, cancel := context.WithTimeout(ctx, 500 * time.Millisecond)
+			// todo: actually repair the gap
+		case next, ok := <-s.repairChan:
+			if !ok {
+				return
+			}
+			s.mu.Lock()
+
+			// merge any ranges that overlap with the current next range
+			for _, n := range s.ranges {
+				inProgress := n.InProgress
+				// if n is in progress and overlaps, subtract the range
+				if inProgress && n.StartSlot <= next.StartSlot && n.EndSlot >= next.StartSlot {
+					// subtract the overlap from next
+					// n [----------]
+					//       [------|----]
+					//       [---|
+					next.StartSlot = min(n.EndSlot, next.EndSlot)
+				}
+				if inProgress && n.EndSlot >= next.EndSlot && n.StartSlot <= next.EndSlot {
+					// subtract the overlap from next
+					// n     [----------]
+					//   [---|--------]
+					//       |   [-----]
+					next.EndSlot = min(n.StartSlot, next.EndSlot)
+				}
+				if next.EndSlot <= next.StartSlot {
+					goto finalize
+				}
+
+				// now we need to merge it with any other slot that overlaps
+				//
+				if n.StartSlot <= next.StartSlot && n.EndSlot >= next.StartSlot {
+					// these overlap, so adjust the ranges into a single range
+					n.EndSlot = max(n.EndSlot, next.EndSlot)
+					n.Priority += next.Priority
+					goto finalize
+				}
+				if n.EndSlot >= next.EndSlot && n.StartSlot <= next.EndSlot {
+					n.StartSlot = min(n.StartSlot, next.StartSlot)
+					n.Priority += next.Priority
+					goto finalize
+				}
+
+				// this is a unique range
+				s.ranges = append(s.ranges, n)
+			}
+
+		finalize:
+			s.mu.Unlock()
+		}
+	}
+}
+
+type GapRange struct {
+	StartSlot  uint64
+	EndSlot    uint64
+	Priority   uint64
+	InProgress bool
+}
+
+func (s *Server) calculateGapPriority(gapSize uint64, key []byte) uint64 {
+	priority := gapSize
+
+	if s.isHotKey(key) {
+		priority *= 10
+	}
+
+	return priority
+}
+
+func (s *Server) isHotKey(key []byte) bool {
+	return false
+}
+
+func (s *Server) RequestSlots(req *SlotRequest, stream grpc.ServerStreamingServer[RecordMutation]) error {
+	if len(req.RequestedSlots) > 0 {
+		key := req.GetKey()
+		log, release, err := logs.GetLog(key)
+		if err != nil {
+			return status.Errorf(codes.Internal, "failed to recover key: %v", err)
+		}
+		defer release()
+		// this is a bittorrent-style request for specific slots
+		for _, slot := range req.RequestedSlots {
+			entry, err := log.Read(slot)
+			if err != nil {
+				return status.Errorf(codes.Internal, "failed to read slot %d: %v", slot, err)
+			}
+			if entry == nil || !entry.Committed {
+				return status.Errorf(codes.NotFound, "slot %d not found or not committed", slot)
+			}
+			mutation := &RecordMutation{}
+			err = proto.Unmarshal(entry.Value, mutation)
+			if err != nil {
+				return status.Errorf(codes.Internal, "failed to unmarshal record mutation for slot %d: %v", slot, err)
+			}
+			err = stream.Send(mutation)
+			if err != nil {
+				return status.Errorf(codes.Internal, "failed to send record mutation for slot %d: %v", slot, err)
+			}
+		}
+		return nil
+	}
+
+	// this is a request for a contiguous section of slots
+	key := req.GetKey()
+	log, release, err := logs.GetLog(key)
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to recover key: %v", err)
+	}
+	defer release()
+
+	err = log.ReplayRange(req.StartSlot, req.EndSlot, func(entry *faster.LogEntry) error {
+		mutation := &RecordMutation{}
+		err := proto.Unmarshal(entry.Value, mutation)
+		if err != nil {
+			return err
+		}
+		err = stream.Send(mutation)
+		return err
+	})
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to scan key %v[%d-%d]: %v", key, req.StartSlot, req.EndSlot, err)
+	}
+
+	return nil
+}
+
+func (s *Server) Follow(req *SlotRequest, stream grpc.ServerStreamingServer[RecordMutation]) error {
+	// catch up the node
+	own := getCurrentOwnershipState(req.Key)
+	own.mu.Lock()
+	if !own.owned {
+		own.mu.Unlock()
+		return status.Errorf(codes.FailedPrecondition, "not currently the owner of %v", req.Key)
+	}
+
+	following := make(chan *RecordMutation, 100)
+	own.followers = append(own.followers, following)
+	own.mu.Unlock()
+
+	defer func() {
+		own.mu.Lock()
+		// remove follower
+		for i, follower := range own.followers {
+			if follower == following {
+				own.followers = append(own.followers[:i], own.followers[i+1:]...)
+				break
+			}
+		}
+		own.mu.Unlock()
+		close(following)
+	}()
+
+	err := s.RequestSlots(req, stream)
+	if err != nil {
+		return err
+	}
+
+	for {
+		select {
+		case <-stream.Context().Done():
+			return nil // clean disconnect
+		case next, ok := <-following:
+			if !ok {
+				// closed chan, so can no longer follow
+				return status.Errorf(codes.Unavailable, "No longer the owner")
+			}
+
+			err := stream.Send(next)
+			if err != nil {
+				return err
+			}
+		}
+	}
 }
 
 func (s *Server) Replicate(client grpc.ClientStreamingServer[ReplicationRequest, ReplicationResponse]) error {
@@ -169,12 +425,7 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 	key := req.GetBallot().GetKey()
 	newBallot := req.GetBallot()
 
-	// initialize with <0, self>
-	ownerShipVal, _ := ownership.LoadOrStore(key, &OwnershipState{
-		promised: &Ballot{Id: 0, Node: uint64(options.CurrentOptions.ServerId)},
-		owned:    true,
-	})
-	ownership := ownerShipVal.(*OwnershipState)
+	ownership := getCurrentOwnershipState(key)
 
 	ownership.mu.Lock()
 	defer ownership.mu.Unlock()
@@ -198,6 +449,10 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 
 	if wasOwned {
 		options.Logger.Info("StealTableOwnership: releasing ownership", zap.ByteString("key", key))
+		for _, f := range ownership.followers {
+			close(f)
+		}
+		ownership.followers = make([]chan *RecordMutation, 0)
 	}
 
 	uncommitted, err := log.ScanUncommitted()
@@ -242,16 +497,12 @@ func (s *Server) WriteMigration(ctx context.Context, req *WriteMigrationRequest)
 	}
 	defer release()
 
-	ownershipVal, _ := ownership.LoadOrStore(key, &OwnershipState{
-		promised: &Ballot{Id: 0, Node: uint64(options.CurrentOptions.ServerId)},
-		owned:    true,
-	})
-	ownership := ownershipVal.(*OwnershipState)
+	own := getCurrentOwnershipState(key)
 
-	ownership.mu.Lock()
-	defer ownership.mu.Unlock()
+	own.mu.Lock()
+	defer own.mu.Unlock()
 
-	if record.GetBallot().Less(ownership.promised) {
+	if record.GetBallot().Less(own.promised) {
 		return &WriteMigrationResponse{Accepted: false}, nil
 	}
 
@@ -268,8 +519,8 @@ func (s *Server) WriteMigration(ctx context.Context, req *WriteMigrationRequest)
 		return nil, err
 	}
 
-	if ownership.promised.Less(record.GetBallot()) {
-		ownership.promised = record.GetBallot()
+	if own.promised.Less(record.GetBallot()) {
+		own.promised = record.GetBallot()
 	}
 
 	return &WriteMigrationResponse{Accepted: true}, nil
@@ -280,11 +531,7 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 	key := mutation.GetSlot().GetKey()
 	slotId := mutation.GetSlot().GetId()
 
-	ownershipVal, _ := ownership.LoadOrStore(key, &OwnershipState{
-		promised: &Ballot{Id: 0, Node: uint64(options.CurrentOptions.ServerId)},
-		owned:    true,
-	})
-	ownership := ownershipVal.(*OwnershipState)
+	ownership := getCurrentOwnershipState(key)
 	ownership.mu.RLock()
 	defer ownership.mu.RUnlock()
 
@@ -326,6 +573,16 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 	}
 
 	stateMachine.Store(key, record)
+
+	for _, c := range ownership.followers {
+		select {
+		case c <- mutation:
+		// sent successfully
+		default:
+			options.Logger.Warn("Dropping migration due to slow follower", zap.String("key", string(key)))
+		}
+	}
+
 	return &emptypb.Empty{}, nil
 }
 
@@ -369,13 +626,7 @@ func (s *Server) Ping(ctx context.Context, req *PingRequest) (*PingResponse, err
 
 func (s *Server) ReadKey(ctx context.Context, req *ReadKeyRequest) (*ReadKeyResponse, error) {
 spin:
-	ownershipVar, ok := ownership.Load(req.Key)
-	if !ok {
-		return &ReadKeyResponse{
-			Success: false,
-		}, fmt.Errorf("this node is no longer the owner for this key")
-	}
-	ownership := ownershipVar.(*OwnershipState)
+	ownership := getCurrentOwnershipState(req.Key)
 	ownership.mu.RLock()
 	defer ownership.mu.RUnlock()
 

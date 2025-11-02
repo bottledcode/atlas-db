@@ -163,6 +163,28 @@ type QuorumNode struct {
 	client ConsensusClient
 }
 
+func (q *QuorumNode) RequestSlots(ctx context.Context, in *SlotRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RecordMutation], error) {
+	var err error
+	if q.client == nil {
+		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return q.client.RequestSlots(ctx, in, opts...)
+}
+
+func (q *QuorumNode) Follow(ctx context.Context, in *SlotRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RecordMutation], error) {
+	var err error
+	if q.client == nil {
+		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return q.client.Follow(ctx, in, opts...)
+}
+
 func (q *QuorumNode) Replicate(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ReplicationRequest, ReplicationResponse], error) {
 	var err error
 	if q.client == nil {

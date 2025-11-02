@@ -45,6 +45,8 @@ const (
 	Consensus_ReadKey_FullMethodName             = "/atlas.consensus.Consensus/ReadKey"
 	Consensus_WriteKey_FullMethodName            = "/atlas.consensus.Consensus/WriteKey"
 	Consensus_PrefixScan_FullMethodName          = "/atlas.consensus.Consensus/PrefixScan"
+	Consensus_RequestSlots_FullMethodName        = "/atlas.consensus.Consensus/RequestSlots"
+	Consensus_Follow_FullMethodName              = "/atlas.consensus.Consensus/Follow"
 )
 
 // ConsensusClient is the client API for Consensus service.
@@ -60,6 +62,8 @@ type ConsensusClient interface {
 	ReadKey(ctx context.Context, in *ReadKeyRequest, opts ...grpc.CallOption) (*ReadKeyResponse, error)
 	WriteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error)
 	PrefixScan(ctx context.Context, in *PrefixScanRequest, opts ...grpc.CallOption) (*PrefixScanResponse, error)
+	RequestSlots(ctx context.Context, in *SlotRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RecordMutation], error)
+	Follow(ctx context.Context, in *SlotRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RecordMutation], error)
 }
 
 type consensusClient struct {
@@ -172,6 +176,44 @@ func (c *consensusClient) PrefixScan(ctx context.Context, in *PrefixScanRequest,
 	return out, nil
 }
 
+func (c *consensusClient) RequestSlots(ctx context.Context, in *SlotRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RecordMutation], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Consensus_ServiceDesc.Streams[2], Consensus_RequestSlots_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[SlotRequest, RecordMutation]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Consensus_RequestSlotsClient = grpc.ServerStreamingClient[RecordMutation]
+
+func (c *consensusClient) Follow(ctx context.Context, in *SlotRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RecordMutation], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Consensus_ServiceDesc.Streams[3], Consensus_Follow_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[SlotRequest, RecordMutation]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Consensus_FollowClient = grpc.ServerStreamingClient[RecordMutation]
+
 // ConsensusServer is the server API for Consensus service.
 // All implementations must embed UnimplementedConsensusServer
 // for forward compatibility.
@@ -185,6 +227,8 @@ type ConsensusServer interface {
 	ReadKey(context.Context, *ReadKeyRequest) (*ReadKeyResponse, error)
 	WriteKey(context.Context, *WriteKeyRequest) (*WriteKeyResponse, error)
 	PrefixScan(context.Context, *PrefixScanRequest) (*PrefixScanResponse, error)
+	RequestSlots(*SlotRequest, grpc.ServerStreamingServer[RecordMutation]) error
+	Follow(*SlotRequest, grpc.ServerStreamingServer[RecordMutation]) error
 	mustEmbedUnimplementedConsensusServer()
 }
 
@@ -221,6 +265,12 @@ func (UnimplementedConsensusServer) WriteKey(context.Context, *WriteKeyRequest) 
 }
 func (UnimplementedConsensusServer) PrefixScan(context.Context, *PrefixScanRequest) (*PrefixScanResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PrefixScan not implemented")
+}
+func (UnimplementedConsensusServer) RequestSlots(*SlotRequest, grpc.ServerStreamingServer[RecordMutation]) error {
+	return status.Errorf(codes.Unimplemented, "method RequestSlots not implemented")
+}
+func (UnimplementedConsensusServer) Follow(*SlotRequest, grpc.ServerStreamingServer[RecordMutation]) error {
+	return status.Errorf(codes.Unimplemented, "method Follow not implemented")
 }
 func (UnimplementedConsensusServer) mustEmbedUnimplementedConsensusServer() {}
 func (UnimplementedConsensusServer) testEmbeddedByValue()                   {}
@@ -387,6 +437,28 @@ func _Consensus_PrefixScan_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Consensus_RequestSlots_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(SlotRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(ConsensusServer).RequestSlots(m, &grpc.GenericServerStream[SlotRequest, RecordMutation]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Consensus_RequestSlotsServer = grpc.ServerStreamingServer[RecordMutation]
+
+func _Consensus_Follow_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(SlotRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(ConsensusServer).Follow(m, &grpc.GenericServerStream[SlotRequest, RecordMutation]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Consensus_FollowServer = grpc.ServerStreamingServer[RecordMutation]
+
 // Consensus_ServiceDesc is the grpc.ServiceDesc for Consensus service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -432,6 +504,16 @@ var Consensus_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "DeReference",
 			Handler:       _Consensus_DeReference_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "RequestSlots",
+			Handler:       _Consensus_RequestSlots_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "Follow",
+			Handler:       _Consensus_Follow_Handler,
 			ServerStreams: true,
 		},
 	},

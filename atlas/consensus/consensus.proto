@@ -35,6 +35,15 @@ service Consensus {
   rpc ReadKey(ReadKeyRequest) returns (ReadKeyResponse) {}
   rpc WriteKey(WriteKeyRequest) returns (WriteKeyResponse) {}
   rpc PrefixScan(PrefixScanRequest) returns (PrefixScanResponse) {}
+  rpc RequestSlots(SlotRequest) returns (stream RecordMutation) {}
+  rpc Follow(SlotRequest) returns (stream RecordMutation) {}
+}
+
+message SlotRequest {
+  bytes key = 1;
+  uint64 startSlot = 2;
+  uint64 endSlot = 3;
+  repeated uint64 requestedSlots = 4;
 }
 
 message ReplicationRequest {
@@ -102,6 +111,13 @@ message Acl {
   repeated Principal writers = 3;
 }
 
+message ClusterConfig {
+  uint64 clusterVersion = 1;
+  repeated Node nodes = 2;
+  int64 fn = 3;
+  int64 fz = 4;
+}
+
 message RecordMutation {
   Slot slot = 1;
   Ballot ballot = 8;
@@ -111,6 +127,7 @@ message RecordMutation {
     Acl aclUpdated = 4;
     Record compaction = 5;
     Noop noop = 6;
+    ClusterConfig config = 9;
   }
   bool committed = 7;
 }

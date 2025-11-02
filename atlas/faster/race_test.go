@@ -1,3 +1,5 @@
+//go:build !race
+
 /*
  * This file is part of Atlas-DB.
  *
@@ -15,8 +17,6 @@
  * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
  *
  */
-
-//go:build !race
 
 package faster
 
@@ -72,7 +72,7 @@ func TestDataCorruptionDetection(t *testing.T) {
 				slot := uint64(workerID*entriesPerWriter + i)
 
 				// Create deterministic data: hash of slot number repeated
-				hash := sha256.Sum256([]byte(fmt.Sprintf("slot-%d", slot)))
+				hash := sha256.Sum256(fmt.Appendf(nil, "slot-%d", slot))
 				value := bytes.Repeat(hash[:], 4) // 128 bytes of deterministic data
 
 				// Store expected data
@@ -113,7 +113,7 @@ func TestDataCorruptionDetection(t *testing.T) {
 				// Wait for slot to be committed
 				var entry *LogEntry
 				var err error
-				for attempts := 0; attempts < 100; attempts++ {
+				for range 100 {
 					entry, err = log.Read(slot)
 					if err == nil && entry.Committed {
 						break
@@ -138,10 +138,7 @@ func TestDataCorruptionDetection(t *testing.T) {
 						slot, readerID, len(entry.Value), len(expected))
 
 					// Show first difference
-					minLen := len(entry.Value)
-					if len(expected) < minLen {
-						minLen = len(expected)
-					}
+					minLen := min(len(expected), len(entry.Value))
 					for j := 0; j < minLen; j++ {
 						if entry.Value[j] != expected[j] {
 							t.Errorf("  First diff at byte %d: got 0x%02x, expected 0x%02x",
@@ -176,9 +173,7 @@ func TestPublishedBarrierEnforcement(t *testing.T) {
 	stopFlag := atomic.Bool{}
 
 	// Writer: continuously append entries
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		slot := uint64(0)
 
 		for slot < 200 { // Simpler loop condition
@@ -202,12 +197,10 @@ func TestPublishedBarrierEnforcement(t *testing.T) {
 		}
 
 		stopFlag.Store(true)
-	}()
+	})
 
 	// Reader: aggressively scan published region
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 
 		for !stopFlag.Load() {
 			offset := rb.tail.Load()
@@ -241,7 +234,7 @@ func TestPublishedBarrierEnforcement(t *testing.T) {
 				offset += entrySize
 			}
 		}
-	}()
+	})
 
 	wg.Wait()
 

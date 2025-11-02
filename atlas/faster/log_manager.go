@@ -307,10 +307,25 @@ func (l *LogManager) InitKey(key []byte, fromSnapshot func(*Snapshot) error, rep
 	logPath := l.generatePath(key)
 	snapPath := l.getSnapshotPath(logPath)
 
+	if _, ok := l.handles.Load(key); ok {
+		// log is already loaded
+		return l.GetLog(key)
+	}
+
+	l.lruMu.Lock()
+
+	// verify again after acquiring lock
+	if _, ok := l.handles.Load(key); ok {
+		l.lruMu.Unlock()
+		return l.GetLog(key)
+	}
+
 	truncatedSlot, err := CompactOnStartup(logPath, snapPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to compact log on startup: %w", err)
 	}
+
+	l.lruMu.Unlock()
 
 	log, release, err := l.GetLog(key)
 	if err != nil {

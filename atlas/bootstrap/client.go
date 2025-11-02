@@ -24,7 +24,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/bottledcode/atlas-db/atlas/faster"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/bottledcode/atlas-db/atlas/consensus"
 	"github.com/bottledcode/atlas-db/atlas/kv"
@@ -213,12 +215,14 @@ func InitializeMaybe(ctx context.Context) error {
 	//	return nil
 	//}
 
+	qm := consensus.GetDefaultQuorumManager(ctx)
+
 	if options.CurrentOptions.Region == "" {
 		options.CurrentOptions.Region = "default"
 		options.Logger.Warn("No region specified, using default region", zap.String("region", options.CurrentOptions.Region))
 	}
 
-	//region := options.CurrentOptions.Region
+	region := options.CurrentOptions.Region
 
 	if options.CurrentOptions.AdvertisePort == 0 {
 		options.CurrentOptions.AdvertisePort = 8080
@@ -233,50 +237,103 @@ func InitializeMaybe(ctx context.Context) error {
 	// no nodes exist in the database, so we need to configure things here
 
 	// define the new node:
-	//node := &consensus.Node{
-	//	Id:      1,
-	//	Address: options.CurrentOptions.AdvertiseAddress,
-	//	Region:  &consensus.Region{Name: region},
-	//	Port:    int64(options.CurrentOptions.AdvertisePort),
-	//	Active:  true,
-	//	Rtt:     durationpb.New(0),
-	//}
+	node := &consensus.Node{
+		Id:      1,
+		Address: options.CurrentOptions.AdvertiseAddress,
+		Region:  &consensus.Region{Name: region},
+		Port:    int64(options.CurrentOptions.AdvertisePort),
+		Active:  true,
+		Rtt:     durationpb.New(0),
+	}
 
-	//table := &consensus.Table{
-	//	Name:              consensus.NodeTable,
-	//	ReplicationLevel:  consensus.ReplicationLevel_global,
-	//	Owner:             node,
-	//	CreatedAt:         timestamppb.Now(),
-	//	Version:           1,
-	//	AllowedRegions:    []string{},
-	//	RestrictedRegions: []string{},
-	//}
+	// initialize the cluster configuration
+	mgr := faster.NewLogManager()
+	// todo: any gaps requires re-bootstrapping
+	log, release, err := mgr.GetLog([]byte("atlas:cluster_config"))
+	if err != nil {
+		return fmt.Errorf("failed to get cluster config log: %w", err)
+	}
+	defer release()
 
-	// For the bootstrap node, directly insert into KV stores without consensus
-	//options.Logger.Info("Initializing first node directly into KV stores", zap.Int64("node_id", node.Id))
+	currentConfig := &consensus.ClusterConfig{
+		ClusterVersion: 1,
+		Nodes:          []*consensus.Node{},
+		Fn:             options.CurrentOptions.GetFn(),
+		Fz:             options.CurrentOptions.GetFz(),
+	}
+	slot := uint64(1)
+	ballot := faster.Ballot{
+		ID:     0,
+		NodeID: options.CurrentOptions.ServerId,
+	}
+	err = log.IterateCommitted(func(entry *faster.LogEntry) error {
+		// we need to bootstrap the existing cluster config if it exists, which overrides our configuration
+		// todo: make this DRY
+		record := &consensus.RecordMutation{}
+		err := proto.Unmarshal(entry.Value, record)
+		if err != nil {
+			return fmt.Errorf("failed to unmarshal cluster config record: %w", err)
+		}
+		slot = entry.Slot
+		if ballot.Less(entry.Ballot) {
+			ballot.ID = entry.Ballot.ID
+			ballot.NodeID = entry.Ballot.NodeID
+		}
 
-	// Initialize repositories for direct data insertion
-	//tableRepo := consensus.NewTableRepositoryKV(ctx, pool.MetaStore())
-	//nodeRepoKV := consensus.NewNodeRepository(ctx, pool.MetaStore())
+		switch payload := record.Message.(type) {
+		case *consensus.RecordMutation_ValueAddress:
+			err := proto.Unmarshal(payload.ValueAddress.Address, currentConfig)
+			if err != nil {
+				return fmt.Errorf("failed to unmarshal cluster config: %w", err)
+			}
+			// ensure we do not reference the memory of the log entry
+			currentConfig = proto.Clone(currentConfig).(*consensus.ClusterConfig)
+		default:
+			return fmt.Errorf("unexpected cluster config mutation type: %T", payload)
+		}
+		return nil
+	}, faster.IterateOptions{
+		MinSlot:            0,
+		MaxSlot:            0,
+		IncludeUncommitted: false,
+		SkipErrors:         false,
+	})
 
-	// Insert the node table directly (since we're the first node, we own it) -- however, it may already exist
-	//_ = tableRepo.InsertTable(table)
+	if len(currentConfig.Nodes) == 0 {
+		currentConfig.Nodes = append(currentConfig.Nodes, node)
+		options.Logger.Info("Initialized new cluster configuration with first node", zap.Uint64("node_id", node.Id))
+		// add to the log
+		mutation := &consensus.RecordMutation{
+			Message: &consensus.RecordMutation_Config{
+				Config: currentConfig,
+			},
+		}
+		data, err := proto.Marshal(mutation)
+		if err != nil {
+			return fmt.Errorf("failed to marshal cluster config mutation: %w", err)
+		}
+		ballot.ID += 1
+		ballot.NodeID = node.Id
+		err = log.Accept(slot+1, ballot, data)
+		if err != nil {
+			return fmt.Errorf("failed to accept cluster config mutation: %w", err)
+		}
+		err = log.Commit(slot + 1)
+		if err != nil {
+			return fmt.Errorf("failed to commit cluster config mutation: %w", err)
+		}
+	} else {
+		for _, n := range currentConfig.Nodes {
+			err = qm.AddNode(ctx, n)
+			if err != nil {
+				return fmt.Errorf("failed to add existing node to quorum manager: %w", err)
+			}
+		}
+	}
 
-	//err = nodeRepoKV.AddNode(node)
-	//if err != nil {
-	//	return fmt.Errorf("failed to insert bootstrap node: %w", err)
-	//}
+	// the cluster will now begin in a learning mode to ensure it has the most updated cluster configuration and then
+	// insert itself into the cluster.
 
-	// Set our server ID
-	//options.CurrentOptions.ServerId = node.Id
-
-	// Add the node to the quorum manager
-	//err = qm.AddNode(ctx, node)
-	//if err != nil {
-	//	return fmt.Errorf("failed to add bootstrap node to quorum manager: %w", err)
-	//}
-
-	//options.Logger.Info("Successfully initialized first node", zap.Int64("node_id", node.Id))
 	return nil
 }
 

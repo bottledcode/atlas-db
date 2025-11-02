@@ -89,6 +89,7 @@ func (m *Module) Provision(ctx caddy.Context) (err error) {
 		options.Logger.Info("☄️ Atlas bootstrap completed successfully",
 			zap.Uint64("NodeID", options.CurrentOptions.ServerId))
 	} else {
+		options.CurrentOptions.BootstrapConnect = "https://localhost"
 		options.Logger.Info("🌱 Initializing new Atlas cluster...")
 
 		// Initialize KV stores for new cluster

@@ -99,7 +99,7 @@ func NewFasterLog(cfg Config) (*FasterLog, error) {
 	// Get current file size
 	stat, err := file.Stat()
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, fmt.Errorf("failed to stat log file: %w", err)
 	}
 
@@ -107,7 +107,7 @@ func NewFasterLog(cfg Config) (*FasterLog, error) {
 	if stat.Size() > 0 {
 		err = log.mmapTail(uint64(stat.Size()))
 		if err != nil {
-			file.Close()
+			_ = file.Close()
 			return nil, fmt.Errorf("failed to mmap log file: %w", err)
 		}
 		log.tailSize.Store(uint64(stat.Size()))
@@ -115,8 +115,8 @@ func NewFasterLog(cfg Config) (*FasterLog, error) {
 		// Rebuild index from tail
 		err = log.rebuildIndex()
 		if err != nil {
-			log.unmapTail()
-			file.Close()
+			_ = log.unmapTail()
+			_ = file.Close()
 			return nil, fmt.Errorf("failed to rebuild index: %w", err)
 		}
 	}

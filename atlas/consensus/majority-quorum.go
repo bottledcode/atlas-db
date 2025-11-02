@@ -31,6 +31,16 @@ type majorityQuorum struct {
 	q2 *broadcastQuorum
 }
 
+func (m *majorityQuorum) RequestSlots(ctx context.Context, in *SlotRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RecordMutation], error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (m *majorityQuorum) Follow(ctx context.Context, in *SlotRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RecordMutation], error) {
+	//TODO implement me
+	panic("implement me")
+}
+
 func (m *majorityQuorum) Replicate(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ReplicationRequest, ReplicationResponse], error) {
 	panic("cannot replicate to a majority quorum")
 }

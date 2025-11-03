@@ -431,13 +431,12 @@ func (b *broadcastQuorum) ReadKey(ctx context.Context, in *ReadKeyRequest, opts 
 	}
 
 	// Read from our local state machine after stealing
-	ret, ok := stateMachine.Load(in.Key)
+	record, ok := stateMachine.Get(in.Key)
 	if !ok {
 		return &ReadKeyResponse{
 			Success: false,
 		}, fmt.Errorf("key not found after stealing ownership: %v", string(in.Key))
 	}
-	record := ret.(*Record)
 
 	// Wait for watermark if specified
 	if in.Watermark > 0 {
@@ -451,11 +450,10 @@ func (b *broadcastQuorum) ReadKey(ctx context.Context, in *ReadKeyRequest, opts 
 			time.Sleep(spinDelay)
 
 			// Re-read in case it was updated
-			ret, ok = stateMachine.Load(in.Key)
+			record, ok = stateMachine.Get(in.Key)
 			if !ok {
 				return nil, fmt.Errorf("key disappeared during watermark wait")
 			}
-			record = ret.(*Record)
 		}
 
 		if record.MaxSlot < in.Watermark {

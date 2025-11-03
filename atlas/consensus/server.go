@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bottledcode/atlas-db/atlas/cache"
 	"github.com/bottledcode/atlas-db/atlas/faster"
 	"github.com/bottledcode/atlas-db/atlas/kv"
 	"github.com/bottledcode/atlas-db/atlas/options"
@@ -44,8 +45,8 @@ type Server struct {
 }
 
 var logs *faster.LogManager
-var stateMachine sync.Map // map[string]Record
-var ownership sync.Map    // map[string]OwnershipState
+var stateMachine *cache.CloxCache[*Record] // Cache of Records
+var ownership sync.Map                     // map[string]OwnershipState
 
 type OwnershipState struct {
 	mu             sync.RWMutex
@@ -57,7 +58,28 @@ type OwnershipState struct {
 
 func init() {
 	logs = faster.NewLogManager()
-	stateMachine = sync.Map{}
+	// Initialize CloxCache with dynamic configuration based on hardware
+	var cfg cache.Config
+	if options.CurrentOptions.MaxCacheSize > 0 {
+		// Use configured cache size
+		cfg = cache.ConfigFromMemorySize(options.CurrentOptions.MaxCacheSize)
+		options.Logger.Info("📊 CloxCache configured from max_cache_size",
+			zap.String("size", cache.FormatMemory(options.CurrentOptions.MaxCacheSize)),
+			zap.Int("shards", cfg.NumShards),
+			zap.Int("slots_per_shard", cfg.SlotsPerShard))
+	} else {
+		// Auto-detect hardware and configure cache
+		cfg = cache.ConfigFromHardware()
+		hw := cache.DetectHardware()
+		options.Logger.Info("📊 CloxCache auto-configured from hardware",
+			zap.Int("cpu_count", hw.NumCPU),
+			zap.String("total_memory", cache.FormatMemory(hw.TotalMemory)),
+			zap.String("cache_size", cache.FormatMemory(hw.CacheSize)),
+			zap.Int("shards", cfg.NumShards),
+			zap.Int("slots_per_shard", cfg.SlotsPerShard))
+	}
+
+	stateMachine = cache.NewCloxCache[*Record](cfg)
 	ownership = sync.Map{}
 }
 
@@ -391,7 +413,8 @@ func (s *Server) applyMutation(obj *Record, mutation *RecordMutation) *Record {
 func (s *Server) recoverKey(key []byte) (*faster.FasterLog, func(), error) {
 	obj := &Record{}
 
-	if _, ok := stateMachine.Load(key); ok {
+	// Check if key exists in cache
+	if _, ok := stateMachine.Get(key); ok {
 		return logs.GetLog(key)
 	}
 
@@ -412,13 +435,13 @@ func (s *Server) recoverKey(key []byte) (*faster.FasterLog, func(), error) {
 	}
 	obj.BaseRecord = proto.Clone(obj).(*Record)
 
-	if stateMachine.CompareAndSwap(key, nil, obj) {
-		return log, release, nil
+	// Insert into cache
+	if !stateMachine.Put(key, obj) {
+		// Cache admission rejected - still continue, but log might be evicted
+		options.Logger.Warn("cache admission rejected for key", zap.String("key", string(key)))
 	}
 
-	release()
-
-	return nil, nil, fmt.Errorf("concurrent key access: %v", string(key))
+	return log, release, nil
 }
 
 func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnershipRequest) (*StealTableOwnershipResponse, error) {
@@ -546,33 +569,55 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 		return nil, err
 	}
 
-	val, ok := stateMachine.Load(key)
+	// Get record from cache or reconstruct from log
+	record, ok := stateMachine.Get(key)
 	if !ok {
-		return nil, fmt.Errorf("state machine missing key during commit: %v", string(key))
-	}
-	record := val.(*Record)
-	record = record.BaseRecord
-	record.BaseRecord = proto.Clone(record).(*Record)
-
-	err = log.IterateCommitted(func(entry *faster.LogEntry) error {
-		mu := &RecordMutation{}
-		err := proto.Unmarshal(entry.Value, mu)
+		// Cache miss - reconstruct from log
+		record = &Record{}
+		err = log.IterateCommitted(func(entry *faster.LogEntry) error {
+			mu := &RecordMutation{}
+			err := proto.Unmarshal(entry.Value, mu)
+			if err != nil {
+				return err
+			}
+			record = s.applyMutation(record, mu)
+			record.MaxSlot = entry.Slot
+			return nil
+		}, faster.IterateOptions{
+			MinSlot:            0,
+			MaxSlot:            slotId,
+			IncludeUncommitted: false,
+			SkipErrors:         false,
+		})
 		if err != nil {
-			return err
+			return nil, err
 		}
-		record = s.applyMutation(record, mu)
-		return nil
-	}, faster.IterateOptions{
-		MinSlot:            record.BaseRecord.MaxSlot,
-		MaxSlot:            0, // always apply all commits so we don't have to worry about out-of-order commits
-		IncludeUncommitted: false,
-		SkipErrors:         false,
-	})
-	if err != nil {
-		return nil, err
+	} else {
+		// Cache hit - apply only new mutations
+		record = record.BaseRecord
+		record.BaseRecord = proto.Clone(record).(*Record)
+
+		err = log.IterateCommitted(func(entry *faster.LogEntry) error {
+			mu := &RecordMutation{}
+			err := proto.Unmarshal(entry.Value, mu)
+			if err != nil {
+				return err
+			}
+			record = s.applyMutation(record, mu)
+			return nil
+		}, faster.IterateOptions{
+			MinSlot:            record.BaseRecord.MaxSlot,
+			MaxSlot:            0,
+			IncludeUncommitted: false,
+			SkipErrors:         false,
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	stateMachine.Store(key, record)
+	// Update cache
+	stateMachine.Put(key, record)
 
 	for _, c := range ownership.followers {
 		select {
@@ -630,11 +675,39 @@ spin:
 	ownership.mu.RLock()
 	defer ownership.mu.RUnlock()
 
-	recordVar, ok := stateMachine.Load(req.GetKey())
+	// Get record from cache or reconstruct from log
+	record, ok := stateMachine.Get(req.GetKey())
 	if !ok {
-		return nil, fmt.Errorf("state machine missing key: %v", req.GetKey())
+		// Cache miss - reconstruct from FASTER log
+		log, release, err := logs.GetLog(req.GetKey())
+		if err != nil {
+			return nil, fmt.Errorf("failed to get log for key: %v", err)
+		}
+		defer release()
+
+		record = &Record{}
+		err = log.IterateCommitted(func(entry *faster.LogEntry) error {
+			mu := &RecordMutation{}
+			err := proto.Unmarshal(entry.Value, mu)
+			if err != nil {
+				return err
+			}
+			record = s.applyMutation(record, mu)
+			record.MaxSlot = entry.Slot
+			return nil
+		}, faster.IterateOptions{
+			MinSlot:            0,
+			MaxSlot:            0,
+			IncludeUncommitted: false,
+			SkipErrors:         false,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		// Insert into cache for future reads
+		stateMachine.Put(req.GetKey(), record)
 	}
-	record := recordVar.(*Record)
 
 	if record.MaxSlot < req.Watermark {
 		// spin wait until we reach the watermark

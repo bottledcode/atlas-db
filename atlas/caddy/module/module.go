@@ -212,6 +212,17 @@ func (m *Module) UnmarshalCaddyfile(d *caddyfile.Dispenser) (err error) {
 				default:
 					return d.Errf("development_mode must be true/false, on/off, or yes/no, got: %s", mode)
 				}
+			case "max_cache_size":
+				var sizeStr string
+				if !d.Args(&sizeStr) {
+					return d.ArgErr()
+				}
+				// Parse size with units (e.g., "1GB", "512MB", "2048")
+				size, err := caddy.ParseSize(sizeStr)
+				if err != nil {
+					return d.Errf("max_cache_size: invalid size format: %v", err)
+				}
+				options.CurrentOptions.MaxCacheSize = uint64(size)
 			default:
 				return d.Errf("unknown option: %s", d.Val())
 			}

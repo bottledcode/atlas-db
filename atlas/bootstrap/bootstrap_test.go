@@ -446,4 +446,3 @@ func TestDoBootstrap_Integration(t *testing.T) {
 
 	t.Log("Bootstrap integration test completed successfully")
 }
-

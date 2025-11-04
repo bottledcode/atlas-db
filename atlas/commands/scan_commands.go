@@ -22,14 +22,8 @@ func (s *ScanCommand) Execute(ctx context.Context) ([]byte, error) {
 	if !ok {
 		return nil, fmt.Errorf("expected prefix")
 	}
-	parts := strings.Split(prefix, ".")
-	tablePrefix := parts[0]
-	rowPrefix := ""
-	if len(parts) > 1 {
-		rowPrefix = parts[1]
-	}
 
-	keys, err := atlas.PrefixScan(ctx, tablePrefix, rowPrefix)
+	keys, err := atlas.PrefixScan(ctx, []byte(prefix))
 	if err != nil {
 		return nil, err
 	}

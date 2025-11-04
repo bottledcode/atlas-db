@@ -20,7 +20,6 @@ package consensus
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/bottledcode/atlas-db/atlas/kv"
 	"github.com/zeebo/blake3"
@@ -61,15 +60,13 @@ func (d *DataR) CreateKey(k []byte) DataKey {
 func (d *DataR) GetKeys(record *Data) *StructuredKey {
 	checksum := record.GetKey()
 
-	primaryKey := kv.NewKeyBuilder().Meta().Append("ref").Append(fmt.Sprintf("%x:%d", checksum, record.GetChunk())).Build()
-
 	return &StructuredKey{
-		PrimaryKey: primaryKey,
+		PrimaryKey: checksum,
 	}
 }
 
 func (d *DataR) GetPrefix(reference *DataReference) Prefix {
-	return Prefix{kv.NewKeyBuilder().Meta().Append("ref").Append(fmt.Sprintf("%x", reference.GetAddress())).Build()}
+	return Prefix{reference.GetAddress()}
 }
 
 func (d *DataR) hashData(data []byte) (*DataReference, *Data) {

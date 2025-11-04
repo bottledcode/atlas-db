@@ -20,44 +20,42 @@ package atlas
 
 import (
 	"context"
-
-	"github.com/bottledcode/atlas-db/atlas/kv"
 )
 
-func WriteKey(ctx context.Context, builder *kv.KeyBuilder, value []byte) error {
+func WriteKey(ctx context.Context, key []byte, value []byte) error {
 	return nil
 }
 
-func AddOwner(ctx context.Context, builder *kv.KeyBuilder, owner string) error {
+func AddOwner(ctx context.Context, key []byte, owner string) error {
 	return nil
 }
 
-func RevokeOwner(ctx context.Context, builder *kv.KeyBuilder, owner string) error {
+func RevokeOwner(ctx context.Context, key []byte, owner string) error {
 	return nil
 }
 
-func AddWriter(ctx context.Context, builder *kv.KeyBuilder, writer string) error {
+func AddWriter(ctx context.Context, key []byte, writer string) error {
 	return nil
 }
 
-func RevokeWriter(ctx context.Context, builder *kv.KeyBuilder, writer string) error {
+func RevokeWriter(ctx context.Context, key []byte, writer string) error {
 	return nil
 }
 
-func AddReader(ctx context.Context, builder *kv.KeyBuilder, reader string) error {
+func AddReader(ctx context.Context, key []byte, reader string) error {
 	return nil
 }
 
-func RevokeReader(ctx context.Context, builder *kv.KeyBuilder, reader string) error {
+func RevokeReader(ctx context.Context, key []byte, reader string) error {
 	return nil
 }
 
-func GetKey(ctx context.Context, builder *kv.KeyBuilder) ([]byte, error) {
+func GetKey(ctx context.Context, key []byte) ([]byte, error) {
 	return nil, nil
 }
 
 // PrefixScan performs a distributed prefix scan across all nodes in the cluster.
 // It returns all keys matching the prefix that are owned by any node.
-func PrefixScan(ctx context.Context, tablePrefix, rowPrefix string) ([]string, error) {
+func PrefixScan(ctx context.Context, keyPrefix []byte) ([]string, error) {
 	return nil, nil
 }

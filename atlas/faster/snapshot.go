@@ -176,7 +176,6 @@ func (sm *SnapshotManager) CleanupOldSnapshots(keepCount int) error {
 	return nil
 }
 
-
 // CompactOnStartup performs offline log compaction before the log is opened
 // This MUST be called before NewFasterLog() if you want to apply pending truncations
 // Returns the truncation slot if compaction was performed, 0 if not

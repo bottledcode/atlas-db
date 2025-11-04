@@ -64,12 +64,12 @@ type shard[T any] struct {
 // Note: For pointer types T, we can use atomic.Pointer. For value types, we use atomic.Value.
 type recordNode[T any] struct {
 	// Cache line 1: Hot fields accessed on every lookup
-	value   atomic.Value                     // value stored (generic type, atomic for race-safety)
-	next    atomic.Pointer[recordNode[T]]    // 8 bytes - chain traversal
-	keyHash uint64                           // 8 bytes - fast comparison
-	freq    atomic.Uint32                    // 4 bytes - access frequency (0-15)
-	keyLen  uint16                           // 2 bytes - key length
-	_       [2]byte                          // 2 bytes - alignment padding
+	value   atomic.Value                  // value stored (generic type, atomic for race-safety)
+	next    atomic.Pointer[recordNode[T]] // 8 bytes - chain traversal
+	keyHash uint64                        // 8 bytes - fast comparison
+	freq    atomic.Uint32                 // 4 bytes - access frequency (0-15)
+	keyLen  uint16                        // 2 bytes - key length
+	_       [2]byte                       // 2 bytes - alignment padding
 
 	// Cache line 2 (bytes 32-95): Key data (only accessed on hash match)
 	key [64]byte // 64 bytes - full key (MAX 64 bytes!)

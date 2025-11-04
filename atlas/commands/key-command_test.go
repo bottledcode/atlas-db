@@ -133,13 +133,12 @@ func TestScan_NotImplemented(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error getting next: %v", err)
 	}
-	sc, ok := next.(*ScanCommand)
+	_, ok := next.(*ScanCommand)
 	if !ok {
 		t.Fatalf("expected *ScanCommand, got %T", next)
 	}
-	if _, err := sc.Execute(context.Background()); err == nil {
-		t.Fatalf("expected not implemented error for SCAN")
-	}
+	// SCAN is now implemented, so it should not return an error for syntax
+	// (it might return an error for other reasons like connection issues)
 }
 
 func TestCount_NotImplemented(t *testing.T) {

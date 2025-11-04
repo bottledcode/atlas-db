@@ -236,7 +236,7 @@ func (k *KeyDelCommand) Execute(ctx context.Context) ([]byte, error) {
 	//key, _ := k.SelectNormalizedCommand(2)
 	//builder := k.FromKey(key)
 	///if err := atlas.DeleteKey(ctx, builder); err != nil {
-		///return nil, err
+	///return nil, err
 	///}
 	return nil, nil
 }

@@ -218,11 +218,11 @@ func (m *Module) UnmarshalCaddyfile(d *caddyfile.Dispenser) (err error) {
 					return d.ArgErr()
 				}
 				// Parse size with units (e.g., "1GB", "512MB", "2048")
-				size, err := caddy.ParseSize(sizeStr)
+				size, err := parseSize(sizeStr)
 				if err != nil {
 					return d.Errf("max_cache_size: invalid size format: %v", err)
 				}
-				options.CurrentOptions.MaxCacheSize = uint64(size)
+				options.CurrentOptions.MaxCacheSize = size
 			default:
 				return d.Errf("unknown option: %s", d.Val())
 			}
@@ -352,6 +352,50 @@ func init() {
 			})
 		},
 	})
+}
+
+// parseSize parses a size string with optional unit suffix (e.g., "1GB", "512MB", "2048")
+func parseSize(s string) (uint64, error) {
+	s = strings.TrimSpace(strings.ToUpper(s))
+	if s == "" {
+		return 0, fmt.Errorf("empty size string")
+	}
+
+	multiplier := uint64(1)
+	suffix := ""
+
+	// Check for unit suffix
+	if len(s) >= 2 {
+		lastTwo := s[len(s)-2:]
+		if lastTwo == "KB" || lastTwo == "MB" || lastTwo == "GB" || lastTwo == "TB" {
+			suffix = lastTwo
+			s = s[:len(s)-2]
+		} else if last := s[len(s)-1:]; last == "K" || last == "M" || last == "G" || last == "T" {
+			suffix = last + "B"
+			s = s[:len(s)-1]
+		}
+	}
+
+	// Parse the numeric value
+	var val uint64
+	_, err := fmt.Sscanf(s, "%d", &val)
+	if err != nil {
+		return 0, fmt.Errorf("invalid size format: %v", err)
+	}
+
+	// Apply multiplier based on suffix
+	switch suffix {
+	case "KB":
+		multiplier = 1024
+	case "MB":
+		multiplier = 1024 * 1024
+	case "GB":
+		multiplier = 1024 * 1024 * 1024
+	case "TB":
+		multiplier = 1024 * 1024 * 1024 * 1024
+	}
+
+	return val * multiplier, nil
 }
 
 // Interface guards

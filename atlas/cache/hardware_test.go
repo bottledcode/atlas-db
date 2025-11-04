@@ -44,12 +44,12 @@ func TestDetectHardware(t *testing.T) {
 
 func TestComputeShardConfig(t *testing.T) {
 	tests := []struct {
-		name          string
-		cacheSize     uint64
-		minShards     int
-		maxShards     int
-		minSlots      int
-		maxSlots      int
+		name      string
+		cacheSize uint64
+		minShards int
+		maxShards int
+		minSlots  int
+		maxSlots  int
 	}{
 		{
 			name:      "256MB cache",

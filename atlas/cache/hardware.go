@@ -7,11 +7,11 @@ import (
 
 // HardwareConfig contains detected hardware specifications
 type HardwareConfig struct {
-	NumCPU       int    // Number of logical CPUs
-	TotalMemory  uint64 // Total system memory in bytes
-	CacheSize    uint64 // Recommended cache size in bytes
-	NumShards    int    // Recommended number of shards
-	SlotsPerShard int   // Recommended slots per shard
+	NumCPU        int    // Number of logical CPUs
+	TotalMemory   uint64 // Total system memory in bytes
+	CacheSize     uint64 // Recommended cache size in bytes
+	NumShards     int    // Recommended number of shards
+	SlotsPerShard int    // Recommended slots per shard
 }
 
 // DetectHardware detects system hardware and returns recommended configuration
@@ -25,7 +25,7 @@ func DetectHardware() HardwareConfig {
 	cacheSize := uint64(float64(totalMemory) * 0.10)
 
 	// Apply bounds: min 256MB, max 16GB
-	const minCacheSize = 256 * 1024 * 1024      // 256 MB
+	const minCacheSize = 256 * 1024 * 1024       // 256 MB
 	const maxCacheSize = 16 * 1024 * 1024 * 1024 // 16 GB
 
 	if cacheSize < minCacheSize {

@@ -63,20 +63,24 @@ func init() {
 	if options.CurrentOptions.MaxCacheSize > 0 {
 		// Use configured cache size
 		cfg = cache.ConfigFromMemorySize(options.CurrentOptions.MaxCacheSize)
-		options.Logger.Info("📊 CloxCache configured from max_cache_size",
-			zap.String("size", cache.FormatMemory(options.CurrentOptions.MaxCacheSize)),
-			zap.Int("shards", cfg.NumShards),
-			zap.Int("slots_per_shard", cfg.SlotsPerShard))
+		if options.Logger != nil {
+			options.Logger.Info("📊 CloxCache configured from max_cache_size",
+				zap.String("size", cache.FormatMemory(options.CurrentOptions.MaxCacheSize)),
+				zap.Int("shards", cfg.NumShards),
+				zap.Int("slots_per_shard", cfg.SlotsPerShard))
+		}
 	} else {
 		// Auto-detect hardware and configure cache
 		cfg = cache.ConfigFromHardware()
 		hw := cache.DetectHardware()
-		options.Logger.Info("📊 CloxCache auto-configured from hardware",
-			zap.Int("cpu_count", hw.NumCPU),
-			zap.String("total_memory", cache.FormatMemory(hw.TotalMemory)),
-			zap.String("cache_size", cache.FormatMemory(hw.CacheSize)),
-			zap.Int("shards", cfg.NumShards),
-			zap.Int("slots_per_shard", cfg.SlotsPerShard))
+		if options.Logger != nil {
+			options.Logger.Info("📊 CloxCache auto-configured from hardware",
+				zap.Int("cpu_count", hw.NumCPU),
+				zap.String("total_memory", cache.FormatMemory(hw.TotalMemory)),
+				zap.String("cache_size", cache.FormatMemory(hw.CacheSize)),
+				zap.Int("shards", cfg.NumShards),
+				zap.Int("slots_per_shard", cfg.SlotsPerShard))
+		}
 	}
 
 	stateMachine = cache.NewCloxCache[*Record](cfg)
@@ -483,7 +487,11 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 		return nil, err
 	}
 	missingRecords := make([]*RecordMutation, len(uncommitted))
-	var highestSlot *Slot
+	var (
+		haveHighest     bool
+		highestSlotID   uint64
+		highestSlotNode uint64
+	)
 
 	for i, entry := range uncommitted {
 		mutation := &RecordMutation{}
@@ -494,12 +502,28 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 		}
 		missingRecords[i] = mutation
 
-		if highestSlot == nil || highestSlot.Id < entry.Slot {
-			highestSlot = &Slot{
-				Key:  key,
-				Id:   entry.Slot,
-				Node: entry.Ballot.NodeID,
-			}
+		if !haveHighest || entry.Slot > highestSlotID {
+			haveHighest = true
+			highestSlotID = entry.Slot
+			highestSlotNode = entry.Ballot.NodeID
+		}
+	}
+
+	_, committedMax, committedCount := log.GetCommittedRange()
+	if committedCount > 0 && (!haveHighest || committedMax > highestSlotID) {
+		if committedEntry, readErr := log.ReadCommittedOnly(committedMax); readErr == nil {
+			highestSlotNode = committedEntry.Ballot.NodeID
+		}
+		haveHighest = true
+		highestSlotID = committedMax
+	}
+
+	var highestSlot *Slot
+	if haveHighest {
+		highestSlot = &Slot{
+			Key:  key,
+			Id:   highestSlotID,
+			Node: highestSlotNode,
 		}
 	}
 
@@ -604,6 +628,7 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 				return err
 			}
 			record = s.applyMutation(record, mu)
+			record.MaxSlot = entry.Slot
 			return nil
 		}, faster.IterateOptions{
 			MinSlot:            record.BaseRecord.MaxSlot,

@@ -1,3 +1,5 @@
+//go:build !race
+
 /*
  * This file is part of Atlas-DB.
  *
@@ -15,8 +17,6 @@
  * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
  *
  */
-
-//go:build !race
 
 package faster
 

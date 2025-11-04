@@ -600,9 +600,14 @@ func (b *broadcastQuorum) friendlySteal(ctx context.Context, key []byte) (bool, 
 	})
 
 	for _, rec := range allRecords {
+		// Re-propose using the new leadership ballot to satisfy promised quorums
+		proposal := proto.Clone(rec).(*RecordMutation)
+		proposal.Ballot = proto.Clone(nextBallot).(*Ballot)
+		proposal.Committed = false
+
 		// Phase 2a: Accept missing record
 		accepted, err := b.WriteMigration(ctx, &WriteMigrationRequest{
-			Record: rec,
+			Record: proposal,
 		})
 		if err != nil {
 			return false, fmt.Errorf("failed to write missing migration during friendly steal: %w", err)
@@ -613,7 +618,7 @@ func (b *broadcastQuorum) friendlySteal(ctx context.Context, key []byte) (bool, 
 
 		// Phase 3: Commit missing record
 		_, err = b.AcceptMigration(ctx, &WriteMigrationRequest{
-			Record: rec,
+			Record: proposal,
 		})
 		if err != nil {
 			return false, fmt.Errorf("failed to commit missing migration during friendly steal: %w", err)

@@ -69,18 +69,20 @@ func (m *majorityQuorum) AcceptMigration(ctx context.Context, in *WriteMigration
 	return m.q2.AcceptMigration(ctx, in, opts...)
 }
 
-func (m *majorityQuorum) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
-	return nil, errors.New("no quorum needed to ping")
+func (m *majorityQuorum) FriendlySteal(ctx context.Context, key []byte) (bool, *Ballot, error) {
+	return m.q1.FriendlySteal(ctx, key)
 }
 
-func (m *majorityQuorum) ReadKey(ctx context.Context, in *ReadKeyRequest, opts ...grpc.CallOption) (*ReadKeyResponse, error) {
-	return m.q2.ReadKey(ctx, in, opts...)
+func (m *majorityQuorum) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
+	return nil, errors.New("no quorum needed to ping")
 }
 
 func (m *majorityQuorum) PrefixScan(ctx context.Context, in *PrefixScanRequest, opts ...grpc.CallOption) (*PrefixScanResponse, error) {
 	panic("must use broadcast to prefix scan")
 }
 
-func (m *majorityQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error) {
-	return m.q2.WriteKey(ctx, in, opts...)
+func (m *majorityQuorum) ReadRecord(ctx context.Context, in *ReadRecordRequest, opts ...grpc.CallOption) (*ReadRecordResponse, error) {
+	// Reads should go to Q2 (majority) or we can try Q1 (broadcast) for availability
+	// Use Q1 for now to try all nodes
+	return m.q1.ReadRecord(ctx, in, opts...)
 }

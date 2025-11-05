@@ -54,7 +54,6 @@ func ComputeShardConfig(cacheSize uint64) (numShards, slotsPerShard int) {
 	const bytesPerRecord = 200
 	const bytesPerNode = 96
 	const bytesPerSlot = 8
-	const overheadMultiplier = 1.5
 	const targetLoadFactor = 1.0
 
 	// Estimate number of records that fit in cache
@@ -70,29 +69,20 @@ func ComputeShardConfig(cacheSize uint64) (numShards, slotsPerShard int) {
 
 	// Heuristic: 4-8 shards per core for good parallelism
 	// Use power of 2 for bit-masking efficiency
-	numShards = nextPowerOf2(numCPU * 4)
+	numShards = min(
+		// Clamp to reasonable range: 16-256 shards
+		max(
 
-	// Clamp to reasonable range: 16-256 shards
-	if numShards < 16 {
-		numShards = 16
-	}
-	if numShards > 256 {
-		numShards = 256
-	}
+			nextPowerOf2(numCPU*4), 16), 256)
 
 	// Calculate slots per shard (must be power of 2)
 	slotsPerShard = totalSlots / numShards
-	slotsPerShard = nextPowerOf2(slotsPerShard)
+	slotsPerShard = min(
+		// Ensure minimum slot count per shard: 256
+		// Ensure reasonable maximum: 64K slots per shard
+		max(
 
-	// Ensure minimum slot count per shard: 256
-	if slotsPerShard < 256 {
-		slotsPerShard = 256
-	}
-
-	// Ensure reasonable maximum: 64K slots per shard
-	if slotsPerShard > 65536 {
-		slotsPerShard = 65536
-	}
+			nextPowerOf2(slotsPerShard), 256), 65536)
 
 	return numShards, slotsPerShard
 }

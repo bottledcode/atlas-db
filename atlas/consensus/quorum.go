@@ -38,6 +38,7 @@ import (
 
 type QuorumManager interface {
 	GetQuorum(ctx context.Context, table string) (Quorum, error)
+	GetBroadcastQuorum(ctx context.Context, table []byte) (Quorum, error)
 	AddNode(ctx context.Context, node *Node) error
 	RemoveNode(nodeID uint64) error
 	Send(node *Node, do func(quorumNode *QuorumNode) (any, error)) (any, error)
@@ -63,6 +64,18 @@ type defaultQuorumManager struct {
 	mu                sync.RWMutex
 	nodes             map[RegionName][]*QuorumNode
 	connectionManager *NodeConnectionManager
+}
+
+func (q *defaultQuorumManager) GetBroadcastQuorum(ctx context.Context, table []byte) (Quorum, error) {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+
+	nodes := make([]*QuorumNode, 0)
+	for _, list := range q.nodes {
+		nodes = append(nodes, list...)
+	}
+
+	return &broadcastQuorum{nodes: nodes}, nil
 }
 
 func (q *defaultQuorumManager) Send(node *Node, do func(quorumNode *QuorumNode) (any, error)) (any, error) {
@@ -153,8 +166,7 @@ func (q *defaultQuorumManager) RemoveNode(nodeID uint64) error {
 
 type Quorum interface {
 	ConsensusClient
-	CurrentNodeInReplicationQuorum() bool
-	CurrentNodeInMigrationQuorum() bool
+	FriendlySteal(ctx context.Context, key []byte) (bool, *Ballot, error)
 }
 
 type QuorumNode struct {
@@ -251,28 +263,6 @@ func (q *QuorumNode) Ping(ctx context.Context, in *PingRequest, opts ...grpc.Cal
 	return q.client.Ping(ctx, in, opts...)
 }
 
-func (q *QuorumNode) ReadKey(ctx context.Context, in *ReadKeyRequest, opts ...grpc.CallOption) (*ReadKeyResponse, error) {
-	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
-	}
-	return q.client.ReadKey(ctx, in, opts...)
-}
-
-func (q *QuorumNode) WriteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error) {
-	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
-	}
-	return q.client.WriteKey(ctx, in, opts...)
-}
-
 func (q *QuorumNode) PrefixScan(ctx context.Context, in *PrefixScanRequest, opts ...grpc.CallOption) (*PrefixScanResponse, error) {
 	var err error
 	if q.client == nil {
@@ -282,6 +272,17 @@ func (q *QuorumNode) PrefixScan(ctx context.Context, in *PrefixScanRequest, opts
 		}
 	}
 	return q.client.PrefixScan(ctx, in, opts...)
+}
+
+func (q *QuorumNode) ReadRecord(ctx context.Context, in *ReadRecordRequest, opts ...grpc.CallOption) (*ReadRecordResponse, error) {
+	var err error
+	if q.client == nil {
+		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return q.client.ReadRecord(ctx, in, opts...)
 }
 
 func (q *QuorumNode) Close() {

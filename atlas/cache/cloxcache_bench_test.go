@@ -68,8 +68,8 @@ func BenchmarkCloxCacheGet(b *testing.B) {
 
 	// Pre-populate cache
 	const numKeys = 10000
-	for i := 0; i < numKeys; i++ {
-		key := []byte(fmt.Sprintf("key-%d", i))
+	for i := range numKeys {
+		key := fmt.Appendf(nil, "key-%d", i)
 		cache.Put(key, i)
 	}
 
@@ -79,7 +79,7 @@ func BenchmarkCloxCacheGet(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
 		for pb.Next() {
-			key := []byte(fmt.Sprintf("key-%d", i%numKeys))
+			key := fmt.Appendf(nil, "key-%d", i%numKeys)
 			cache.Get(key)
 			i++
 		}
@@ -92,7 +92,7 @@ func BenchmarkSyncMapGet(b *testing.B) {
 
 	// Pre-populate map
 	const numKeys = 10000
-	for i := 0; i < numKeys; i++ {
+	for i := range numKeys {
 		key := fmt.Sprintf("key-%d", i)
 		m.Store(key, i)
 	}
@@ -125,7 +125,7 @@ func BenchmarkCloxCachePut(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
 		for pb.Next() {
-			key := []byte(fmt.Sprintf("key-%d", i))
+			key := fmt.Appendf(nil, "key-%d", i)
 			cache.Put(key, i)
 			i++
 		}
@@ -160,8 +160,8 @@ func BenchmarkCloxCacheMixed(b *testing.B) {
 
 	// Pre-populate cache
 	const numKeys = 10000
-	for i := 0; i < numKeys; i++ {
-		key := []byte(fmt.Sprintf("key-%d", i))
+	for i := range numKeys {
+		key := fmt.Appendf(nil, "key-%d", i)
 		cache.Put(key, i)
 	}
 
@@ -172,7 +172,7 @@ func BenchmarkCloxCacheMixed(b *testing.B) {
 		rng := rand.New(rand.NewSource(42))
 		i := 0
 		for pb.Next() {
-			key := []byte(fmt.Sprintf("key-%d", i%numKeys))
+			key := fmt.Appendf(nil, "key-%d", i%numKeys)
 			if rng.Float64() < 0.8 {
 				// 80% reads
 				cache.Get(key)
@@ -196,7 +196,7 @@ func BenchmarkSyncMapMixed(b *testing.B) {
 
 	// Pre-populate map
 	const numKeys = 10000
-	for i := 0; i < numKeys; i++ {
+	for i := range numKeys {
 		key := fmt.Sprintf("key-%d", i)
 		m.Store(key, i)
 	}
@@ -234,8 +234,8 @@ func BenchmarkCloxCacheZipf(b *testing.B) {
 	const theta = 0.99 // Zipf parameter (higher = more skewed)
 
 	// Pre-populate cache with subset of keys
-	for i := 0; i < numKeys/10; i++ {
-		key := []byte(fmt.Sprintf("key-%d", i))
+	for i := range numKeys / 10 {
+		key := fmt.Appendf(nil, "key-%d", i)
 		cache.Put(key, i)
 	}
 
@@ -246,7 +246,7 @@ func BenchmarkCloxCacheZipf(b *testing.B) {
 		zipf := newZipfGenerator(numKeys, theta, 42)
 		for pb.Next() {
 			idx := zipf.next()
-			key := []byte(fmt.Sprintf("key-%d", idx))
+			key := fmt.Appendf(nil, "key-%d", idx)
 
 			if rand.Float64() < 0.8 {
 				// 80% reads
@@ -272,7 +272,7 @@ func BenchmarkSyncMapZipf(b *testing.B) {
 	const theta = 0.99
 
 	// Pre-populate map with subset of keys
-	for i := 0; i < numKeys/10; i++ {
+	for i := range numKeys / 10 {
 		key := fmt.Sprintf("key-%d", i)
 		m.Store(key, i)
 	}
@@ -308,8 +308,8 @@ func BenchmarkCloxCacheContention(b *testing.B) {
 
 	// Pre-populate with hot keys
 	const numHotKeys = 100
-	for i := 0; i < numHotKeys; i++ {
-		key := []byte(fmt.Sprintf("hot-%d", i))
+	for i := range numHotKeys {
+		key := fmt.Appendf(nil, "hot-%d", i)
 		cache.Put(key, i)
 	}
 
@@ -320,7 +320,7 @@ func BenchmarkCloxCacheContention(b *testing.B) {
 		rng := rand.New(rand.NewSource(42))
 		for pb.Next() {
 			// Heavy contention on small set of keys
-			key := []byte(fmt.Sprintf("hot-%d", rng.Intn(numHotKeys)))
+			key := fmt.Appendf(nil, "hot-%d", rng.Intn(numHotKeys))
 			if rng.Float64() < 0.9 {
 				cache.Get(key)
 			} else {
@@ -336,7 +336,7 @@ func BenchmarkSyncMapContention(b *testing.B) {
 
 	// Pre-populate with hot keys
 	const numHotKeys = 100
-	for i := 0; i < numHotKeys; i++ {
+	for i := range numHotKeys {
 		key := fmt.Sprintf("hot-%d", i)
 		m.Store(key, i)
 	}
@@ -382,8 +382,8 @@ func BenchmarkCloxCacheSizes(b *testing.B) {
 
 			// Pre-populate
 			const numKeys = 10000
-			for i := 0; i < numKeys; i++ {
-				key := []byte(fmt.Sprintf("key-%d", i))
+			for i := range numKeys {
+				key := fmt.Appendf(nil, "key-%d", i)
 				cache.Put(key, i)
 			}
 
@@ -394,7 +394,7 @@ func BenchmarkCloxCacheSizes(b *testing.B) {
 				rng := rand.New(rand.NewSource(42))
 				i := 0
 				for pb.Next() {
-					key := []byte(fmt.Sprintf("key-%d", i%numKeys))
+					key := fmt.Appendf(nil, "key-%d", i%numKeys)
 					if rng.Float64() < 0.8 {
 						cache.Get(key)
 					} else {
@@ -423,8 +423,8 @@ func BenchmarkCloxCachePointers(b *testing.B) {
 
 	// Pre-populate
 	const numKeys = 10000
-	for i := 0; i < numKeys; i++ {
-		key := []byte(fmt.Sprintf("key-%d", i))
+	for i := range numKeys {
+		key := fmt.Appendf(nil, "key-%d", i)
 		record := &Record{ID: i}
 		cache.Put(key, record)
 	}
@@ -435,7 +435,7 @@ func BenchmarkCloxCachePointers(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
 		for pb.Next() {
-			key := []byte(fmt.Sprintf("key-%d", i%numKeys))
+			key := fmt.Appendf(nil, "key-%d", i%numKeys)
 			cache.Get(key)
 			i++
 		}

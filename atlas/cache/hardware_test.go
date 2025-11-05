@@ -284,7 +284,7 @@ func TestEstimateMemoryUsage(t *testing.T) {
 func BenchmarkDetectHardware(b *testing.B) {
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = DetectHardware()
 	}
 }
@@ -294,7 +294,7 @@ func BenchmarkComputeShardConfig(b *testing.B) {
 
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = ComputeShardConfig(cacheSize)
 	}
 }
@@ -302,7 +302,7 @@ func BenchmarkComputeShardConfig(b *testing.B) {
 func BenchmarkConfigFromHardware(b *testing.B) {
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = ConfigFromHardware()
 	}
 }

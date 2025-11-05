@@ -21,9 +21,7 @@ package consensus
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
-	"runtime"
 	"sync"
 	"time"
 
@@ -47,6 +45,13 @@ type Server struct {
 var logs *faster.LogManager
 var stateMachine *cache.CloxCache[*Record] // Cache of Records
 var ownership sync.Map                     // map[string]OwnershipState
+
+func IsOwned(key []byte) bool {
+	own := getCurrentOwnershipState(key)
+	own.mu.RLock()
+	defer own.mu.RUnlock()
+	return own.owned
+}
 
 type OwnershipState struct {
 	mu             sync.RWMutex
@@ -89,160 +94,6 @@ func init() {
 
 func NewServer() *Server {
 	return &Server{}
-}
-
-type GapTracker struct {
-	mu   sync.RWMutex
-	gaps map[string]*GapSet
-}
-
-func (g *GapTracker) registerGap(key []byte, gapRange GapRange) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	if _, ok := g.gaps[string(key)]; !ok {
-		g.gaps[string(key)] = &GapSet{
-			repairChan: make(chan GapRange),
-		}
-	}
-
-	g.gaps[string(key)].repairChan <- gapRange
-}
-
-type GapSet struct {
-	mu         sync.RWMutex
-	ranges     []GapRange
-	repairChan chan GapRange
-	key        []byte
-}
-
-func newGapSet(key []byte) *GapSet {
-	set := &GapSet{
-		repairChan: make(chan GapRange),
-		key:        key,
-	}
-
-	go set.repair()
-
-	return set
-}
-
-var gapSets = &GapTracker{
-	gaps: make(map[string]*GapSet),
-	mu:   sync.RWMutex{},
-}
-
-func (s *GapSet) repair() {
-	for {
-		select {
-		case <-time.After(100 * time.Millisecond):
-			// take the highest priority repair
-			s.mu.RLock()
-			var highest *GapRange
-			for _, n := range s.ranges {
-				if highest == nil || highest.Priority < n.Priority {
-					highest = &n
-				}
-			}
-			if highest != nil {
-				highest.InProgress = true
-			}
-			s.mu.RUnlock()
-
-			// determine still missing slots
-			if highest == nil {
-				continue
-			}
-
-			var slots []uint64
-			log, release, err := logs.GetLog(s.key)
-			if err != nil {
-				options.Logger.Warn("failed to get log", zap.Error(err))
-				continue
-			}
-			for i := highest.StartSlot; i <= highest.EndSlot; i++ {
-				// check that we actually don't have the slot
-				_, err := log.Read(i)
-				if err != nil {
-					slots = append(slots, i)
-				}
-			}
-			release()
-
-			//ctx := context.Background()
-			//ctx, cancel := context.WithTimeout(ctx, 500 * time.Millisecond)
-			// todo: actually repair the gap
-		case next, ok := <-s.repairChan:
-			if !ok {
-				return
-			}
-			s.mu.Lock()
-
-			// merge any ranges that overlap with the current next range
-			for _, n := range s.ranges {
-				inProgress := n.InProgress
-				// if n is in progress and overlaps, subtract the range
-				if inProgress && n.StartSlot <= next.StartSlot && n.EndSlot >= next.StartSlot {
-					// subtract the overlap from next
-					// n [----------]
-					//       [------|----]
-					//       [---|
-					next.StartSlot = min(n.EndSlot, next.EndSlot)
-				}
-				if inProgress && n.EndSlot >= next.EndSlot && n.StartSlot <= next.EndSlot {
-					// subtract the overlap from next
-					// n     [----------]
-					//   [---|--------]
-					//       |   [-----]
-					next.EndSlot = min(n.StartSlot, next.EndSlot)
-				}
-				if next.EndSlot <= next.StartSlot {
-					goto finalize
-				}
-
-				// now we need to merge it with any other slot that overlaps
-				//
-				if n.StartSlot <= next.StartSlot && n.EndSlot >= next.StartSlot {
-					// these overlap, so adjust the ranges into a single range
-					n.EndSlot = max(n.EndSlot, next.EndSlot)
-					n.Priority += next.Priority
-					goto finalize
-				}
-				if n.EndSlot >= next.EndSlot && n.StartSlot <= next.EndSlot {
-					n.StartSlot = min(n.StartSlot, next.StartSlot)
-					n.Priority += next.Priority
-					goto finalize
-				}
-
-				// this is a unique range
-				s.ranges = append(s.ranges, n)
-			}
-
-		finalize:
-			s.mu.Unlock()
-		}
-	}
-}
-
-type GapRange struct {
-	StartSlot  uint64
-	EndSlot    uint64
-	Priority   uint64
-	InProgress bool
-}
-
-func (s *Server) calculateGapPriority(gapSize uint64, key []byte) uint64 {
-	priority := gapSize
-
-	if s.isHotKey(key) {
-		priority *= 10
-	}
-
-	return priority
-}
-
-func (s *Server) isHotKey(key []byte) bool {
-	return false
 }
 
 func (s *Server) RequestSlots(req *SlotRequest, stream grpc.ServerStreamingServer[RecordMutation]) error {
@@ -402,15 +253,51 @@ func (s *Server) applyMutation(obj *Record, mutation *RecordMutation) *Record {
 	case *RecordMutation_Compaction:
 		updated = m.Compaction
 	case *RecordMutation_Noop:
-	// do nothing
+		// do nothing
 	case *RecordMutation_Tombstone:
 		updated.Data = nil
-	case *RecordMutation_AclUpdated:
-		updated.Acl = m.AclUpdated
 	case *RecordMutation_ValueAddress:
 		updated.Data = m.ValueAddress
+	case *RecordMutation_AddPrincipal:
+		// Atomically add principal to ACL
+		if updated.Acl == nil {
+			updated.Acl = &Acl{}
+		}
+		principal := m.AddPrincipal.Principal
+		switch m.AddPrincipal.Role {
+		case AclRole_OWNER:
+			updated.Acl.Owners = append(updated.Acl.Owners, principal)
+		case AclRole_READER:
+			updated.Acl.Readers = append(updated.Acl.Readers, principal)
+		case AclRole_WRITER:
+			updated.Acl.Writers = append(updated.Acl.Writers, principal)
+		}
+	case *RecordMutation_RemovePrincipal:
+		// Atomically remove principal from ACL
+		if updated.Acl != nil {
+			principal := m.RemovePrincipal.Principal
+			switch m.RemovePrincipal.Role {
+			case AclRole_OWNER:
+				updated.Acl.Owners = removePrincipalFromList(updated.Acl.Owners, principal)
+			case AclRole_READER:
+				updated.Acl.Readers = removePrincipalFromList(updated.Acl.Readers, principal)
+			case AclRole_WRITER:
+				updated.Acl.Writers = removePrincipalFromList(updated.Acl.Writers, principal)
+			}
+		}
 	}
 	return updated
+}
+
+// removePrincipalFromList removes a principal from a list
+func removePrincipalFromList(list []*Principal, toRemove *Principal) []*Principal {
+	result := make([]*Principal, 0, len(list))
+	for _, p := range list {
+		if p.Name != toRemove.Name || p.Value != toRemove.Value {
+			result = append(result, p)
+		}
+	}
+	return result
 }
 
 // call if this is the first time we've seen this key since startup
@@ -657,6 +544,20 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 }
 
 // Ping implements a simple health check endpoint
+func (s *Server) ReadRecord(ctx context.Context, req *ReadRecordRequest) (*ReadRecordResponse, error) {
+	// Read the record from the local state machine
+	// This RPC should only be called on the leader/owner of the key
+	record, err := readLocal(req.GetKey())
+	if err != nil {
+		return &ReadRecordResponse{Success: false}, err
+	}
+
+	return &ReadRecordResponse{
+		Success: true,
+		Record:  record,
+	}, nil
+}
+
 func (s *Server) Ping(ctx context.Context, req *PingRequest) (*PingResponse, error) {
 	// Add mutual node discovery - when we receive a ping, add the sender to our node list
 	connectionManager := GetNodeConnectionManager(ctx)
@@ -694,64 +595,6 @@ func (s *Server) Ping(ctx context.Context, req *PingRequest) (*PingResponse, err
 	}, nil
 }
 
-func (s *Server) ReadKey(ctx context.Context, req *ReadKeyRequest) (*ReadKeyResponse, error) {
-spin:
-	ownership := getCurrentOwnershipState(req.Key)
-	ownership.mu.RLock()
-	defer ownership.mu.RUnlock()
-
-	// Get record from cache or reconstruct from log
-	record, ok := stateMachine.Get(req.GetKey())
-	if !ok {
-		// Cache miss - reconstruct from FASTER log
-		log, release, err := logs.GetLog(req.GetKey())
-		if err != nil {
-			return nil, fmt.Errorf("failed to get log for key: %v", err)
-		}
-		defer release()
-
-		record = &Record{}
-		err = log.IterateCommitted(func(entry *faster.LogEntry) error {
-			mu := &RecordMutation{}
-			err := proto.Unmarshal(entry.Value, mu)
-			if err != nil {
-				return err
-			}
-			record = s.applyMutation(record, mu)
-			record.MaxSlot = entry.Slot
-			return nil
-		}, faster.IterateOptions{
-			MinSlot:            0,
-			MaxSlot:            0,
-			IncludeUncommitted: false,
-			SkipErrors:         false,
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		// Insert into cache for future reads
-		stateMachine.Put(req.GetKey(), record)
-	}
-
-	if record.MaxSlot < req.Watermark {
-		// spin wait until we reach the watermark
-		runtime.Gosched()
-		goto spin
-	}
-
-	if !canRead(ctx, record) {
-		return &ReadKeyResponse{
-			Success: false,
-		}, fmt.Errorf("principal isn't allowed to read this key")
-	}
-
-	return &ReadKeyResponse{
-		Success: true,
-		Value:   record.Data,
-	}, nil
-}
-
 func (s *Server) PrefixScan(ctx context.Context, req *PrefixScanRequest) (*PrefixScanResponse, error) {
 	ownedKeys := make([][]byte, 0)
 	ownership.Range(func(key, value any) bool {
@@ -765,12 +608,4 @@ func (s *Server) PrefixScan(ctx context.Context, req *PrefixScanRequest) (*Prefi
 		Success: true,
 		Keys:    ownedKeys,
 	}, nil
-}
-
-func (s *Server) DeleteKey(context.Context, *WriteKeyRequest) (*WriteKeyResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DeleteKey not implemented, call WriteKey instead")
-}
-
-func (s *Server) WriteKey(ctx context.Context, req *WriteKeyRequest) (*WriteKeyResponse, error) {
-	return nil, fmt.Errorf("Cannot call WriteKey on consensus server; use WriteMigration instead")
 }

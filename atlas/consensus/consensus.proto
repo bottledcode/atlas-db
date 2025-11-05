@@ -32,11 +32,10 @@ service Consensus {
   rpc Replicate(stream ReplicationRequest) returns (ReplicationResponse) {}
   rpc DeReference(DereferenceRequest) returns (stream DereferenceResponse) {}
   rpc Ping(PingRequest) returns (PingResponse) {}
-  rpc ReadKey(ReadKeyRequest) returns (ReadKeyResponse) {}
-  rpc WriteKey(WriteKeyRequest) returns (WriteKeyResponse) {}
   rpc PrefixScan(PrefixScanRequest) returns (PrefixScanResponse) {}
   rpc RequestSlots(SlotRequest) returns (stream RecordMutation) {}
   rpc Follow(SlotRequest) returns (stream RecordMutation) {}
+  rpc ReadRecord(ReadRecordRequest) returns (ReadRecordResponse) {}
 }
 
 message SlotRequest {
@@ -111,6 +110,23 @@ message Acl {
   repeated Principal writers = 3;
 }
 
+// Atomic ACL mutations - apply without read-modify-write
+enum AclRole {
+  OWNER = 0;
+  READER = 1;
+  WRITER = 2;
+}
+
+message AddPrincipal {
+  AclRole role = 1;
+  Principal principal = 2;
+}
+
+message RemovePrincipal {
+  AclRole role = 1;
+  Principal principal = 2;
+}
+
 message ClusterConfig {
   uint64 clusterVersion = 1;
   repeated Node nodes = 2;
@@ -124,10 +140,11 @@ message RecordMutation {
   oneof message {
     DataReference valueAddress = 2;
     Deletion tombstone = 3;
-    Acl aclUpdated = 4;
     Record compaction = 5;
     Noop noop = 6;
     ClusterConfig config = 9;
+    AddPrincipal addPrincipal = 10;
+    RemovePrincipal removePrincipal = 11;
   }
   bool committed = 7;
 }
@@ -373,6 +390,16 @@ message ReadKeyRequest {
 message ReadKeyResponse {
   bool success = 1; // Whether the read was successful
   DataReference value = 2; // The value if found, empty if not found
+}
+
+// Read Record from leader (returns full Record with ACL, DataReference, etc.)
+message ReadRecordRequest {
+  bytes key = 1; // The key to read
+}
+
+message ReadRecordResponse {
+  bool success = 1; // Whether the read was successful
+  Record record = 2; // The full Record if found
 }
 
 // Remote prefix scan

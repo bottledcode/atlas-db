@@ -315,7 +315,7 @@ func (c *CloxCache[T]) sweeper(slotsPerShard int) {
 			// Process a batch of slots
 			dec := c.decayStep.Load()
 
-			for i := 0; i < slotsPerTick; i++ {
+			for range slotsPerTick {
 				slotIdx := hand % totalSlots
 				shardID := slotIdx % uint64(c.numShards)
 				localSlot := slotIdx / uint64(c.numShards)

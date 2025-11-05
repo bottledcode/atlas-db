@@ -20,6 +20,7 @@ package faster
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -140,7 +141,9 @@ func (sm *SnapshotManager) TruncateLog(truncateSlot uint64) error {
 	if err != nil {
 		return fmt.Errorf("failed to create truncate marker: %w", err)
 	}
-	defer file.Close()
+	defer func(file *os.File) {
+		_ = file.Close()
+	}(file)
 
 	// Write truncation slot to marker file
 	buf := make([]byte, 8)
@@ -224,7 +227,9 @@ func compactLogOffline(logPath string, truncateSlot uint64) error {
 		}
 		return fmt.Errorf("failed to open log file: %w", err)
 	}
-	defer file.Close()
+	defer func(file *os.File) {
+		_ = file.Close()
+	}(file)
 
 	stat, err := file.Stat()
 	if err != nil {
@@ -249,7 +254,7 @@ func compactLogOffline(logPath string, truncateSlot uint64) error {
 
 	if truncateOffset >= uint64(stat.Size()) {
 		// Truncating entire file - just truncate to empty
-		file.Close()
+		_ = file.Close()
 		return os.WriteFile(logPath, nil, 0644)
 	}
 
@@ -257,16 +262,16 @@ func compactLogOffline(logPath string, truncateSlot uint64) error {
 	tempPath := logPath + ".compact.tmp"
 	err = streamCopyFromOffset(file, tempPath, truncateOffset)
 	if err != nil {
-		os.Remove(tempPath) // Clean up on error
+		_ = os.Remove(tempPath) // Clean up on error
 		return fmt.Errorf("failed to stream copy: %w", err)
 	}
 
-	file.Close() // Close source before rename
+	_ = file.Close() // Close source before rename
 
 	// Atomic rename to replace original
 	err = os.Rename(tempPath, logPath)
 	if err != nil {
-		os.Remove(tempPath) // Clean up on error
+		_ = os.Remove(tempPath) // Clean up on error
 		return fmt.Errorf("failed to rename compacted log: %w", err)
 	}
 
@@ -287,7 +292,9 @@ func streamCopyFromOffset(source *os.File, destPath string, offset uint64) error
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
-	defer dest.Close()
+	defer func(dest *os.File) {
+		_ = dest.Close()
+	}(dest)
 
 	// Stream copy with 4MB buffer (constant memory usage)
 	const bufferSize = 4 * 1024 * 1024 // 4MB
@@ -330,7 +337,7 @@ func findTruncateOffsetOffline(file *os.File, truncateSlot uint64) (uint64, erro
 	for {
 		// Read entry header
 		n, err := file.Read(headerBuf)
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -376,7 +383,9 @@ func (sm *SnapshotManager) writeSnapshot(snapshot *Snapshot) error {
 	if err != nil {
 		return fmt.Errorf("failed to create snapshot file: %w", err)
 	}
-	defer file.Close()
+	defer func(file *os.File) {
+		_ = file.Close()
+	}(file)
 
 	// Write header
 	header := make([]byte, 24)
@@ -418,7 +427,9 @@ func (sm *SnapshotManager) readSnapshot(path string) (*Snapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open snapshot: %w", err)
 	}
-	defer file.Close()
+	defer func(file *os.File) {
+		_ = file.Close()
+	}(file)
 
 	// Read header
 	header := make([]byte, 24)

@@ -23,12 +23,11 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"slices"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/bottledcode/atlas-db/atlas/options"
-	"golang.org/x/exp/slices"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
@@ -39,6 +38,11 @@ import (
 // It requires ALL nodes to agree on operations to succeed.
 type broadcastQuorum struct {
 	nodes []*QuorumNode
+}
+
+func (b *broadcastQuorum) RequestSlots(ctx context.Context, in *SlotRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RecordMutation], error) {
+	//TODO implement me
+	panic("implement me")
 }
 
 func (b *broadcastQuorum) Follow(ctx context.Context, in *SlotRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RecordMutation], error) {
@@ -112,9 +116,7 @@ func (b *broadcastQuorum) StealTableOwnership(ctx context.Context, in *StealTabl
 				mergedResult.HighestBallot = res.HighestBallot
 			}
 		}
-		for _, entry := range res.MissingRecords {
-			mergedResult.MissingRecords = append(mergedResult.MissingRecords, entry)
-		}
+		mergedResult.MissingRecords = append(mergedResult.MissingRecords, res.MissingRecords...)
 		return true
 	})
 
@@ -374,13 +376,27 @@ func (b *broadcastQuorum) aggressiveSteal(ctx context.Context, key []byte) error
 
 		// Successfully stole ownership - now replay missing records
 		slices.SortFunc(theft.MissingRecords, func(a, b *RecordMutation) int {
-			return int(a.Slot.Id - b.Slot.Id)
+			if a.Slot.Id < b.Slot.Id {
+				return -1
+			} else if a.Slot.Id > b.Slot.Id {
+				return 1
+			}
+			return 0
 		})
 
 		for _, rec := range theft.MissingRecords {
+			// Re-propose using the new leadership ballot to satisfy promised quorums
+			proposal := proto.Clone(rec).(*RecordMutation)
+			proposal.Ballot = &Ballot{
+				Key:  key,
+				Id:   number,
+				Node: options.CurrentOptions.ServerId,
+			}
+			proposal.Committed = false
+
 			// Phase 2a: Accept the missing record
 			accepted, err := b.WriteMigration(ctx, &WriteMigrationRequest{
-				Record: rec,
+				Record: proposal,
 			})
 			if err != nil {
 				return fmt.Errorf("failed to write missing migration record during steal: %w", err)
@@ -391,7 +407,7 @@ func (b *broadcastQuorum) aggressiveSteal(ctx context.Context, key []byte) error
 
 			// Phase 3: Commit the missing record
 			_, err = b.AcceptMigration(ctx, &WriteMigrationRequest{
-				Record: rec,
+				Record: proposal,
 			})
 			if err != nil {
 				return fmt.Errorf("failed to commit missing migration record during steal: %w", err)
@@ -402,77 +418,6 @@ func (b *broadcastQuorum) aggressiveSteal(ctx context.Context, key []byte) error
 	}
 
 	return fmt.Errorf("failed to steal ownership after %d retries", maxRetries)
-}
-
-func (b *broadcastQuorum) ReadKey(ctx context.Context, in *ReadKeyRequest, opts ...grpc.CallOption) (*ReadKeyResponse, error) {
-	// Try to find current owner and read from them
-	var result atomic.Value
-	var foundOwner atomic.Bool
-
-	_ = b.broadcast(func(node *QuorumNode) error {
-		r, err := node.ReadKey(ctx, in, opts...)
-		if err != nil {
-			return nil // Don't fail broadcast if one node doesn't own the key
-		}
-		if r.Success && foundOwner.CompareAndSwap(false, true) {
-			result.Store(r)
-		}
-		return nil
-	})
-
-	if foundOwner.Load() {
-		return result.Load().(*ReadKeyResponse), nil
-	}
-
-	// No owner found - aggressively steal ownership to serve the read
-	err := b.aggressiveSteal(ctx, in.Key)
-	if err != nil {
-		return nil, err
-	}
-
-	// Read from our local state machine after stealing
-	record, ok := stateMachine.Get(in.Key)
-	if !ok {
-		return &ReadKeyResponse{
-			Success: false,
-		}, fmt.Errorf("key not found after stealing ownership: %v", string(in.Key))
-	}
-
-	// Wait for watermark if specified
-	if in.Watermark > 0 {
-		const maxSpins = 100
-		const spinDelay = 10 * time.Millisecond
-
-		for range maxSpins {
-			if record.MaxSlot >= in.Watermark {
-				break
-			}
-			time.Sleep(spinDelay)
-
-			// Re-read in case it was updated
-			record, ok = stateMachine.Get(in.Key)
-			if !ok {
-				return nil, fmt.Errorf("key disappeared during watermark wait")
-			}
-		}
-
-		if record.MaxSlot < in.Watermark {
-			return nil, fmt.Errorf("timeout waiting for watermark %d, current slot: %d",
-				in.Watermark, record.MaxSlot)
-		}
-	}
-
-	// Check ACLs before returning
-	if !canRead(ctx, record) {
-		return &ReadKeyResponse{
-			Success: false,
-		}, fmt.Errorf("principal isn't allowed to read this key")
-	}
-
-	return &ReadKeyResponse{
-		Success: true,
-		Value:   record.Data,
-	}, nil
 }
 
 func getCurrentOwnershipState(key []byte) *OwnershipState {
@@ -496,7 +441,11 @@ func getCurrentOwnershipState(key []byte) *OwnershipState {
 func (b *broadcastQuorum) softSteal(ctx context.Context, key []byte) error {
 	owned := getCurrentOwnershipState(key)
 
-	return b.broadcast(func(node *QuorumNode) error {
+	var highestBallot *Ballot
+	var highestSlot uint64
+	mu := sync.Mutex{}
+
+	err := b.broadcast(func(node *QuorumNode) error {
 		p, err := node.StealTableOwnership(ctx, &StealTableOwnershipRequest{
 			Ballot: &Ballot{
 				Key:  key,
@@ -508,24 +457,39 @@ func (b *broadcastQuorum) softSteal(ctx context.Context, key []byte) error {
 			return err
 		}
 		if p.Promised {
-			panic("soft steal should not succeed")
+			return fmt.Errorf("unexpected promise on soft steal for key %s", string(key))
 		}
 
-		owned.mu.Lock()
-		defer owned.mu.Unlock()
-
-		if owned.promised.Less(p.HighestBallot) {
-			owned.promised = p.HighestBallot
-			owned.maxAppliedSlot = p.HighestSlot.Id
+		mu.Lock()
+		if highestBallot == nil || highestBallot.Less(p.HighestBallot) {
+			highestBallot = p.HighestBallot
+			if p.HighestSlot != nil {
+				highestSlot = p.HighestSlot.Id
+			}
 		}
+		mu.Unlock()
 
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	// Update local state once after collecting all responses
+	owned.mu.Lock()
+	defer owned.mu.Unlock()
+	if highestBallot != nil && owned.promised.Less(highestBallot) {
+		owned.promised = highestBallot
+		owned.maxAppliedSlot = highestSlot
+	}
+
+	return nil
 }
 
-// friendlySteal tries to steal ownership of the given key by
+// FriendlySteal tries to steal ownership of the given key by
 // requesting all nodes to hand over ownership cooperatively.
-func (b *broadcastQuorum) friendlySteal(ctx context.Context, key []byte) (bool, error) {
+// Returns (success, highestBallotSeen, error).
+func (b *broadcastQuorum) FriendlySteal(ctx context.Context, key []byte) (bool, *Ballot, error) {
 	owned := getCurrentOwnershipState(key)
 
 	owned.mu.RLock()
@@ -579,12 +543,12 @@ func (b *broadcastQuorum) friendlySteal(ctx context.Context, key []byte) (bool, 
 		return nil
 	})
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 
 	if int(success.Load()) != len(b.nodes) {
-		// Failed to get unanimous promise
-		return false, nil
+		// Failed to get unanimous promise - return highest ballot seen for efficient retry
+		return false, highestBallot, nil
 	}
 
 	// Replay all missing records in order
@@ -596,7 +560,12 @@ func (b *broadcastQuorum) friendlySteal(ctx context.Context, key []byte) (bool, 
 	}
 
 	slices.SortFunc(allRecords, func(a, b *RecordMutation) int {
-		return int(a.Slot.Id - b.Slot.Id)
+		if a.Slot.Id < b.Slot.Id {
+			return -1
+		} else if a.Slot.Id > b.Slot.Id {
+			return 1
+		}
+		return 0
 	})
 
 	for _, rec := range allRecords {
@@ -610,10 +579,10 @@ func (b *broadcastQuorum) friendlySteal(ctx context.Context, key []byte) (bool, 
 			Record: proposal,
 		})
 		if err != nil {
-			return false, fmt.Errorf("failed to write missing migration during friendly steal: %w", err)
+			return false, nil, fmt.Errorf("failed to write missing migration during friendly steal: %w", err)
 		}
 		if !accepted.Accepted {
-			return false, fmt.Errorf("missing migration not accepted during friendly steal")
+			return false, nil, fmt.Errorf("missing migration not accepted during friendly steal")
 		}
 
 		// Phase 3: Commit missing record
@@ -621,7 +590,7 @@ func (b *broadcastQuorum) friendlySteal(ctx context.Context, key []byte) (bool, 
 			Record: proposal,
 		})
 		if err != nil {
-			return false, fmt.Errorf("failed to commit missing migration during friendly steal: %w", err)
+			return false, nil, fmt.Errorf("failed to commit missing migration during friendly steal: %w", err)
 		}
 	}
 
@@ -632,73 +601,7 @@ func (b *broadcastQuorum) friendlySteal(ctx context.Context, key []byte) (bool, 
 	owned.promised = nextBallot
 	owned.maxAppliedSlot = highestSlot
 
-	return true, nil
-}
-
-func (b *broadcastQuorum) WriteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error) {
-	owned := getCurrentOwnershipState(in.Key)
-
-	// Ensure we own the key before proceeding
-	if !owned.owned {
-		theft, err := b.friendlySteal(ctx, in.Key)
-		if err != nil {
-			return nil, err
-		}
-		if !theft {
-			// For broadcast quorum, we cannot forward - we need all nodes
-			return &WriteKeyResponse{
-				Success: false,
-			}, fmt.Errorf("failed to steal ownership for write on broadcast quorum")
-		}
-	}
-
-	// Assign slot and ballot for this write
-	owned.mu.Lock()
-	slotId := owned.maxAppliedSlot + 1
-	owned.maxAppliedSlot = slotId
-	ballot := proto.Clone(owned.promised).(*Ballot)
-	owned.mu.Unlock()
-
-	// Prepare the mutation with proper slot and ballot
-	mutation := proto.Clone(in.Mutation).(*RecordMutation)
-	mutation.Slot = &Slot{
-		Key:  in.Key,
-		Id:   slotId,
-		Node: options.CurrentOptions.ServerId,
-	}
-	mutation.Ballot = ballot
-
-	// Phase 2a: Broadcast write to all nodes
-	accepts := atomic.Int32{}
-	err := b.broadcast(func(node *QuorumNode) error {
-		resp, err := node.WriteMigration(ctx, &WriteMigrationRequest{
-			Record: mutation,
-		})
-		if err != nil {
-			return err
-		}
-		if resp.Accepted {
-			accepts.Add(1)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	if int(accepts.Load()) != len(b.nodes) {
-		return &WriteKeyResponse{Success: false}, nil
-	}
-
-	// Phase 3: Commit the write to all nodes
-	_, err = b.AcceptMigration(ctx, &WriteMigrationRequest{
-		Record: mutation,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return &WriteKeyResponse{Success: true}, nil
+	return true, nextBallot, nil
 }
 
 func (b *broadcastQuorum) PrefixScan(ctx context.Context, in *PrefixScanRequest, opts ...grpc.CallOption) (*PrefixScanResponse, error) {
@@ -733,4 +636,16 @@ func (b *broadcastQuorum) CurrentNodeInReplicationQuorum() bool {
 
 func (b *broadcastQuorum) CurrentNodeInMigrationQuorum() bool {
 	return true
+}
+
+func (b *broadcastQuorum) ReadRecord(ctx context.Context, in *ReadRecordRequest, opts ...grpc.CallOption) (*ReadRecordResponse, error) {
+	// For broadcast quorum, we can read from any node (they should all have the data)
+	// Try the first responsive node
+	for _, node := range b.nodes {
+		resp, err := node.ReadRecord(ctx, in, opts...)
+		if err == nil && resp.Success {
+			return resp, nil
+		}
+	}
+	return &ReadRecordResponse{Success: false}, fmt.Errorf("no nodes responded successfully")
 }

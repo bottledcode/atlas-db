@@ -127,15 +127,15 @@ func (sc *SocketClient) ExecuteCommand(cmd string) (string, error) {
 		response.WriteString(line)
 
 		if strings.Contains(line, "OK") ||
-		   strings.Contains(line, "ERROR") {
+			strings.Contains(line, "ERROR") {
 			break
 		}
 
 		// For responses that end before OK, consume the OK terminator
 		if strings.Contains(line, "VALUE:") ||
-		   strings.Contains(line, "NOT_FOUND") ||
-		   strings.Contains(line, "EMPTY") ||
-		   strings.Contains(line, "permission denied") {
+			strings.Contains(line, "NOT_FOUND") ||
+			strings.Contains(line, "EMPTY") ||
+			strings.Contains(line, "permission denied") {
 			// Read and append the mandatory OK terminator
 			okLine, err := reader.ReadString('\n')
 			if err != nil {

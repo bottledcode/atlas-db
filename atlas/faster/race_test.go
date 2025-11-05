@@ -139,7 +139,7 @@ func TestDataCorruptionDetection(t *testing.T) {
 
 					// Show first difference
 					minLen := min(len(expected), len(entry.Value))
-					for j := 0; j < minLen; j++ {
+					for j := range minLen {
 						if entry.Value[j] != expected[j] {
 							t.Errorf("  First diff at byte %d: got 0x%02x, expected 0x%02x",
 								j, entry.Value[j], expected[j])

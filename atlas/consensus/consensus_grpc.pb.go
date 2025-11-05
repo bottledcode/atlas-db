@@ -42,11 +42,10 @@ const (
 	Consensus_Replicate_FullMethodName           = "/atlas.consensus.Consensus/Replicate"
 	Consensus_DeReference_FullMethodName         = "/atlas.consensus.Consensus/DeReference"
 	Consensus_Ping_FullMethodName                = "/atlas.consensus.Consensus/Ping"
-	Consensus_ReadKey_FullMethodName             = "/atlas.consensus.Consensus/ReadKey"
-	Consensus_WriteKey_FullMethodName            = "/atlas.consensus.Consensus/WriteKey"
 	Consensus_PrefixScan_FullMethodName          = "/atlas.consensus.Consensus/PrefixScan"
 	Consensus_RequestSlots_FullMethodName        = "/atlas.consensus.Consensus/RequestSlots"
 	Consensus_Follow_FullMethodName              = "/atlas.consensus.Consensus/Follow"
+	Consensus_ReadRecord_FullMethodName          = "/atlas.consensus.Consensus/ReadRecord"
 )
 
 // ConsensusClient is the client API for Consensus service.
@@ -59,11 +58,10 @@ type ConsensusClient interface {
 	Replicate(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ReplicationRequest, ReplicationResponse], error)
 	DeReference(ctx context.Context, in *DereferenceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DereferenceResponse], error)
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
-	ReadKey(ctx context.Context, in *ReadKeyRequest, opts ...grpc.CallOption) (*ReadKeyResponse, error)
-	WriteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error)
 	PrefixScan(ctx context.Context, in *PrefixScanRequest, opts ...grpc.CallOption) (*PrefixScanResponse, error)
 	RequestSlots(ctx context.Context, in *SlotRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RecordMutation], error)
 	Follow(ctx context.Context, in *SlotRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RecordMutation], error)
+	ReadRecord(ctx context.Context, in *ReadRecordRequest, opts ...grpc.CallOption) (*ReadRecordResponse, error)
 }
 
 type consensusClient struct {
@@ -146,26 +144,6 @@ func (c *consensusClient) Ping(ctx context.Context, in *PingRequest, opts ...grp
 	return out, nil
 }
 
-func (c *consensusClient) ReadKey(ctx context.Context, in *ReadKeyRequest, opts ...grpc.CallOption) (*ReadKeyResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ReadKeyResponse)
-	err := c.cc.Invoke(ctx, Consensus_ReadKey_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *consensusClient) WriteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(WriteKeyResponse)
-	err := c.cc.Invoke(ctx, Consensus_WriteKey_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *consensusClient) PrefixScan(ctx context.Context, in *PrefixScanRequest, opts ...grpc.CallOption) (*PrefixScanResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PrefixScanResponse)
@@ -214,6 +192,16 @@ func (c *consensusClient) Follow(ctx context.Context, in *SlotRequest, opts ...g
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Consensus_FollowClient = grpc.ServerStreamingClient[RecordMutation]
 
+func (c *consensusClient) ReadRecord(ctx context.Context, in *ReadRecordRequest, opts ...grpc.CallOption) (*ReadRecordResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReadRecordResponse)
+	err := c.cc.Invoke(ctx, Consensus_ReadRecord_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ConsensusServer is the server API for Consensus service.
 // All implementations must embed UnimplementedConsensusServer
 // for forward compatibility.
@@ -224,11 +212,10 @@ type ConsensusServer interface {
 	Replicate(grpc.ClientStreamingServer[ReplicationRequest, ReplicationResponse]) error
 	DeReference(*DereferenceRequest, grpc.ServerStreamingServer[DereferenceResponse]) error
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
-	ReadKey(context.Context, *ReadKeyRequest) (*ReadKeyResponse, error)
-	WriteKey(context.Context, *WriteKeyRequest) (*WriteKeyResponse, error)
 	PrefixScan(context.Context, *PrefixScanRequest) (*PrefixScanResponse, error)
 	RequestSlots(*SlotRequest, grpc.ServerStreamingServer[RecordMutation]) error
 	Follow(*SlotRequest, grpc.ServerStreamingServer[RecordMutation]) error
+	ReadRecord(context.Context, *ReadRecordRequest) (*ReadRecordResponse, error)
 	mustEmbedUnimplementedConsensusServer()
 }
 
@@ -257,12 +244,6 @@ func (UnimplementedConsensusServer) DeReference(*DereferenceRequest, grpc.Server
 func (UnimplementedConsensusServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Ping not implemented")
 }
-func (UnimplementedConsensusServer) ReadKey(context.Context, *ReadKeyRequest) (*ReadKeyResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ReadKey not implemented")
-}
-func (UnimplementedConsensusServer) WriteKey(context.Context, *WriteKeyRequest) (*WriteKeyResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method WriteKey not implemented")
-}
 func (UnimplementedConsensusServer) PrefixScan(context.Context, *PrefixScanRequest) (*PrefixScanResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PrefixScan not implemented")
 }
@@ -271,6 +252,9 @@ func (UnimplementedConsensusServer) RequestSlots(*SlotRequest, grpc.ServerStream
 }
 func (UnimplementedConsensusServer) Follow(*SlotRequest, grpc.ServerStreamingServer[RecordMutation]) error {
 	return status.Errorf(codes.Unimplemented, "method Follow not implemented")
+}
+func (UnimplementedConsensusServer) ReadRecord(context.Context, *ReadRecordRequest) (*ReadRecordResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReadRecord not implemented")
 }
 func (UnimplementedConsensusServer) mustEmbedUnimplementedConsensusServer() {}
 func (UnimplementedConsensusServer) testEmbeddedByValue()                   {}
@@ -383,42 +367,6 @@ func _Consensus_Ping_Handler(srv interface{}, ctx context.Context, dec func(inte
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Consensus_ReadKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ReadKeyRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ConsensusServer).ReadKey(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Consensus_ReadKey_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ConsensusServer).ReadKey(ctx, req.(*ReadKeyRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Consensus_WriteKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(WriteKeyRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ConsensusServer).WriteKey(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Consensus_WriteKey_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ConsensusServer).WriteKey(ctx, req.(*WriteKeyRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _Consensus_PrefixScan_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PrefixScanRequest)
 	if err := dec(in); err != nil {
@@ -459,6 +407,24 @@ func _Consensus_Follow_Handler(srv interface{}, stream grpc.ServerStream) error 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Consensus_FollowServer = grpc.ServerStreamingServer[RecordMutation]
 
+func _Consensus_ReadRecord_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReadRecordRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ConsensusServer).ReadRecord(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Consensus_ReadRecord_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ConsensusServer).ReadRecord(ctx, req.(*ReadRecordRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Consensus_ServiceDesc is the grpc.ServiceDesc for Consensus service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -483,16 +449,12 @@ var Consensus_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Consensus_Ping_Handler,
 		},
 		{
-			MethodName: "ReadKey",
-			Handler:    _Consensus_ReadKey_Handler,
-		},
-		{
-			MethodName: "WriteKey",
-			Handler:    _Consensus_WriteKey_Handler,
-		},
-		{
 			MethodName: "PrefixScan",
 			Handler:    _Consensus_PrefixScan_Handler,
+		},
+		{
+			MethodName: "ReadRecord",
+			Handler:    _Consensus_ReadRecord_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

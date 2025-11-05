@@ -40,6 +40,56 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// Atomic ACL mutations - apply without read-modify-write
+type AclRole int32
+
+const (
+	AclRole_OWNER  AclRole = 0
+	AclRole_READER AclRole = 1
+	AclRole_WRITER AclRole = 2
+)
+
+// Enum value maps for AclRole.
+var (
+	AclRole_name = map[int32]string{
+		0: "OWNER",
+		1: "READER",
+		2: "WRITER",
+	}
+	AclRole_value = map[string]int32{
+		"OWNER":  0,
+		"READER": 1,
+		"WRITER": 2,
+	}
+)
+
+func (x AclRole) Enum() *AclRole {
+	p := new(AclRole)
+	*p = x
+	return p
+}
+
+func (x AclRole) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (AclRole) Descriptor() protoreflect.EnumDescriptor {
+	return file_consensus_consensus_proto_enumTypes[0].Descriptor()
+}
+
+func (AclRole) Type() protoreflect.EnumType {
+	return &file_consensus_consensus_proto_enumTypes[0]
+}
+
+func (x AclRole) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use AclRole.Descriptor instead.
+func (AclRole) EnumDescriptor() ([]byte, []int) {
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{0}
+}
+
 type SlotRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Key            []byte                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
@@ -805,6 +855,110 @@ func (x *Acl) GetWriters() []*Principal {
 	return nil
 }
 
+type AddPrincipal struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Role          AclRole                `protobuf:"varint,1,opt,name=role,proto3,enum=atlas.consensus.AclRole" json:"role,omitempty"`
+	Principal     *Principal             `protobuf:"bytes,2,opt,name=principal,proto3" json:"principal,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AddPrincipal) Reset() {
+	*x = AddPrincipal{}
+	mi := &file_consensus_consensus_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AddPrincipal) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AddPrincipal) ProtoMessage() {}
+
+func (x *AddPrincipal) ProtoReflect() protoreflect.Message {
+	mi := &file_consensus_consensus_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AddPrincipal.ProtoReflect.Descriptor instead.
+func (*AddPrincipal) Descriptor() ([]byte, []int) {
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *AddPrincipal) GetRole() AclRole {
+	if x != nil {
+		return x.Role
+	}
+	return AclRole_OWNER
+}
+
+func (x *AddPrincipal) GetPrincipal() *Principal {
+	if x != nil {
+		return x.Principal
+	}
+	return nil
+}
+
+type RemovePrincipal struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Role          AclRole                `protobuf:"varint,1,opt,name=role,proto3,enum=atlas.consensus.AclRole" json:"role,omitempty"`
+	Principal     *Principal             `protobuf:"bytes,2,opt,name=principal,proto3" json:"principal,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RemovePrincipal) Reset() {
+	*x = RemovePrincipal{}
+	mi := &file_consensus_consensus_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemovePrincipal) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemovePrincipal) ProtoMessage() {}
+
+func (x *RemovePrincipal) ProtoReflect() protoreflect.Message {
+	mi := &file_consensus_consensus_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemovePrincipal.ProtoReflect.Descriptor instead.
+func (*RemovePrincipal) Descriptor() ([]byte, []int) {
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *RemovePrincipal) GetRole() AclRole {
+	if x != nil {
+		return x.Role
+	}
+	return AclRole_OWNER
+}
+
+func (x *RemovePrincipal) GetPrincipal() *Principal {
+	if x != nil {
+		return x.Principal
+	}
+	return nil
+}
+
 type ClusterConfig struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	ClusterVersion uint64                 `protobuf:"varint,1,opt,name=clusterVersion,proto3" json:"clusterVersion,omitempty"`
@@ -817,7 +971,7 @@ type ClusterConfig struct {
 
 func (x *ClusterConfig) Reset() {
 	*x = ClusterConfig{}
-	mi := &file_consensus_consensus_proto_msgTypes[15]
+	mi := &file_consensus_consensus_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -829,7 +983,7 @@ func (x *ClusterConfig) String() string {
 func (*ClusterConfig) ProtoMessage() {}
 
 func (x *ClusterConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[15]
+	mi := &file_consensus_consensus_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -842,7 +996,7 @@ func (x *ClusterConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClusterConfig.ProtoReflect.Descriptor instead.
 func (*ClusterConfig) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{15}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ClusterConfig) GetClusterVersion() uint64 {
@@ -881,10 +1035,11 @@ type RecordMutation struct {
 	//
 	//	*RecordMutation_ValueAddress
 	//	*RecordMutation_Tombstone
-	//	*RecordMutation_AclUpdated
 	//	*RecordMutation_Compaction
 	//	*RecordMutation_Noop
 	//	*RecordMutation_Config
+	//	*RecordMutation_AddPrincipal
+	//	*RecordMutation_RemovePrincipal
 	Message       isRecordMutation_Message `protobuf_oneof:"message"`
 	Committed     bool                     `protobuf:"varint,7,opt,name=committed,proto3" json:"committed,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -893,7 +1048,7 @@ type RecordMutation struct {
 
 func (x *RecordMutation) Reset() {
 	*x = RecordMutation{}
-	mi := &file_consensus_consensus_proto_msgTypes[16]
+	mi := &file_consensus_consensus_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -905,7 +1060,7 @@ func (x *RecordMutation) String() string {
 func (*RecordMutation) ProtoMessage() {}
 
 func (x *RecordMutation) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[16]
+	mi := &file_consensus_consensus_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -918,7 +1073,7 @@ func (x *RecordMutation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecordMutation.ProtoReflect.Descriptor instead.
 func (*RecordMutation) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{16}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *RecordMutation) GetSlot() *Slot {
@@ -960,15 +1115,6 @@ func (x *RecordMutation) GetTombstone() *Deletion {
 	return nil
 }
 
-func (x *RecordMutation) GetAclUpdated() *Acl {
-	if x != nil {
-		if x, ok := x.Message.(*RecordMutation_AclUpdated); ok {
-			return x.AclUpdated
-		}
-	}
-	return nil
-}
-
 func (x *RecordMutation) GetCompaction() *Record {
 	if x != nil {
 		if x, ok := x.Message.(*RecordMutation_Compaction); ok {
@@ -996,6 +1142,24 @@ func (x *RecordMutation) GetConfig() *ClusterConfig {
 	return nil
 }
 
+func (x *RecordMutation) GetAddPrincipal() *AddPrincipal {
+	if x != nil {
+		if x, ok := x.Message.(*RecordMutation_AddPrincipal); ok {
+			return x.AddPrincipal
+		}
+	}
+	return nil
+}
+
+func (x *RecordMutation) GetRemovePrincipal() *RemovePrincipal {
+	if x != nil {
+		if x, ok := x.Message.(*RecordMutation_RemovePrincipal); ok {
+			return x.RemovePrincipal
+		}
+	}
+	return nil
+}
+
 func (x *RecordMutation) GetCommitted() bool {
 	if x != nil {
 		return x.Committed
@@ -1015,10 +1179,6 @@ type RecordMutation_Tombstone struct {
 	Tombstone *Deletion `protobuf:"bytes,3,opt,name=tombstone,proto3,oneof"`
 }
 
-type RecordMutation_AclUpdated struct {
-	AclUpdated *Acl `protobuf:"bytes,4,opt,name=aclUpdated,proto3,oneof"`
-}
-
 type RecordMutation_Compaction struct {
 	Compaction *Record `protobuf:"bytes,5,opt,name=compaction,proto3,oneof"`
 }
@@ -1031,17 +1191,27 @@ type RecordMutation_Config struct {
 	Config *ClusterConfig `protobuf:"bytes,9,opt,name=config,proto3,oneof"`
 }
 
+type RecordMutation_AddPrincipal struct {
+	AddPrincipal *AddPrincipal `protobuf:"bytes,10,opt,name=addPrincipal,proto3,oneof"`
+}
+
+type RecordMutation_RemovePrincipal struct {
+	RemovePrincipal *RemovePrincipal `protobuf:"bytes,11,opt,name=removePrincipal,proto3,oneof"`
+}
+
 func (*RecordMutation_ValueAddress) isRecordMutation_Message() {}
 
 func (*RecordMutation_Tombstone) isRecordMutation_Message() {}
-
-func (*RecordMutation_AclUpdated) isRecordMutation_Message() {}
 
 func (*RecordMutation_Compaction) isRecordMutation_Message() {}
 
 func (*RecordMutation_Noop) isRecordMutation_Message() {}
 
 func (*RecordMutation_Config) isRecordMutation_Message() {}
+
+func (*RecordMutation_AddPrincipal) isRecordMutation_Message() {}
+
+func (*RecordMutation_RemovePrincipal) isRecordMutation_Message() {}
 
 type Record struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1055,7 +1225,7 @@ type Record struct {
 
 func (x *Record) Reset() {
 	*x = Record{}
-	mi := &file_consensus_consensus_proto_msgTypes[17]
+	mi := &file_consensus_consensus_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1067,7 +1237,7 @@ func (x *Record) String() string {
 func (*Record) ProtoMessage() {}
 
 func (x *Record) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[17]
+	mi := &file_consensus_consensus_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1080,7 +1250,7 @@ func (x *Record) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Record.ProtoReflect.Descriptor instead.
 func (*Record) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{17}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *Record) GetMaxSlot() uint64 {
@@ -1121,7 +1291,7 @@ type StealTableOwnershipRequest struct {
 
 func (x *StealTableOwnershipRequest) Reset() {
 	*x = StealTableOwnershipRequest{}
-	mi := &file_consensus_consensus_proto_msgTypes[18]
+	mi := &file_consensus_consensus_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1133,7 +1303,7 @@ func (x *StealTableOwnershipRequest) String() string {
 func (*StealTableOwnershipRequest) ProtoMessage() {}
 
 func (x *StealTableOwnershipRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[18]
+	mi := &file_consensus_consensus_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1146,7 +1316,7 @@ func (x *StealTableOwnershipRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StealTableOwnershipRequest.ProtoReflect.Descriptor instead.
 func (*StealTableOwnershipRequest) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{18}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *StealTableOwnershipRequest) GetBallot() *Ballot {
@@ -1168,7 +1338,7 @@ type StealTableOwnershipResponse struct {
 
 func (x *StealTableOwnershipResponse) Reset() {
 	*x = StealTableOwnershipResponse{}
-	mi := &file_consensus_consensus_proto_msgTypes[19]
+	mi := &file_consensus_consensus_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1180,7 +1350,7 @@ func (x *StealTableOwnershipResponse) String() string {
 func (*StealTableOwnershipResponse) ProtoMessage() {}
 
 func (x *StealTableOwnershipResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[19]
+	mi := &file_consensus_consensus_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1193,7 +1363,7 @@ func (x *StealTableOwnershipResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StealTableOwnershipResponse.ProtoReflect.Descriptor instead.
 func (*StealTableOwnershipResponse) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{19}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *StealTableOwnershipResponse) GetPromised() bool {
@@ -1233,7 +1403,7 @@ type WriteMigrationRequest struct {
 
 func (x *WriteMigrationRequest) Reset() {
 	*x = WriteMigrationRequest{}
-	mi := &file_consensus_consensus_proto_msgTypes[20]
+	mi := &file_consensus_consensus_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1245,7 +1415,7 @@ func (x *WriteMigrationRequest) String() string {
 func (*WriteMigrationRequest) ProtoMessage() {}
 
 func (x *WriteMigrationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[20]
+	mi := &file_consensus_consensus_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1258,7 +1428,7 @@ func (x *WriteMigrationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteMigrationRequest.ProtoReflect.Descriptor instead.
 func (*WriteMigrationRequest) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{20}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *WriteMigrationRequest) GetRecord() *RecordMutation {
@@ -1277,7 +1447,7 @@ type WriteMigrationResponse struct {
 
 func (x *WriteMigrationResponse) Reset() {
 	*x = WriteMigrationResponse{}
-	mi := &file_consensus_consensus_proto_msgTypes[21]
+	mi := &file_consensus_consensus_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1289,7 +1459,7 @@ func (x *WriteMigrationResponse) String() string {
 func (*WriteMigrationResponse) ProtoMessage() {}
 
 func (x *WriteMigrationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[21]
+	mi := &file_consensus_consensus_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1302,7 +1472,7 @@ func (x *WriteMigrationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteMigrationResponse.ProtoReflect.Descriptor instead.
 func (*WriteMigrationResponse) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{21}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *WriteMigrationResponse) GetAccepted() bool {
@@ -1325,7 +1495,7 @@ type OwnershipTracking struct {
 
 func (x *OwnershipTracking) Reset() {
 	*x = OwnershipTracking{}
-	mi := &file_consensus_consensus_proto_msgTypes[22]
+	mi := &file_consensus_consensus_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1337,7 +1507,7 @@ func (x *OwnershipTracking) String() string {
 func (*OwnershipTracking) ProtoMessage() {}
 
 func (x *OwnershipTracking) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[22]
+	mi := &file_consensus_consensus_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1350,7 +1520,7 @@ func (x *OwnershipTracking) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OwnershipTracking.ProtoReflect.Descriptor instead.
 func (*OwnershipTracking) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{22}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *OwnershipTracking) GetPromised() *Ballot {
@@ -1575,7 +1745,7 @@ type Node struct {
 
 func (x *Node) Reset() {
 	*x = Node{}
-	mi := &file_consensus_consensus_proto_msgTypes[23]
+	mi := &file_consensus_consensus_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1587,7 +1757,7 @@ func (x *Node) String() string {
 func (*Node) ProtoMessage() {}
 
 func (x *Node) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[23]
+	mi := &file_consensus_consensus_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1600,7 +1770,7 @@ func (x *Node) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Node.ProtoReflect.Descriptor instead.
 func (*Node) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{23}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *Node) GetId() uint64 {
@@ -1654,7 +1824,7 @@ type Region struct {
 
 func (x *Region) Reset() {
 	*x = Region{}
-	mi := &file_consensus_consensus_proto_msgTypes[24]
+	mi := &file_consensus_consensus_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1666,7 +1836,7 @@ func (x *Region) String() string {
 func (*Region) ProtoMessage() {}
 
 func (x *Region) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[24]
+	mi := &file_consensus_consensus_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1679,7 +1849,7 @@ func (x *Region) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Region.ProtoReflect.Descriptor instead.
 func (*Region) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{24}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *Region) GetName() string {
@@ -1701,7 +1871,7 @@ type ReadKeyRequest struct {
 
 func (x *ReadKeyRequest) Reset() {
 	*x = ReadKeyRequest{}
-	mi := &file_consensus_consensus_proto_msgTypes[25]
+	mi := &file_consensus_consensus_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1713,7 +1883,7 @@ func (x *ReadKeyRequest) String() string {
 func (*ReadKeyRequest) ProtoMessage() {}
 
 func (x *ReadKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[25]
+	mi := &file_consensus_consensus_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1726,7 +1896,7 @@ func (x *ReadKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadKeyRequest.ProtoReflect.Descriptor instead.
 func (*ReadKeyRequest) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{25}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *ReadKeyRequest) GetSender() *Node {
@@ -1760,7 +1930,7 @@ type ReadKeyResponse struct {
 
 func (x *ReadKeyResponse) Reset() {
 	*x = ReadKeyResponse{}
-	mi := &file_consensus_consensus_proto_msgTypes[26]
+	mi := &file_consensus_consensus_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1772,7 +1942,7 @@ func (x *ReadKeyResponse) String() string {
 func (*ReadKeyResponse) ProtoMessage() {}
 
 func (x *ReadKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[26]
+	mi := &file_consensus_consensus_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1785,7 +1955,7 @@ func (x *ReadKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadKeyResponse.ProtoReflect.Descriptor instead.
 func (*ReadKeyResponse) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{26}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ReadKeyResponse) GetSuccess() bool {
@@ -1802,6 +1972,103 @@ func (x *ReadKeyResponse) GetValue() *DataReference {
 	return nil
 }
 
+// Read Record from leader (returns full Record with ACL, DataReference, etc.)
+type ReadRecordRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Key           []byte                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"` // The key to read
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReadRecordRequest) Reset() {
+	*x = ReadRecordRequest{}
+	mi := &file_consensus_consensus_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReadRecordRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReadRecordRequest) ProtoMessage() {}
+
+func (x *ReadRecordRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_consensus_consensus_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReadRecordRequest.ProtoReflect.Descriptor instead.
+func (*ReadRecordRequest) Descriptor() ([]byte, []int) {
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *ReadRecordRequest) GetKey() []byte {
+	if x != nil {
+		return x.Key
+	}
+	return nil
+}
+
+type ReadRecordResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"` // Whether the read was successful
+	Record        *Record                `protobuf:"bytes,2,opt,name=record,proto3" json:"record,omitempty"`    // The full Record if found
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReadRecordResponse) Reset() {
+	*x = ReadRecordResponse{}
+	mi := &file_consensus_consensus_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReadRecordResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReadRecordResponse) ProtoMessage() {}
+
+func (x *ReadRecordResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_consensus_consensus_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReadRecordResponse.ProtoReflect.Descriptor instead.
+func (*ReadRecordResponse) Descriptor() ([]byte, []int) {
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *ReadRecordResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *ReadRecordResponse) GetRecord() *Record {
+	if x != nil {
+		return x.Record
+	}
+	return nil
+}
+
 // Remote prefix scan
 type PrefixScanRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1813,7 +2080,7 @@ type PrefixScanRequest struct {
 
 func (x *PrefixScanRequest) Reset() {
 	*x = PrefixScanRequest{}
-	mi := &file_consensus_consensus_proto_msgTypes[27]
+	mi := &file_consensus_consensus_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1825,7 +2092,7 @@ func (x *PrefixScanRequest) String() string {
 func (*PrefixScanRequest) ProtoMessage() {}
 
 func (x *PrefixScanRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[27]
+	mi := &file_consensus_consensus_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1838,7 +2105,7 @@ func (x *PrefixScanRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PrefixScanRequest.ProtoReflect.Descriptor instead.
 func (*PrefixScanRequest) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{27}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *PrefixScanRequest) GetSender() *Node {
@@ -1865,7 +2132,7 @@ type PrefixScanResponse struct {
 
 func (x *PrefixScanResponse) Reset() {
 	*x = PrefixScanResponse{}
-	mi := &file_consensus_consensus_proto_msgTypes[28]
+	mi := &file_consensus_consensus_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1877,7 +2144,7 @@ func (x *PrefixScanResponse) String() string {
 func (*PrefixScanResponse) ProtoMessage() {}
 
 func (x *PrefixScanResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[28]
+	mi := &file_consensus_consensus_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1890,7 +2157,7 @@ func (x *PrefixScanResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PrefixScanResponse.ProtoReflect.Descriptor instead.
 func (*PrefixScanResponse) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{28}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *PrefixScanResponse) GetSuccess() bool {
@@ -1918,7 +2185,7 @@ type WriteKeyRequest struct {
 
 func (x *WriteKeyRequest) Reset() {
 	*x = WriteKeyRequest{}
-	mi := &file_consensus_consensus_proto_msgTypes[29]
+	mi := &file_consensus_consensus_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1930,7 +2197,7 @@ func (x *WriteKeyRequest) String() string {
 func (*WriteKeyRequest) ProtoMessage() {}
 
 func (x *WriteKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[29]
+	mi := &file_consensus_consensus_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1943,7 +2210,7 @@ func (x *WriteKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteKeyRequest.ProtoReflect.Descriptor instead.
 func (*WriteKeyRequest) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{29}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *WriteKeyRequest) GetSender() *Node {
@@ -1976,7 +2243,7 @@ type WriteKeyResponse struct {
 
 func (x *WriteKeyResponse) Reset() {
 	*x = WriteKeyResponse{}
-	mi := &file_consensus_consensus_proto_msgTypes[30]
+	mi := &file_consensus_consensus_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1988,7 +2255,7 @@ func (x *WriteKeyResponse) String() string {
 func (*WriteKeyResponse) ProtoMessage() {}
 
 func (x *WriteKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_consensus_consensus_proto_msgTypes[30]
+	mi := &file_consensus_consensus_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2001,7 +2268,7 @@ func (x *WriteKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteKeyResponse.ProtoReflect.Descriptor instead.
 func (*WriteKeyResponse) Descriptor() ([]byte, []int) {
-	return file_consensus_consensus_proto_rawDescGZIP(), []int{30}
+	return file_consensus_consensus_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *WriteKeyResponse) GetSuccess() bool {
@@ -2059,25 +2326,31 @@ const file_consensus_consensus_proto_rawDesc = "" +
 	"\x03Acl\x122\n" +
 	"\x06owners\x18\x01 \x03(\v2\x1a.atlas.consensus.PrincipalR\x06owners\x124\n" +
 	"\areaders\x18\x02 \x03(\v2\x1a.atlas.consensus.PrincipalR\areaders\x124\n" +
-	"\awriters\x18\x03 \x03(\v2\x1a.atlas.consensus.PrincipalR\awriters\"\x84\x01\n" +
+	"\awriters\x18\x03 \x03(\v2\x1a.atlas.consensus.PrincipalR\awriters\"v\n" +
+	"\fAddPrincipal\x12,\n" +
+	"\x04role\x18\x01 \x01(\x0e2\x18.atlas.consensus.AclRoleR\x04role\x128\n" +
+	"\tprincipal\x18\x02 \x01(\v2\x1a.atlas.consensus.PrincipalR\tprincipal\"y\n" +
+	"\x0fRemovePrincipal\x12,\n" +
+	"\x04role\x18\x01 \x01(\x0e2\x18.atlas.consensus.AclRoleR\x04role\x128\n" +
+	"\tprincipal\x18\x02 \x01(\v2\x1a.atlas.consensus.PrincipalR\tprincipal\"\x84\x01\n" +
 	"\rClusterConfig\x12&\n" +
 	"\x0eclusterVersion\x18\x01 \x01(\x04R\x0eclusterVersion\x12+\n" +
 	"\x05nodes\x18\x02 \x03(\v2\x15.atlas.consensus.NodeR\x05nodes\x12\x0e\n" +
 	"\x02fn\x18\x03 \x01(\x03R\x02fn\x12\x0e\n" +
-	"\x02fz\x18\x04 \x01(\x03R\x02fz\"\xf0\x03\n" +
+	"\x02fz\x18\x04 \x01(\x03R\x02fz\"\xcb\x04\n" +
 	"\x0eRecordMutation\x12)\n" +
 	"\x04slot\x18\x01 \x01(\v2\x15.atlas.consensus.SlotR\x04slot\x12/\n" +
 	"\x06ballot\x18\b \x01(\v2\x17.atlas.consensus.BallotR\x06ballot\x12D\n" +
 	"\fvalueAddress\x18\x02 \x01(\v2\x1e.atlas.consensus.DataReferenceH\x00R\fvalueAddress\x129\n" +
-	"\ttombstone\x18\x03 \x01(\v2\x19.atlas.consensus.DeletionH\x00R\ttombstone\x126\n" +
-	"\n" +
-	"aclUpdated\x18\x04 \x01(\v2\x14.atlas.consensus.AclH\x00R\n" +
-	"aclUpdated\x129\n" +
+	"\ttombstone\x18\x03 \x01(\v2\x19.atlas.consensus.DeletionH\x00R\ttombstone\x129\n" +
 	"\n" +
 	"compaction\x18\x05 \x01(\v2\x17.atlas.consensus.RecordH\x00R\n" +
 	"compaction\x12+\n" +
 	"\x04noop\x18\x06 \x01(\v2\x15.atlas.consensus.NoopH\x00R\x04noop\x128\n" +
-	"\x06config\x18\t \x01(\v2\x1e.atlas.consensus.ClusterConfigH\x00R\x06config\x12\x1c\n" +
+	"\x06config\x18\t \x01(\v2\x1e.atlas.consensus.ClusterConfigH\x00R\x06config\x12C\n" +
+	"\faddPrincipal\x18\n" +
+	" \x01(\v2\x1d.atlas.consensus.AddPrincipalH\x00R\faddPrincipal\x12L\n" +
+	"\x0fremovePrincipal\x18\v \x01(\v2 .atlas.consensus.RemovePrincipalH\x00R\x0fremovePrincipal\x12\x1c\n" +
 	"\tcommitted\x18\a \x01(\bR\tcommittedB\t\n" +
 	"\amessage\"\xb7\x01\n" +
 	"\x06Record\x12\x18\n" +
@@ -2119,7 +2392,12 @@ const file_consensus_consensus_proto_rawDesc = "" +
 	"\twatermark\x18\x03 \x01(\x04R\twatermark\"a\n" +
 	"\x0fReadKeyResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x124\n" +
-	"\x05value\x18\x02 \x01(\v2\x1e.atlas.consensus.DataReferenceR\x05value\"Z\n" +
+	"\x05value\x18\x02 \x01(\v2\x1e.atlas.consensus.DataReferenceR\x05value\"%\n" +
+	"\x11ReadRecordRequest\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\fR\x03key\"_\n" +
+	"\x12ReadRecordResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12/\n" +
+	"\x06record\x18\x02 \x01(\v2\x17.atlas.consensus.RecordR\x06record\"Z\n" +
 	"\x11PrefixScanRequest\x12-\n" +
 	"\x06sender\x18\x01 \x01(\v2\x15.atlas.consensus.NodeR\x06sender\x12\x16\n" +
 	"\x06prefix\x18\x02 \x01(\fR\x06prefix\"B\n" +
@@ -2131,20 +2409,26 @@ const file_consensus_consensus_proto_rawDesc = "" +
 	"\x03key\x18\x03 \x01(\fR\x03key\x12;\n" +
 	"\bmutation\x18\x04 \x01(\v2\x1f.atlas.consensus.RecordMutationR\bmutation\",\n" +
 	"\x10WriteKeyResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess2\xd6\a\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess*,\n" +
+	"\aAclRole\x12\t\n" +
+	"\x05OWNER\x10\x00\x12\n" +
+	"\n" +
+	"\x06READER\x10\x01\x12\n" +
+	"\n" +
+	"\x06WRITER\x10\x022\x8c\a\n" +
 	"\tConsensus\x12r\n" +
 	"\x13StealTableOwnership\x12+.atlas.consensus.StealTableOwnershipRequest\x1a,.atlas.consensus.StealTableOwnershipResponse\"\x00\x12c\n" +
 	"\x0eWriteMigration\x12&.atlas.consensus.WriteMigrationRequest\x1a'.atlas.consensus.WriteMigrationResponse\"\x00\x12S\n" +
 	"\x0fAcceptMigration\x12&.atlas.consensus.WriteMigrationRequest\x1a\x16.google.protobuf.Empty\"\x00\x12Z\n" +
 	"\tReplicate\x12#.atlas.consensus.ReplicationRequest\x1a$.atlas.consensus.ReplicationResponse\"\x00(\x01\x12\\\n" +
 	"\vDeReference\x12#.atlas.consensus.DereferenceRequest\x1a$.atlas.consensus.DereferenceResponse\"\x000\x01\x12E\n" +
-	"\x04Ping\x12\x1c.atlas.consensus.PingRequest\x1a\x1d.atlas.consensus.PingResponse\"\x00\x12N\n" +
-	"\aReadKey\x12\x1f.atlas.consensus.ReadKeyRequest\x1a .atlas.consensus.ReadKeyResponse\"\x00\x12Q\n" +
-	"\bWriteKey\x12 .atlas.consensus.WriteKeyRequest\x1a!.atlas.consensus.WriteKeyResponse\"\x00\x12W\n" +
+	"\x04Ping\x12\x1c.atlas.consensus.PingRequest\x1a\x1d.atlas.consensus.PingResponse\"\x00\x12W\n" +
 	"\n" +
 	"PrefixScan\x12\".atlas.consensus.PrefixScanRequest\x1a#.atlas.consensus.PrefixScanResponse\"\x00\x12Q\n" +
 	"\fRequestSlots\x12\x1c.atlas.consensus.SlotRequest\x1a\x1f.atlas.consensus.RecordMutation\"\x000\x01\x12K\n" +
-	"\x06Follow\x12\x1c.atlas.consensus.SlotRequest\x1a\x1f.atlas.consensus.RecordMutation\"\x000\x01B\fZ\n" +
+	"\x06Follow\x12\x1c.atlas.consensus.SlotRequest\x1a\x1f.atlas.consensus.RecordMutation\"\x000\x01\x12W\n" +
+	"\n" +
+	"ReadRecord\x12\".atlas.consensus.ReadRecordRequest\x1a#.atlas.consensus.ReadRecordResponse\"\x00B\fZ\n" +
 	"/consensusb\x06proto3"
 
 var (
@@ -2159,104 +2443,114 @@ func file_consensus_consensus_proto_rawDescGZIP() []byte {
 	return file_consensus_consensus_proto_rawDescData
 }
 
-var file_consensus_consensus_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
+var file_consensus_consensus_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_consensus_consensus_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
 var file_consensus_consensus_proto_goTypes = []any{
-	(*SlotRequest)(nil),                 // 0: atlas.consensus.SlotRequest
-	(*ReplicationRequest)(nil),          // 1: atlas.consensus.ReplicationRequest
-	(*ReplicationResponse)(nil),         // 2: atlas.consensus.ReplicationResponse
-	(*DereferenceRequest)(nil),          // 3: atlas.consensus.DereferenceRequest
-	(*DereferenceResponse)(nil),         // 4: atlas.consensus.DereferenceResponse
-	(*PingRequest)(nil),                 // 5: atlas.consensus.PingRequest
-	(*PingResponse)(nil),                // 6: atlas.consensus.PingResponse
-	(*Slot)(nil),                        // 7: atlas.consensus.Slot
-	(*Ballot)(nil),                      // 8: atlas.consensus.Ballot
-	(*Principal)(nil),                   // 9: atlas.consensus.Principal
-	(*Data)(nil),                        // 10: atlas.consensus.Data
-	(*DataReference)(nil),               // 11: atlas.consensus.DataReference
-	(*Deletion)(nil),                    // 12: atlas.consensus.Deletion
-	(*Noop)(nil),                        // 13: atlas.consensus.Noop
-	(*Acl)(nil),                         // 14: atlas.consensus.Acl
-	(*ClusterConfig)(nil),               // 15: atlas.consensus.ClusterConfig
-	(*RecordMutation)(nil),              // 16: atlas.consensus.RecordMutation
-	(*Record)(nil),                      // 17: atlas.consensus.Record
-	(*StealTableOwnershipRequest)(nil),  // 18: atlas.consensus.StealTableOwnershipRequest
-	(*StealTableOwnershipResponse)(nil), // 19: atlas.consensus.StealTableOwnershipResponse
-	(*WriteMigrationRequest)(nil),       // 20: atlas.consensus.WriteMigrationRequest
-	(*WriteMigrationResponse)(nil),      // 21: atlas.consensus.WriteMigrationResponse
-	(*OwnershipTracking)(nil),           // 22: atlas.consensus.OwnershipTracking
-	(*Node)(nil),                        // 23: atlas.consensus.Node
-	(*Region)(nil),                      // 24: atlas.consensus.Region
-	(*ReadKeyRequest)(nil),              // 25: atlas.consensus.ReadKeyRequest
-	(*ReadKeyResponse)(nil),             // 26: atlas.consensus.ReadKeyResponse
-	(*PrefixScanRequest)(nil),           // 27: atlas.consensus.PrefixScanRequest
-	(*PrefixScanResponse)(nil),          // 28: atlas.consensus.PrefixScanResponse
-	(*WriteKeyRequest)(nil),             // 29: atlas.consensus.WriteKeyRequest
-	(*WriteKeyResponse)(nil),            // 30: atlas.consensus.WriteKeyResponse
-	(*timestamppb.Timestamp)(nil),       // 31: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),         // 32: google.protobuf.Duration
-	(*emptypb.Empty)(nil),               // 33: google.protobuf.Empty
+	(AclRole)(0),                        // 0: atlas.consensus.AclRole
+	(*SlotRequest)(nil),                 // 1: atlas.consensus.SlotRequest
+	(*ReplicationRequest)(nil),          // 2: atlas.consensus.ReplicationRequest
+	(*ReplicationResponse)(nil),         // 3: atlas.consensus.ReplicationResponse
+	(*DereferenceRequest)(nil),          // 4: atlas.consensus.DereferenceRequest
+	(*DereferenceResponse)(nil),         // 5: atlas.consensus.DereferenceResponse
+	(*PingRequest)(nil),                 // 6: atlas.consensus.PingRequest
+	(*PingResponse)(nil),                // 7: atlas.consensus.PingResponse
+	(*Slot)(nil),                        // 8: atlas.consensus.Slot
+	(*Ballot)(nil),                      // 9: atlas.consensus.Ballot
+	(*Principal)(nil),                   // 10: atlas.consensus.Principal
+	(*Data)(nil),                        // 11: atlas.consensus.Data
+	(*DataReference)(nil),               // 12: atlas.consensus.DataReference
+	(*Deletion)(nil),                    // 13: atlas.consensus.Deletion
+	(*Noop)(nil),                        // 14: atlas.consensus.Noop
+	(*Acl)(nil),                         // 15: atlas.consensus.Acl
+	(*AddPrincipal)(nil),                // 16: atlas.consensus.AddPrincipal
+	(*RemovePrincipal)(nil),             // 17: atlas.consensus.RemovePrincipal
+	(*ClusterConfig)(nil),               // 18: atlas.consensus.ClusterConfig
+	(*RecordMutation)(nil),              // 19: atlas.consensus.RecordMutation
+	(*Record)(nil),                      // 20: atlas.consensus.Record
+	(*StealTableOwnershipRequest)(nil),  // 21: atlas.consensus.StealTableOwnershipRequest
+	(*StealTableOwnershipResponse)(nil), // 22: atlas.consensus.StealTableOwnershipResponse
+	(*WriteMigrationRequest)(nil),       // 23: atlas.consensus.WriteMigrationRequest
+	(*WriteMigrationResponse)(nil),      // 24: atlas.consensus.WriteMigrationResponse
+	(*OwnershipTracking)(nil),           // 25: atlas.consensus.OwnershipTracking
+	(*Node)(nil),                        // 26: atlas.consensus.Node
+	(*Region)(nil),                      // 27: atlas.consensus.Region
+	(*ReadKeyRequest)(nil),              // 28: atlas.consensus.ReadKeyRequest
+	(*ReadKeyResponse)(nil),             // 29: atlas.consensus.ReadKeyResponse
+	(*ReadRecordRequest)(nil),           // 30: atlas.consensus.ReadRecordRequest
+	(*ReadRecordResponse)(nil),          // 31: atlas.consensus.ReadRecordResponse
+	(*PrefixScanRequest)(nil),           // 32: atlas.consensus.PrefixScanRequest
+	(*PrefixScanResponse)(nil),          // 33: atlas.consensus.PrefixScanResponse
+	(*WriteKeyRequest)(nil),             // 34: atlas.consensus.WriteKeyRequest
+	(*WriteKeyResponse)(nil),            // 35: atlas.consensus.WriteKeyResponse
+	(*timestamppb.Timestamp)(nil),       // 36: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),         // 37: google.protobuf.Duration
+	(*emptypb.Empty)(nil),               // 38: google.protobuf.Empty
 }
 var file_consensus_consensus_proto_depIdxs = []int32{
-	10, // 0: atlas.consensus.ReplicationRequest.data:type_name -> atlas.consensus.Data
-	11, // 1: atlas.consensus.DereferenceRequest.reference:type_name -> atlas.consensus.DataReference
-	10, // 2: atlas.consensus.DereferenceResponse.data:type_name -> atlas.consensus.Data
-	31, // 3: atlas.consensus.PingRequest.timestamp:type_name -> google.protobuf.Timestamp
-	31, // 4: atlas.consensus.PingResponse.timestamp:type_name -> google.protobuf.Timestamp
-	9,  // 5: atlas.consensus.Acl.owners:type_name -> atlas.consensus.Principal
-	9,  // 6: atlas.consensus.Acl.readers:type_name -> atlas.consensus.Principal
-	9,  // 7: atlas.consensus.Acl.writers:type_name -> atlas.consensus.Principal
-	23, // 8: atlas.consensus.ClusterConfig.nodes:type_name -> atlas.consensus.Node
-	7,  // 9: atlas.consensus.RecordMutation.slot:type_name -> atlas.consensus.Slot
-	8,  // 10: atlas.consensus.RecordMutation.ballot:type_name -> atlas.consensus.Ballot
-	11, // 11: atlas.consensus.RecordMutation.valueAddress:type_name -> atlas.consensus.DataReference
-	12, // 12: atlas.consensus.RecordMutation.tombstone:type_name -> atlas.consensus.Deletion
-	14, // 13: atlas.consensus.RecordMutation.aclUpdated:type_name -> atlas.consensus.Acl
-	17, // 14: atlas.consensus.RecordMutation.compaction:type_name -> atlas.consensus.Record
-	13, // 15: atlas.consensus.RecordMutation.noop:type_name -> atlas.consensus.Noop
-	15, // 16: atlas.consensus.RecordMutation.config:type_name -> atlas.consensus.ClusterConfig
-	14, // 17: atlas.consensus.Record.acl:type_name -> atlas.consensus.Acl
-	11, // 18: atlas.consensus.Record.data:type_name -> atlas.consensus.DataReference
-	17, // 19: atlas.consensus.Record.baseRecord:type_name -> atlas.consensus.Record
-	8,  // 20: atlas.consensus.StealTableOwnershipRequest.ballot:type_name -> atlas.consensus.Ballot
-	16, // 21: atlas.consensus.StealTableOwnershipResponse.missingRecords:type_name -> atlas.consensus.RecordMutation
-	8,  // 22: atlas.consensus.StealTableOwnershipResponse.highestBallot:type_name -> atlas.consensus.Ballot
-	7,  // 23: atlas.consensus.StealTableOwnershipResponse.highestSlot:type_name -> atlas.consensus.Slot
-	16, // 24: atlas.consensus.WriteMigrationRequest.record:type_name -> atlas.consensus.RecordMutation
-	8,  // 25: atlas.consensus.OwnershipTracking.promised:type_name -> atlas.consensus.Ballot
-	24, // 26: atlas.consensus.Node.region:type_name -> atlas.consensus.Region
-	32, // 27: atlas.consensus.Node.rtt:type_name -> google.protobuf.Duration
-	23, // 28: atlas.consensus.ReadKeyRequest.sender:type_name -> atlas.consensus.Node
-	11, // 29: atlas.consensus.ReadKeyResponse.value:type_name -> atlas.consensus.DataReference
-	23, // 30: atlas.consensus.PrefixScanRequest.sender:type_name -> atlas.consensus.Node
-	23, // 31: atlas.consensus.WriteKeyRequest.sender:type_name -> atlas.consensus.Node
-	16, // 32: atlas.consensus.WriteKeyRequest.mutation:type_name -> atlas.consensus.RecordMutation
-	18, // 33: atlas.consensus.Consensus.StealTableOwnership:input_type -> atlas.consensus.StealTableOwnershipRequest
-	20, // 34: atlas.consensus.Consensus.WriteMigration:input_type -> atlas.consensus.WriteMigrationRequest
-	20, // 35: atlas.consensus.Consensus.AcceptMigration:input_type -> atlas.consensus.WriteMigrationRequest
-	1,  // 36: atlas.consensus.Consensus.Replicate:input_type -> atlas.consensus.ReplicationRequest
-	3,  // 37: atlas.consensus.Consensus.DeReference:input_type -> atlas.consensus.DereferenceRequest
-	5,  // 38: atlas.consensus.Consensus.Ping:input_type -> atlas.consensus.PingRequest
-	25, // 39: atlas.consensus.Consensus.ReadKey:input_type -> atlas.consensus.ReadKeyRequest
-	29, // 40: atlas.consensus.Consensus.WriteKey:input_type -> atlas.consensus.WriteKeyRequest
-	27, // 41: atlas.consensus.Consensus.PrefixScan:input_type -> atlas.consensus.PrefixScanRequest
-	0,  // 42: atlas.consensus.Consensus.RequestSlots:input_type -> atlas.consensus.SlotRequest
-	0,  // 43: atlas.consensus.Consensus.Follow:input_type -> atlas.consensus.SlotRequest
-	19, // 44: atlas.consensus.Consensus.StealTableOwnership:output_type -> atlas.consensus.StealTableOwnershipResponse
-	21, // 45: atlas.consensus.Consensus.WriteMigration:output_type -> atlas.consensus.WriteMigrationResponse
-	33, // 46: atlas.consensus.Consensus.AcceptMigration:output_type -> google.protobuf.Empty
-	2,  // 47: atlas.consensus.Consensus.Replicate:output_type -> atlas.consensus.ReplicationResponse
-	4,  // 48: atlas.consensus.Consensus.DeReference:output_type -> atlas.consensus.DereferenceResponse
-	6,  // 49: atlas.consensus.Consensus.Ping:output_type -> atlas.consensus.PingResponse
-	26, // 50: atlas.consensus.Consensus.ReadKey:output_type -> atlas.consensus.ReadKeyResponse
-	30, // 51: atlas.consensus.Consensus.WriteKey:output_type -> atlas.consensus.WriteKeyResponse
-	28, // 52: atlas.consensus.Consensus.PrefixScan:output_type -> atlas.consensus.PrefixScanResponse
-	16, // 53: atlas.consensus.Consensus.RequestSlots:output_type -> atlas.consensus.RecordMutation
-	16, // 54: atlas.consensus.Consensus.Follow:output_type -> atlas.consensus.RecordMutation
-	44, // [44:55] is the sub-list for method output_type
-	33, // [33:44] is the sub-list for method input_type
-	33, // [33:33] is the sub-list for extension type_name
-	33, // [33:33] is the sub-list for extension extendee
-	0,  // [0:33] is the sub-list for field type_name
+	11, // 0: atlas.consensus.ReplicationRequest.data:type_name -> atlas.consensus.Data
+	12, // 1: atlas.consensus.DereferenceRequest.reference:type_name -> atlas.consensus.DataReference
+	11, // 2: atlas.consensus.DereferenceResponse.data:type_name -> atlas.consensus.Data
+	36, // 3: atlas.consensus.PingRequest.timestamp:type_name -> google.protobuf.Timestamp
+	36, // 4: atlas.consensus.PingResponse.timestamp:type_name -> google.protobuf.Timestamp
+	10, // 5: atlas.consensus.Acl.owners:type_name -> atlas.consensus.Principal
+	10, // 6: atlas.consensus.Acl.readers:type_name -> atlas.consensus.Principal
+	10, // 7: atlas.consensus.Acl.writers:type_name -> atlas.consensus.Principal
+	0,  // 8: atlas.consensus.AddPrincipal.role:type_name -> atlas.consensus.AclRole
+	10, // 9: atlas.consensus.AddPrincipal.principal:type_name -> atlas.consensus.Principal
+	0,  // 10: atlas.consensus.RemovePrincipal.role:type_name -> atlas.consensus.AclRole
+	10, // 11: atlas.consensus.RemovePrincipal.principal:type_name -> atlas.consensus.Principal
+	26, // 12: atlas.consensus.ClusterConfig.nodes:type_name -> atlas.consensus.Node
+	8,  // 13: atlas.consensus.RecordMutation.slot:type_name -> atlas.consensus.Slot
+	9,  // 14: atlas.consensus.RecordMutation.ballot:type_name -> atlas.consensus.Ballot
+	12, // 15: atlas.consensus.RecordMutation.valueAddress:type_name -> atlas.consensus.DataReference
+	13, // 16: atlas.consensus.RecordMutation.tombstone:type_name -> atlas.consensus.Deletion
+	20, // 17: atlas.consensus.RecordMutation.compaction:type_name -> atlas.consensus.Record
+	14, // 18: atlas.consensus.RecordMutation.noop:type_name -> atlas.consensus.Noop
+	18, // 19: atlas.consensus.RecordMutation.config:type_name -> atlas.consensus.ClusterConfig
+	16, // 20: atlas.consensus.RecordMutation.addPrincipal:type_name -> atlas.consensus.AddPrincipal
+	17, // 21: atlas.consensus.RecordMutation.removePrincipal:type_name -> atlas.consensus.RemovePrincipal
+	15, // 22: atlas.consensus.Record.acl:type_name -> atlas.consensus.Acl
+	12, // 23: atlas.consensus.Record.data:type_name -> atlas.consensus.DataReference
+	20, // 24: atlas.consensus.Record.baseRecord:type_name -> atlas.consensus.Record
+	9,  // 25: atlas.consensus.StealTableOwnershipRequest.ballot:type_name -> atlas.consensus.Ballot
+	19, // 26: atlas.consensus.StealTableOwnershipResponse.missingRecords:type_name -> atlas.consensus.RecordMutation
+	9,  // 27: atlas.consensus.StealTableOwnershipResponse.highestBallot:type_name -> atlas.consensus.Ballot
+	8,  // 28: atlas.consensus.StealTableOwnershipResponse.highestSlot:type_name -> atlas.consensus.Slot
+	19, // 29: atlas.consensus.WriteMigrationRequest.record:type_name -> atlas.consensus.RecordMutation
+	9,  // 30: atlas.consensus.OwnershipTracking.promised:type_name -> atlas.consensus.Ballot
+	27, // 31: atlas.consensus.Node.region:type_name -> atlas.consensus.Region
+	37, // 32: atlas.consensus.Node.rtt:type_name -> google.protobuf.Duration
+	26, // 33: atlas.consensus.ReadKeyRequest.sender:type_name -> atlas.consensus.Node
+	12, // 34: atlas.consensus.ReadKeyResponse.value:type_name -> atlas.consensus.DataReference
+	20, // 35: atlas.consensus.ReadRecordResponse.record:type_name -> atlas.consensus.Record
+	26, // 36: atlas.consensus.PrefixScanRequest.sender:type_name -> atlas.consensus.Node
+	26, // 37: atlas.consensus.WriteKeyRequest.sender:type_name -> atlas.consensus.Node
+	19, // 38: atlas.consensus.WriteKeyRequest.mutation:type_name -> atlas.consensus.RecordMutation
+	21, // 39: atlas.consensus.Consensus.StealTableOwnership:input_type -> atlas.consensus.StealTableOwnershipRequest
+	23, // 40: atlas.consensus.Consensus.WriteMigration:input_type -> atlas.consensus.WriteMigrationRequest
+	23, // 41: atlas.consensus.Consensus.AcceptMigration:input_type -> atlas.consensus.WriteMigrationRequest
+	2,  // 42: atlas.consensus.Consensus.Replicate:input_type -> atlas.consensus.ReplicationRequest
+	4,  // 43: atlas.consensus.Consensus.DeReference:input_type -> atlas.consensus.DereferenceRequest
+	6,  // 44: atlas.consensus.Consensus.Ping:input_type -> atlas.consensus.PingRequest
+	32, // 45: atlas.consensus.Consensus.PrefixScan:input_type -> atlas.consensus.PrefixScanRequest
+	1,  // 46: atlas.consensus.Consensus.RequestSlots:input_type -> atlas.consensus.SlotRequest
+	1,  // 47: atlas.consensus.Consensus.Follow:input_type -> atlas.consensus.SlotRequest
+	30, // 48: atlas.consensus.Consensus.ReadRecord:input_type -> atlas.consensus.ReadRecordRequest
+	22, // 49: atlas.consensus.Consensus.StealTableOwnership:output_type -> atlas.consensus.StealTableOwnershipResponse
+	24, // 50: atlas.consensus.Consensus.WriteMigration:output_type -> atlas.consensus.WriteMigrationResponse
+	38, // 51: atlas.consensus.Consensus.AcceptMigration:output_type -> google.protobuf.Empty
+	3,  // 52: atlas.consensus.Consensus.Replicate:output_type -> atlas.consensus.ReplicationResponse
+	5,  // 53: atlas.consensus.Consensus.DeReference:output_type -> atlas.consensus.DereferenceResponse
+	7,  // 54: atlas.consensus.Consensus.Ping:output_type -> atlas.consensus.PingResponse
+	33, // 55: atlas.consensus.Consensus.PrefixScan:output_type -> atlas.consensus.PrefixScanResponse
+	19, // 56: atlas.consensus.Consensus.RequestSlots:output_type -> atlas.consensus.RecordMutation
+	19, // 57: atlas.consensus.Consensus.Follow:output_type -> atlas.consensus.RecordMutation
+	31, // 58: atlas.consensus.Consensus.ReadRecord:output_type -> atlas.consensus.ReadRecordResponse
+	49, // [49:59] is the sub-list for method output_type
+	39, // [39:49] is the sub-list for method input_type
+	39, // [39:39] is the sub-list for extension type_name
+	39, // [39:39] is the sub-list for extension extendee
+	0,  // [0:39] is the sub-list for field type_name
 }
 
 func init() { file_consensus_consensus_proto_init() }
@@ -2264,26 +2558,28 @@ func file_consensus_consensus_proto_init() {
 	if File_consensus_consensus_proto != nil {
 		return
 	}
-	file_consensus_consensus_proto_msgTypes[16].OneofWrappers = []any{
+	file_consensus_consensus_proto_msgTypes[18].OneofWrappers = []any{
 		(*RecordMutation_ValueAddress)(nil),
 		(*RecordMutation_Tombstone)(nil),
-		(*RecordMutation_AclUpdated)(nil),
 		(*RecordMutation_Compaction)(nil),
 		(*RecordMutation_Noop)(nil),
 		(*RecordMutation_Config)(nil),
+		(*RecordMutation_AddPrincipal)(nil),
+		(*RecordMutation_RemovePrincipal)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_consensus_consensus_proto_rawDesc), len(file_consensus_consensus_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   31,
+			NumEnums:      1,
+			NumMessages:   35,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_consensus_consensus_proto_goTypes,
 		DependencyIndexes: file_consensus_consensus_proto_depIdxs,
+		EnumInfos:         file_consensus_consensus_proto_enumTypes,
 		MessageInfos:      file_consensus_consensus_proto_msgTypes,
 	}.Build()
 	File_consensus_consensus_proto = out.File

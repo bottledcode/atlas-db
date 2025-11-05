@@ -80,11 +80,11 @@ func TestCloxCacheConcurrentAccess(t *testing.T) {
 	wg.Add(numGoroutines)
 
 	// Concurrent writes
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < numOps; j++ {
-				key := []byte(fmt.Sprintf("key-%d-%d", id, j))
+			for j := range numOps {
+				key := fmt.Appendf(nil, "key-%d-%d", id, j)
 				cache.Put(key, id*numOps+j)
 			}
 		}(i)
@@ -93,8 +93,8 @@ func TestCloxCacheConcurrentAccess(t *testing.T) {
 	wg.Wait()
 
 	// Verify some values
-	for i := 0; i < 10; i++ {
-		key := []byte(fmt.Sprintf("key-%d-%d", i, 0))
+	for i := range 10 {
+		key := fmt.Appendf(nil, "key-%d-%d", i, 0)
 		val, ok := cache.Get(key)
 		if !ok {
 			t.Errorf("Key %s not found", key)
@@ -120,8 +120,8 @@ func TestCloxCacheConcurrentReadWrite(t *testing.T) {
 	const numWriters = 10
 
 	// Pre-populate cache
-	for i := 0; i < numKeys; i++ {
-		key := []byte(fmt.Sprintf("key-%d", i))
+	for i := range numKeys {
+		key := fmt.Appendf(nil, "key-%d", i)
 		cache.Put(key, fmt.Sprintf("value-%d", i))
 	}
 
@@ -130,7 +130,7 @@ func TestCloxCacheConcurrentReadWrite(t *testing.T) {
 
 	// Start readers
 	wg.Add(numReaders)
-	for i := 0; i < numReaders; i++ {
+	for range numReaders {
 		go func() {
 			defer wg.Done()
 			for {
@@ -138,8 +138,8 @@ func TestCloxCacheConcurrentReadWrite(t *testing.T) {
 				case <-stop:
 					return
 				default:
-					for j := 0; j < numKeys; j++ {
-						key := []byte(fmt.Sprintf("key-%d", j))
+					for j := range numKeys {
+						key := fmt.Appendf(nil, "key-%d", j)
 						cache.Get(key)
 					}
 				}
@@ -149,7 +149,7 @@ func TestCloxCacheConcurrentReadWrite(t *testing.T) {
 
 	// Start writers
 	wg.Add(numWriters)
-	for i := 0; i < numWriters; i++ {
+	for i := range numWriters {
 		go func(id int) {
 			defer wg.Done()
 			for {
@@ -157,8 +157,8 @@ func TestCloxCacheConcurrentReadWrite(t *testing.T) {
 				case <-stop:
 					return
 				default:
-					for j := 0; j < numKeys; j++ {
-						key := []byte(fmt.Sprintf("key-%d", j))
+					for j := range numKeys {
+						key := fmt.Appendf(nil, "key-%d", j)
 						cache.Put(key, fmt.Sprintf("writer-%d-value-%d", id, j))
 					}
 				}
@@ -192,7 +192,7 @@ func TestCloxCacheFrequencyIncrement(t *testing.T) {
 	cache.Put(key, 42)
 
 	// Access the key multiple times to bump frequency
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		cache.Get(key)
 	}
 
@@ -216,8 +216,8 @@ func TestCloxCacheEviction(t *testing.T) {
 
 	// Fill cache beyond capacity
 	const numKeys = 200
-	for i := 0; i < numKeys; i++ {
-		key := []byte(fmt.Sprintf("key-%d", i))
+	for i := range numKeys {
+		key := fmt.Appendf(nil, "key-%d", i)
 		cache.Put(key, i)
 	}
 
@@ -330,8 +330,8 @@ func TestCloxCacheAdaptiveDecay(t *testing.T) {
 	defer cache.Close()
 
 	// Generate high pressure by filling cache and rejecting admissions
-	for i := 0; i < 500; i++ {
-		key := []byte(fmt.Sprintf("key-%d", i))
+	for i := range 500 {
+		key := fmt.Appendf(nil, "key-%d", i)
 		cache.Put(key, i)
 	}
 
@@ -358,15 +358,15 @@ func TestCloxCacheHashCollisions(t *testing.T) {
 
 	// Insert many keys (will likely collide in such a small cache)
 	const numKeys = 50
-	for i := 0; i < numKeys; i++ {
-		key := []byte(fmt.Sprintf("collision-%d", i))
+	for i := range numKeys {
+		key := fmt.Appendf(nil, "collision-%d", i)
 		cache.Put(key, i)
 	}
 
 	// Verify we can retrieve keys despite collisions
 	retrieved := 0
-	for i := 0; i < numKeys; i++ {
-		key := []byte(fmt.Sprintf("collision-%d", i))
+	for i := range numKeys {
+		key := fmt.Appendf(nil, "collision-%d", i)
 		val, ok := cache.Get(key)
 		if ok {
 			retrieved++

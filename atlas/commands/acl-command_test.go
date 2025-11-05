@@ -23,8 +23,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bottledcode/atlas-db/atlas/options"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap/zaptest"
 )
 
 func TestACLCommand_Parsing(t *testing.T) {
@@ -102,6 +104,10 @@ func TestACLGrantCommand_Parse_Args(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Initialize logger for tests
+			options.Logger = zaptest.NewLogger(t)
+			defer func() { options.Logger = nil }()
+
 			cs := CommandFromString(tt.command)
 			cmd, err := cs.GetNext()
 			require.NoError(t, err)

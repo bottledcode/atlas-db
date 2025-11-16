@@ -306,8 +306,9 @@ func (l *LogManager) GetSnapshotManager(key []byte, log *FasterLog) (*SnapshotMa
 func (l *LogManager) InitKey(key []byte, fromSnapshot func(*Snapshot) error, replay func(*LogEntry) error) (*FasterLog, func(), error) {
 	logPath := l.generatePath(key)
 	snapPath := l.getSnapshotPath(logPath)
+	keyStr := string(key)
 
-	if _, ok := l.handles.Load(key); ok {
+	if _, ok := l.handles.Load(keyStr); ok {
 		// log is already loaded
 		return l.GetLog(key)
 	}
@@ -315,7 +316,7 @@ func (l *LogManager) InitKey(key []byte, fromSnapshot func(*Snapshot) error, rep
 	l.lruMu.Lock()
 
 	// verify again after acquiring lock
-	if _, ok := l.handles.Load(key); ok {
+	if _, ok := l.handles.Load(keyStr); ok {
 		l.lruMu.Unlock()
 		return l.GetLog(key)
 	}
@@ -339,7 +340,7 @@ func (l *LogManager) InitKey(key []byte, fromSnapshot func(*Snapshot) error, rep
 	}
 
 	snapshot, err := snap.GetLatestSnapshot()
-	if err != nil {
+	if err != nil && err != ErrNoSnapshot {
 		release()
 		return nil, nil, fmt.Errorf("failed to get latest snapshot: %w", err)
 	}

@@ -337,7 +337,37 @@ func (b *broadcastClientStreamingClient[Req, Res]) RecvMsg(m any) error {
 }
 
 func (b *broadcastQuorum) DeReference(ctx context.Context, in *DereferenceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DereferenceResponse], error) {
-	return nil, fmt.Errorf("cannot DeReference on broadcast quorum")
+	// Sort nodes by RTT (nearest first)
+	sortedNodes := make([]*QuorumNode, len(b.nodes))
+	copy(sortedNodes, b.nodes)
+
+	slices.SortFunc(sortedNodes, func(a, b *QuorumNode) int {
+		aRtt := a.GetRtt().AsDuration()
+		bRtt := b.GetRtt().AsDuration()
+		if aRtt < bRtt {
+			return -1
+		}
+		if aRtt > bRtt {
+			return 1
+		}
+		return 0
+	})
+
+	// Try each node in order until one succeeds
+	var lastErr error
+	for _, node := range sortedNodes {
+		stream, err := node.DeReference(ctx, in, opts...)
+		if err == nil {
+			return stream, nil
+		}
+		lastErr = err
+	}
+
+	// All nodes failed
+	if lastErr != nil {
+		return nil, fmt.Errorf("all nodes failed to dereference: %w", lastErr)
+	}
+	return nil, fmt.Errorf("no nodes available for dereference")
 }
 
 func (b *broadcastQuorum) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
@@ -421,7 +451,7 @@ func (b *broadcastQuorum) aggressiveSteal(ctx context.Context, key []byte) error
 }
 
 func getCurrentOwnershipState(key []byte) *OwnershipState {
-	v, _ := ownership.LoadOrStore(key, &OwnershipState{
+	v, _ := ownership.LoadOrStore(string(key), &OwnershipState{
 		mu: sync.RWMutex{},
 		promised: &Ballot{
 			Key:  key,

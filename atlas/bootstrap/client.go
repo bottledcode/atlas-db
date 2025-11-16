@@ -308,6 +308,7 @@ func InitializeMaybe(ctx context.Context) error {
 				Config: currentConfig,
 			},
 		}
+		options.CurrentOptions.ServerId = node.Id
 		data, err := proto.Marshal(mutation)
 		if err != nil {
 			return fmt.Errorf("failed to marshal cluster config mutation: %w", err)
@@ -321,6 +322,11 @@ func InitializeMaybe(ctx context.Context) error {
 		err = log.Commit(slot + 1)
 		if err != nil {
 			return fmt.Errorf("failed to commit cluster config mutation: %w", err)
+		}
+
+		err = qm.AddNode(ctx, node)
+		if err != nil {
+			return fmt.Errorf("failed to add new node to quorum manager: %w", err)
 		}
 	} else {
 		for _, n := range currentConfig.Nodes {

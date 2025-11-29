@@ -72,16 +72,6 @@ type IterateOptions struct {
 	SkipErrors bool
 }
 
-// entryHeader is the on-disk format for log entries
-// Layout: [slot:8][ballotID:8][ballotNode:8][valueLen:4][committed:1][value:N][checksum:4]
-type entryHeader struct {
-	Slot       uint64
-	BallotID   uint64
-	BallotNode uint64
-	ValueLen   uint32
-	Committed  uint8
-}
-
 const (
 	// entryHeaderSize is the fixed size of the entry header (without value and checksum)
 	entryHeaderSize = 8 + 8 + 8 + 4 + 1 // 29 bytes
@@ -164,9 +154,4 @@ func deserializeEntry(data []byte) (*LogEntry, error) {
 		Value:     value,
 		Committed: committed,
 	}, nil
-}
-
-// entrySize returns the total serialized size of an entry
-func entrySize(entry *LogEntry) int {
-	return entryHeaderSize + len(entry.Value) + checksumSize
 }

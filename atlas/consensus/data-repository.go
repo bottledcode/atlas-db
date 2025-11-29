@@ -22,7 +22,6 @@ import (
 	"context"
 
 	"github.com/bottledcode/atlas-db/atlas/kv"
-	"github.com/zeebo/blake3"
 )
 
 type DataRepository interface {
@@ -67,16 +66,4 @@ func (d *DataR) GetKeys(record *Data) *StructuredKey {
 
 func (d *DataR) GetPrefix(reference *DataReference) Prefix {
 	return Prefix{reference.GetAddress()}
-}
-
-func (d *DataR) hashData(data []byte) (*DataReference, *Data) {
-	hasher := blake3.New()
-	_, _ = hasher.Write(data)
-	hash := hasher.Sum(nil)
-	return &DataReference{
-			Address: hash,
-		}, &Data{
-			Key:   hash,
-			Value: data,
-		}
 }

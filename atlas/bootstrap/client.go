@@ -298,6 +298,9 @@ func InitializeMaybe(ctx context.Context) error {
 		IncludeUncommitted: false,
 		SkipErrors:         false,
 	})
+	if err != nil {
+		return fmt.Errorf("failed to iterate committed log entries: %w", err)
+	}
 
 	if len(currentConfig.Nodes) == 0 {
 		currentConfig.Nodes = append(currentConfig.Nodes, node)

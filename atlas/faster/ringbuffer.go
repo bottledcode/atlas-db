@@ -110,15 +110,12 @@ func (rb *RingBuffer) Append(entry *LogEntry) (uint64, error) {
 			// CRITICAL: Wait for our turn to publish
 			// We must maintain sequential consistency: earlier writes must publish first
 			// This spin-wait is typically very short (<10ns) since writes happen in parallel
-			for {
-				if rb.published.CompareAndSwap(currentReserved, newReserved) {
-					// Successfully published! Entry is now visible to scanners
-					break
-				}
+			for !rb.published.CompareAndSwap(currentReserved, newReserved) {
 				// Someone ahead of us hasn't published yet
 				// Yield to let the publishing goroutine make progress
 				runtime.Gosched()
 			}
+			// Successfully published! Entry is now visible to scanners
 
 			// Update watermark (track highest slot)
 			for {

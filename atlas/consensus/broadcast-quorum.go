@@ -22,7 +22,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"runtime"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -374,82 +373,6 @@ func (b *broadcastQuorum) Ping(ctx context.Context, in *PingRequest, opts ...grp
 	return nil, fmt.Errorf("cannot Ping on broadcast quorum")
 }
 
-// aggressiveSteal tries to steal ownership of the given key by
-// repeatedly attempting to steal with an intent of succeeding.
-func (b *broadcastQuorum) aggressiveSteal(ctx context.Context, key []byte) error {
-	number := uint64(1)
-	const maxRetries = 10
-
-	for range maxRetries {
-		// Attempt to steal ownership with increasing ballot
-		theft, err := b.StealTableOwnership(ctx, &StealTableOwnershipRequest{
-			Ballot: &Ballot{
-				Key:  key,
-				Id:   number,
-				Node: options.CurrentOptions.ServerId,
-			},
-		})
-		if err != nil {
-			return err
-		}
-
-		if !theft.Promised {
-			// Retry with higher ballot
-			if theft.HighestBallot != nil {
-				number = theft.HighestBallot.Id + 1
-			} else {
-				number++
-			}
-			runtime.Gosched()
-			continue
-		}
-
-		// Successfully stole ownership - now replay missing records
-		slices.SortFunc(theft.MissingRecords, func(a, b *RecordMutation) int {
-			if a.Slot.Id < b.Slot.Id {
-				return -1
-			} else if a.Slot.Id > b.Slot.Id {
-				return 1
-			}
-			return 0
-		})
-
-		for _, rec := range theft.MissingRecords {
-			// Re-propose using the new leadership ballot to satisfy promised quorums
-			proposal := proto.Clone(rec).(*RecordMutation)
-			proposal.Ballot = &Ballot{
-				Key:  key,
-				Id:   number,
-				Node: options.CurrentOptions.ServerId,
-			}
-			proposal.Committed = false
-
-			// Phase 2a: Accept the missing record
-			accepted, err := b.WriteMigration(ctx, &WriteMigrationRequest{
-				Record: proposal,
-			})
-			if err != nil {
-				return fmt.Errorf("failed to write missing migration record during steal: %w", err)
-			}
-			if !accepted.Accepted {
-				return fmt.Errorf("missing migration record not accepted during steal")
-			}
-
-			// Phase 3: Commit the missing record
-			_, err = b.AcceptMigration(ctx, &WriteMigrationRequest{
-				Record: proposal,
-			})
-			if err != nil {
-				return fmt.Errorf("failed to commit missing migration record during steal: %w", err)
-			}
-		}
-
-		return nil
-	}
-
-	return fmt.Errorf("failed to steal ownership after %d retries", maxRetries)
-}
-
 func getCurrentOwnershipState(key []byte) *OwnershipState {
 	v, _ := ownership.LoadOrStore(string(key), &OwnershipState{
 		mu: sync.RWMutex{},
@@ -463,57 +386,6 @@ func getCurrentOwnershipState(key []byte) *OwnershipState {
 		followers:      make([]chan *RecordMutation, 0),
 	})
 	return v.(*OwnershipState)
-}
-
-// softSteal tries to query all nodes for the highest ballot
-// and updates local ownership state accordingly without
-// actually stealing ownership.
-func (b *broadcastQuorum) softSteal(ctx context.Context, key []byte) error {
-	owned := getCurrentOwnershipState(key)
-
-	var highestBallot *Ballot
-	var highestSlot uint64
-	mu := sync.Mutex{}
-
-	err := b.broadcast(func(node *QuorumNode) error {
-		p, err := node.StealTableOwnership(ctx, &StealTableOwnershipRequest{
-			Ballot: &Ballot{
-				Key:  key,
-				Id:   0,
-				Node: 0,
-			},
-		})
-		if err != nil {
-			return err
-		}
-		if p.Promised {
-			return fmt.Errorf("unexpected promise on soft steal for key %s", string(key))
-		}
-
-		mu.Lock()
-		if highestBallot == nil || highestBallot.Less(p.HighestBallot) {
-			highestBallot = p.HighestBallot
-			if p.HighestSlot != nil {
-				highestSlot = p.HighestSlot.Id
-			}
-		}
-		mu.Unlock()
-
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-
-	// Update local state once after collecting all responses
-	owned.mu.Lock()
-	defer owned.mu.Unlock()
-	if highestBallot != nil && owned.promised.Less(highestBallot) {
-		owned.promised = highestBallot
-		owned.maxAppliedSlot = highestSlot
-	}
-
-	return nil
 }
 
 // FriendlySteal tries to steal ownership of the given key by

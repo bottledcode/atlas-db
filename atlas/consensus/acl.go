@@ -26,8 +26,11 @@ import (
 )
 
 // gRPC metadata key for the session principal; must be lowercase.
+//
+//nolint:unused
 const atlasPrincipalKey = "atlas-principal"
 
+//nolint:unused
 func isOwner(ctx context.Context, record *Record) bool {
 	if record.Acl == nil || record.Acl.Owners == nil {
 		return true
@@ -41,6 +44,7 @@ func isOwner(ctx context.Context, record *Record) bool {
 	})
 }
 
+//nolint:unused
 func canWrite(ctx context.Context, record *Record) bool {
 	if record.Acl == nil || record.Acl.Writers == nil {
 		return isOwner(ctx, record)
@@ -54,6 +58,7 @@ func canWrite(ctx context.Context, record *Record) bool {
 	})
 }
 
+//nolint:unused
 func canRead(ctx context.Context, record *Record) bool {
 	if record.Acl == nil || record.Acl.Readers == nil {
 		return isOwner(ctx, record)
@@ -68,6 +73,8 @@ func canRead(ctx context.Context, record *Record) bool {
 }
 
 // getPrincipalFromContext extracts the principal identifier from outgoing/incoming metadata.
+//
+//nolint:unused
 func getPrincipalFromContext(ctx context.Context) string {
 	if md, ok := metadata.FromIncomingContext(ctx); ok {
 		if vals := md.Get(atlasPrincipalKey); len(vals) > 0 {

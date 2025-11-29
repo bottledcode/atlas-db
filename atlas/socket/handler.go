@@ -406,6 +406,7 @@ func isBlobGetCommand(cmd *commands.CommandString) bool {
 	return ok0 && ok1 && ok2 && p0 == "KEY" && p1 == "BLOB" && p2 == "GET"
 }
 
+//nolint:unused // used in tests
 func (s *Socket) writeBlobResponse(binaryData []byte) error {
 	return s.writeTaggedBlobResponse("", binaryData)
 }

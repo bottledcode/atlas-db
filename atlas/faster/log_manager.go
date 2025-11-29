@@ -89,11 +89,6 @@ func (h *logHandle) canClose() bool {
 	return h.refCount.Load() == 0
 }
 
-// isIdle returns true if the log hasn't been accessed in the given duration
-func (h *logHandle) isIdle(idleTimeout int64) bool {
-	return time.Now().Unix()-h.lastAccess.Load() > idleTimeout
-}
-
 // LogManager manages FASTER logs with LRU eviction and reference counting
 // This ensures logs are never closed while in use, preventing use-after-free bugs
 type LogManager struct {
@@ -220,8 +215,6 @@ func (l *LogManager) makeReleaseFunc(handle *logHandle) func() {
 // tryEvict attempts to evict least-recently-used logs
 // Must be called with lruMu held!
 func (l *LogManager) tryEvict() {
-	const idleTimeout = 300 // 5 minutes
-
 	// Try to evict while we're over capacity
 	for l.lru.Len() >= l.maxOpen {
 		evicted := false

@@ -29,7 +29,6 @@ import (
 	"github.com/bottledcode/atlas-db/atlas/consensus"
 	"github.com/bottledcode/atlas-db/atlas/kv"
 	"github.com/bottledcode/atlas-db/atlas/options"
-	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -153,27 +152,4 @@ func (n *NodePingCommand) Execute(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("failed to ping node %d", id)
 	}
 	return resp, nil
-}
-
-func formatNodeSummary(n *consensus.Node) string {
-	status := "INACTIVE"
-	if n.GetActive() {
-		status = "ACTIVE"
-	}
-	rtt := n.GetRtt()
-	rttMs := int64(0)
-	if rtt != nil {
-		rttMs = rtt.AsDuration().Milliseconds()
-	}
-	return fmt.Sprintf("NODE id=%d region=%s status=%s rtt_ms=%d addr=%s port=%d",
-		n.GetId(), n.GetRegion().GetName(), status, rttMs, n.GetAddress(), n.GetPort())
-}
-
-func formatNodeDetail(n *consensus.Node) string {
-	// For now, include the same summary on one line. Future: multi-line with more fields.
-	// Ensure RTT is present even if missing in storage
-	if n.GetRtt() == nil {
-		n.Rtt = durationpb.New(0)
-	}
-	return formatNodeSummary(n)
 }

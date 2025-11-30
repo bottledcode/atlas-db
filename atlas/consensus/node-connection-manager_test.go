@@ -259,6 +259,9 @@ func TestHealthChecker_NodeFailureHandling(t *testing.T) {
 	// Verify node added back to active list
 	activeNodes = manager.GetActiveNodesByRegion("us-east-1")
 	assert.Len(t, activeNodes, 1)
+
+	// Wait for background goroutines spawned by AddNode to finish
+	time.Sleep(100 * time.Millisecond)
 }
 
 func TestHealthChecker_GetHealthStats(t *testing.T) {

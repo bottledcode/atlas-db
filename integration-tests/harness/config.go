@@ -34,11 +34,14 @@ type NodeConfig struct {
 	DBPath          string
 	SocketPath      string
 	DevelopmentMode bool
+	LatencyPreset   string // Latency injection preset: local, single-continent, global, high-latency
 }
 
 func GenerateCaddyfile(cfg NodeConfig) string {
+	// Enable admin API for pprof profiling (port = HTTPS port + 1000)
+	adminPort := cfg.HTTPSPort + 1000
 	caddyfile := `{
-	admin off
+	admin localhost:%d
 	auto_https disable_redirects
 	local_certs
 }
@@ -53,6 +56,7 @@ https://localhost:%d {
 		development_mode %t`
 
 	caddyfile = fmt.Sprintf(caddyfile,
+		adminPort,
 		cfg.HTTPSPort,
 		cfg.HTTPSPort,
 		cfg.Region,

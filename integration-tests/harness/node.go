@@ -81,6 +81,10 @@ func (n *Node) Start() error {
 
 	n.cmd = exec.Command(n.caddyBinary, "run", "--config", n.caddyfile)
 	n.cmd.Dir = n.Config.DBPath
+	n.cmd.Env = os.Environ()
+	if n.Config.LatencyPreset != "" {
+		n.cmd.Env = append(n.cmd.Env, "ATLAS_LATENCY_PRESET="+n.Config.LatencyPreset)
+	}
 
 	n.stdout, err = n.cmd.StdoutPipe()
 	if err != nil {

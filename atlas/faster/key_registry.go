@@ -188,8 +188,9 @@ func (kr *KeyRegistry) writeEntry(entryType byte, key string) error {
 		return err
 	}
 
-	// Sync to disk
-	return kr.file.Sync()
+	// Note: We don't fsync here for performance. The registry is recoverable
+	// from the log files on disk, so losing recent registrations is acceptable.
+	return nil
 }
 
 // Contains checks if a key exists in the registry.

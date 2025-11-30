@@ -175,112 +175,87 @@ type QuorumNode struct {
 	client ConsensusClient
 }
 
-func (q *QuorumNode) RequestSlots(ctx context.Context, in *SlotRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RecordMutation], error) {
+// ensureClient lazily initializes the gRPC client with latency injection support.
+func (q *QuorumNode) ensureClient() error {
+	if q.client != nil {
+		return nil
+	}
 	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
+	q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+	if err != nil {
+		return err
+	}
+	// Wrap with latency injection for integration testing
+	q.client = WrapWithLatency(q.client, q.GetRegion().GetName())
+	return nil
+}
+
+func (q *QuorumNode) RequestSlots(ctx context.Context, in *SlotRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RecordMutation], error) {
+	if err := q.ensureClient(); err != nil {
+		return nil, err
 	}
 	return q.client.RequestSlots(ctx, in, opts...)
 }
 
 func (q *QuorumNode) Follow(ctx context.Context, in *SlotRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RecordMutation], error) {
-	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
+	if err := q.ensureClient(); err != nil {
+		return nil, err
 	}
 	return q.client.Follow(ctx, in, opts...)
 }
 
 func (q *QuorumNode) Replicate(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ReplicationRequest, ReplicationResponse], error) {
-	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
+	if err := q.ensureClient(); err != nil {
+		return nil, err
 	}
 	return q.client.Replicate(ctx, opts...)
 }
 
 func (q *QuorumNode) DeReference(ctx context.Context, in *DereferenceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DereferenceResponse], error) {
-	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
+	if err := q.ensureClient(); err != nil {
+		return nil, err
 	}
 	return q.client.DeReference(ctx, in, opts...)
 }
 
 func (q *QuorumNode) StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipResponse, error) {
-	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
+	if err := q.ensureClient(); err != nil {
+		return nil, err
 	}
 	return q.client.StealTableOwnership(ctx, in, opts...)
 }
 
 func (q *QuorumNode) WriteMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*WriteMigrationResponse, error) {
-	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
+	if err := q.ensureClient(); err != nil {
+		return nil, err
 	}
 	return q.client.WriteMigration(ctx, in, opts...)
 }
 
 func (q *QuorumNode) AcceptMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
+	if err := q.ensureClient(); err != nil {
+		return nil, err
 	}
 	return q.client.AcceptMigration(ctx, in, opts...)
 }
 
 func (q *QuorumNode) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
-	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
+	if err := q.ensureClient(); err != nil {
+		return nil, err
 	}
 	return q.client.Ping(ctx, in, opts...)
 }
 
 func (q *QuorumNode) PrefixScan(ctx context.Context, in *PrefixScanRequest, opts ...grpc.CallOption) (*PrefixScanResponse, error) {
-	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
+	if err := q.ensureClient(); err != nil {
+		return nil, err
 	}
 	return q.client.PrefixScan(ctx, in, opts...)
 }
 
 func (q *QuorumNode) ReadRecord(ctx context.Context, in *ReadRecordRequest, opts ...grpc.CallOption) (*ReadRecordResponse, error) {
-	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
+	if err := q.ensureClient(); err != nil {
+		return nil, err
 	}
 	return q.client.ReadRecord(ctx, in, opts...)
 }

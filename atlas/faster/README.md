@@ -81,7 +81,7 @@ err = log.Accept(slot, ballot, value)
 
 **Key Features:**
 - **Reference Counting**: Prevents closing logs while in use
-- **LRU Eviction**: Automatically closes idle logs (max 256 open)
+- **LRU Eviction**: Automatically closes idle logs (max 1024 open)
 - **Thread-Safe**: Concurrent GetLog calls are safe
 - **Leak Protection**: CloseAll waits for references to drain
 
@@ -879,7 +879,7 @@ if stats.ActiveRefs > stats.OpenLogs*10 {
 
 **Issue: High memory usage**
 - **Cause**: Too many open logs in LogManager
-- **Fix**: Decrease `MaxHotKeys` (default 256)
+- **Fix**: Decrease `MaxHotKeys` (default 1024)
 - **Check**: Call `manager.Stats()` to see open log count
 
 **Issue: Slow recovery after crash**

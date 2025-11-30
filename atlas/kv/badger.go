@@ -35,8 +35,8 @@ func NewBadgerStore(path string) (*BadgerStore, error) {
 	opts := badger.DefaultOptions(path)
 
 	// Optimize for Atlas-DB use case
-	opts.Logger = nil      // Disable BadgerDB logging to avoid conflicts with zap
-	opts.SyncWrites = true // Ensure durability for consensus
+	opts.Logger = nil       // Disable BadgerDB logging to avoid conflicts with zap
+	opts.SyncWrites = false // Blobs can be re-replicated from other nodes if lost
 	opts.CompactL0OnClose = true
 
 	// Memory optimization for distributed edge deployment

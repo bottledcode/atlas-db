@@ -354,6 +354,13 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 	key := req.GetBallot().GetKey()
 	newBallot := req.GetBallot()
 
+	// Recover key BEFORE taking ownership lock (expensive I/O)
+	log, release, err := s.recoverKey(key)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	ownership := getCurrentOwnershipState(key)
 
 	ownership.mu.Lock()
@@ -365,12 +372,6 @@ func (s *Server) StealTableOwnership(ctx context.Context, req *StealTableOwnersh
 			HighestBallot: ownership.promised,
 		}, nil
 	}
-
-	log, release, err := s.recoverKey(key)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
 
 	ownership.promised = newBallot
 	wasOwned := ownership.owned
@@ -486,15 +487,16 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 	key := mutation.GetSlot().GetKey()
 	slotId := mutation.GetSlot().GetId()
 
-	ownership := getCurrentOwnershipState(key)
-	ownership.mu.RLock()
-	defer ownership.mu.RUnlock()
-
+	// Recover key BEFORE taking ownership lock (expensive I/O)
 	log, release, err := s.recoverKey(key)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
+
+	ownership := getCurrentOwnershipState(key)
+	ownership.mu.RLock()
+	defer ownership.mu.RUnlock()
 
 	err = log.Commit(slotId)
 	if err != nil {

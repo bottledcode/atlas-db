@@ -43,10 +43,10 @@ const (
 )
 
 const (
-	MutableSize = 2 * MB // 2MB per log (100 logs = 200MB total, reasonable for benchmarks)
-	SegmentSize = 1 * GB
-	NumThreads  = 128
-	MaxHotKeys  = 256
+	MutableSize = 2 * MB // 2MB per log (small since few in-flight commits expected)
+	SegmentSize = 1 * GB // 1GB per segment file
+	NumThreads  = 128    // Thread pool size for async operations
+	MaxHotKeys  = 1024   // LRU cache size (1024 × 2MB = 2GB max memory)
 )
 
 // logHandle wraps a FasterLog with reference counting and LRU tracking

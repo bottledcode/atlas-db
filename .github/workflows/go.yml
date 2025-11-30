@@ -55,7 +55,8 @@ jobs:
         ./caddy start --config <(echo '{ "admin": { "listen": "localhost:2019" } }')
         sleep 2
         # Trust the CA
-        sudo ./caddy trust
+        #sudo ./caddy trust
+        ./caddy trust
         # Stop caddy
         ./caddy stop
         sleep 1

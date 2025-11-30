@@ -198,7 +198,7 @@ func (b *broadcastQuorum) AcceptMigration(ctx context.Context, in *WriteMigratio
 func (b *broadcastQuorum) Replicate(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ReplicationRequest, ReplicationResponse], error) {
 	clients := sync.Map{}
 
-	_ = b.localThenBroadcast(func(node *QuorumNode) error {
+	err := b.broadcast(func(node *QuorumNode) error {
 		client, err := node.Replicate(ctx, opts...)
 		if err != nil {
 			return err
@@ -206,6 +206,9 @@ func (b *broadcastQuorum) Replicate(ctx context.Context, opts ...grpc.CallOption
 		clients.Store(node.Id, client)
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	return &broadcastClientStreamingClient[ReplicationRequest, ReplicationResponse]{
 		clients: &clients,

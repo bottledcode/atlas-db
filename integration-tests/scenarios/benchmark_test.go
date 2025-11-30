@@ -148,6 +148,9 @@ func TestBenchmarkReplicationLag(t *testing.T) {
 
 // TestBenchmarkHighConcurrency simulates many concurrent clients like production.
 func TestBenchmarkHighConcurrency(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipped in short mode: takes 2+ minutes")
+	}
 	configs := []struct {
 		name        string
 		concurrency int

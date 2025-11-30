@@ -22,6 +22,7 @@ package scenarios
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -30,6 +31,78 @@ import (
 	"github.com/bottledcode/atlas-db/atlas/consensus"
 	"github.com/bottledcode/atlas-db/integration-tests/harness"
 )
+
+// benchmarkSummary collects results for GitHub Actions summary
+var benchmarkSummary []BenchmarkSummaryEntry
+
+// BenchmarkSummaryEntry holds data for one benchmark result
+type BenchmarkSummaryEntry struct {
+	Name        string
+	Throughput  float64
+	AvgLatency  time.Duration
+	P50Latency  time.Duration
+	P95Latency  time.Duration
+	P99Latency  time.Duration
+	Errors      int64
+	Concurrency int
+	Regions     []string
+	Preset      string
+}
+
+// WriteBenchmarkSummary writes collected results to GITHUB_STEP_SUMMARY if available
+func WriteBenchmarkSummary() {
+	summaryPath := os.Getenv("GITHUB_STEP_SUMMARY")
+	if summaryPath == "" || len(benchmarkSummary) == 0 {
+		return
+	}
+
+	f, err := os.OpenFile(summaryPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	// Write markdown table
+	fmt.Fprintln(f, "## Benchmark Results")
+	fmt.Fprintln(f, "")
+	fmt.Fprintln(f, "| Benchmark | Throughput | Avg Latency | P50 | P95 | P99 | Errors |")
+	fmt.Fprintln(f, "|-----------|------------|-------------|-----|-----|-----|--------|")
+
+	for _, entry := range benchmarkSummary {
+		fmt.Fprintf(f, "| %s | %.2f ops/sec | %v | %v | %v | %v | %d |\n",
+			entry.Name,
+			entry.Throughput,
+			entry.AvgLatency.Round(time.Microsecond),
+			entry.P50Latency.Round(time.Microsecond),
+			entry.P95Latency.Round(time.Microsecond),
+			entry.P99Latency.Round(time.Microsecond),
+			entry.Errors,
+		)
+	}
+	fmt.Fprintln(f, "")
+}
+
+func addToSummary(name string, result BenchmarkResult, concurrency int, regions []string, preset string) {
+	benchmarkSummary = append(benchmarkSummary, BenchmarkSummaryEntry{
+		Name:        name,
+		Throughput:  result.Throughput,
+		AvgLatency:  result.AvgLatency,
+		P50Latency:  result.P50Latency,
+		P95Latency:  result.P95Latency,
+		P99Latency:  result.P99Latency,
+		Errors:      result.Errors,
+		Concurrency: concurrency,
+		Regions:     regions,
+		Preset:      preset,
+	})
+}
+
+// TestMain runs after all tests to write the benchmark summary
+func TestMain(m *testing.M) {
+	code := m.Run()
+	WriteBenchmarkSummary()
+	os.Exit(code)
+}
 
 // BenchmarkConfig holds configuration for benchmark runs.
 type BenchmarkConfig struct {
@@ -292,6 +365,9 @@ func runHighConcurrencyBenchmark(t *testing.T, concurrency int, preset consensus
 	t.Logf("  P50: %v", result.P50Latency)
 	t.Logf("  P95: %v", result.P95Latency)
 	t.Logf("  P99: %v", result.P99Latency)
+
+	// Add to GitHub Actions summary
+	addToSummary(name, result, concurrency, regions, string(preset))
 }
 
 func runWriteBenchmark(t *testing.T, cfg BenchmarkConfig, name string) {
@@ -747,4 +823,7 @@ func printBenchmarkResults(t *testing.T, name string, cfg BenchmarkConfig, resul
 		t.Logf("  Total calls with latency: %d", stats.TotalCalls.Load())
 		t.Logf("  Average injected latency: %v", stats.AverageLatency())
 	}
+
+	// Add to GitHub Actions summary
+	addToSummary(name, result, cfg.Concurrency, cfg.Regions, string(cfg.LatencyPreset))
 }

@@ -32,7 +32,7 @@ import (
 type KVConsensusAdapter struct {
 	server  *Server
 	kvStore kv.Store
-	nodeID  int64
+	nodeID  uint64
 	region  string
 	address string
 	port    int64

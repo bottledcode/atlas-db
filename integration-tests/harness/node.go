@@ -1,5 +1,4 @@
 //go:build integration
-// +build integration
 
 /*
  * This file is part of Atlas-DB.
@@ -29,6 +28,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -82,6 +82,12 @@ func (n *Node) Start() error {
 
 	n.cmd = exec.Command(n.caddyBinary, "run", "--config", n.caddyfile)
 	n.cmd.Dir = n.Config.DBPath
+	n.cmd.Env = os.Environ()
+	// Create new process group so we can kill all children on timeout
+	n.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if n.Config.LatencyPreset != "" {
+		n.cmd.Env = append(n.cmd.Env, "ATLAS_LATENCY_PRESET="+n.Config.LatencyPreset)
+	}
 
 	n.stdout, err = n.cmd.StdoutPipe()
 	if err != nil {
@@ -120,8 +126,25 @@ func (n *Node) stopLocked() {
 	}
 
 	if n.cmd != nil && n.cmd.Process != nil {
-		_ = n.cmd.Process.Kill()
-		_ = n.cmd.Wait()
+		pgid := n.cmd.Process.Pid
+
+		// Try graceful shutdown with SIGTERM to the process group
+		_ = syscall.Kill(-pgid, syscall.SIGTERM)
+
+		// Wait for process to exit gracefully
+		done := make(chan error, 1)
+		go func() {
+			done <- n.cmd.Wait()
+		}()
+
+		select {
+		case <-done:
+			// Process exited gracefully
+		case <-time.After(5 * time.Second):
+			// Force kill the entire process group if it doesn't exit in time
+			_ = syscall.Kill(-pgid, syscall.SIGKILL)
+			<-done
+		}
 	}
 
 	if n.logFile != nil {
@@ -171,6 +194,12 @@ func (n *Node) Stop() error {
 
 func (n *Node) Client() *SocketClient {
 	return n.client
+}
+
+// NewClient creates a new independent socket connection to this node.
+// Use this for concurrent access - each goroutine should have its own client.
+func (n *Node) NewClient() *SocketClient {
+	return NewSocketClient(n.Config.SocketPath)
 }
 
 func (n *Node) IsRunning() bool {

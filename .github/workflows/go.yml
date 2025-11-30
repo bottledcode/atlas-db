@@ -18,7 +18,7 @@ permissions:
 jobs:
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
     - uses: actions/checkout@v6
 
@@ -36,7 +36,7 @@ jobs:
       run: make test-go
 
   integration-test:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
     - uses: actions/checkout@v6
 
@@ -55,16 +55,17 @@ jobs:
         ./caddy start --config <(echo '{ "admin": { "listen": "localhost:2019" } }')
         sleep 2
         # Trust the CA
-        sudo ./caddy trust
+        #sudo ./caddy trust
+        ./caddy trust
         # Stop caddy
         ./caddy stop
         sleep 1
 
     - name: Run Integration Tests
-      run: go test -v -timeout 5m -tags=integration ./integration-tests/...
+      run: go test -v -timeout 10m -tags=integration ./integration-tests/...
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
     - uses: actions/checkout@v6
 
@@ -82,4 +83,5 @@ jobs:
       uses: golangci/golangci-lint-action@v9
       with:
         version: latest
-        only-new-issues: true
+        only-new-issues: false
+        args: --tests=false

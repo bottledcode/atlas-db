@@ -1,5 +1,4 @@
 //go:build integration
-// +build integration
 
 /*
  * This file is part of Atlas-DB.
@@ -127,15 +126,15 @@ func (sc *SocketClient) ExecuteCommand(cmd string) (string, error) {
 		response.WriteString(line)
 
 		if strings.Contains(line, "OK") ||
-		   strings.Contains(line, "ERROR") {
+			strings.Contains(line, "ERROR") {
 			break
 		}
 
 		// For responses that end before OK, consume the OK terminator
 		if strings.Contains(line, "VALUE:") ||
-		   strings.Contains(line, "NOT_FOUND") ||
-		   strings.Contains(line, "EMPTY") ||
-		   strings.Contains(line, "permission denied") {
+			strings.Contains(line, "NOT_FOUND") ||
+			strings.Contains(line, "EMPTY") ||
+			strings.Contains(line, "permission denied") {
 			// Read and append the mandatory OK terminator
 			okLine, err := reader.ReadString('\n')
 			if err != nil {
@@ -321,14 +320,21 @@ func (sc *SocketClient) RevokeACL(key, principal, perms string) error {
 
 func (sc *SocketClient) WaitForValue(key string, expectedValue string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+	var lastErr error
+	var lastVal string
 
 	for time.Now().Before(deadline) {
 		val, err := sc.KeyGet(key)
 		if err == nil && val == expectedValue {
 			return nil
 		}
+		lastErr = err
+		lastVal = val
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	return fmt.Errorf("timeout waiting for key %s to have value %s", key, expectedValue)
+	if lastErr != nil {
+		return fmt.Errorf("timeout waiting for key %s to have value %s (last error: %v)", key, expectedValue, lastErr)
+	}
+	return fmt.Errorf("timeout waiting for key %s to have value %s (got: %q)", key, expectedValue, lastVal)
 }

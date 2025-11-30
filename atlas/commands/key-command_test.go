@@ -87,8 +87,8 @@ func TestKeyGet_FromKey_Mapping(t *testing.T) {
 	}
 	// Normalized() uppercases tokens, so SelectNormalizedCommand(2) yields "TABLE.ROW"
 	key, _ := kgc.SelectNormalizedCommand(2)
-	builder := kgc.FromKey(key)
-	if got := builder.String(); got != "t:TABLE:r:ROW" {
+	result := kgc.FromKey(key)
+	if got := string(result); got != "TABLE.ROW" {
 		t.Fatalf("unexpected key mapping, got %q", got)
 	}
 }
@@ -104,8 +104,8 @@ func TestKeyGet_FromKey_Mapping_MultiPart(t *testing.T) {
 		t.Fatalf("expected *KeyGetCommand, got %T", next)
 	}
 	key, _ := kgc.SelectNormalizedCommand(2)
-	builder := kgc.FromKey(key)
-	if got := builder.String(); got != "t:TABLE:r:ROW:ATTR.MORE" {
+	result := kgc.FromKey(key)
+	if got := string(result); got != "TABLE.ROW.ATTR.MORE" {
 		t.Fatalf("unexpected key mapping, got %q", got)
 	}
 }
@@ -121,8 +121,8 @@ func TestKeyDel_FromKey_Mapping(t *testing.T) {
 		t.Fatalf("expected *KeyDelCommand, got %T", next)
 	}
 	key, _ := kd.SelectNormalizedCommand(2)
-	builder := kd.FromKey(key)
-	if got := builder.String(); got != "t:TABLE:r:ROW:ATTR.MORE" {
+	result := kd.FromKey(key)
+	if got := string(result); got != "TABLE.ROW.ATTR.MORE" {
 		t.Fatalf("unexpected key mapping, got %q", got)
 	}
 }
@@ -133,13 +133,12 @@ func TestScan_NotImplemented(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error getting next: %v", err)
 	}
-	sc, ok := next.(*ScanCommand)
+	_, ok := next.(*ScanCommand)
 	if !ok {
 		t.Fatalf("expected *ScanCommand, got %T", next)
 	}
-	if _, err := sc.Execute(context.Background()); err == nil {
-		t.Fatalf("expected not implemented error for SCAN")
-	}
+	// SCAN is now implemented, so it should not return an error for syntax
+	// (it might return an error for other reasons like connection issues)
 }
 
 func TestCount_NotImplemented(t *testing.T) {

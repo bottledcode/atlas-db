@@ -87,8 +87,9 @@ func (m *Module) Provision(ctx caddy.Context) (err error) {
 		}
 
 		options.Logger.Info("☄️ Atlas bootstrap completed successfully",
-			zap.Int64("NodeID", options.CurrentOptions.ServerId))
+			zap.Uint64("NodeID", options.CurrentOptions.ServerId))
 	} else {
+		options.CurrentOptions.BootstrapConnect = "https://localhost"
 		options.Logger.Info("🌱 Initializing new Atlas cluster...")
 
 		// Initialize KV stores for new cluster
@@ -104,7 +105,7 @@ func (m *Module) Provision(ctx caddy.Context) (err error) {
 		}
 
 		options.Logger.Info("🌱 New Atlas cluster initialized",
-			zap.Int64("NodeID", options.CurrentOptions.ServerId))
+			zap.Uint64("NodeID", options.CurrentOptions.ServerId))
 	}
 
 	// Start gRPC servers for bootstrap and consensus
@@ -123,7 +124,6 @@ func (m *Module) Provision(ctx caddy.Context) (err error) {
 }
 
 func (m *Module) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-	fmt.Println("ServeHTTP called")
 	if r.ProtoMajor == 2 && r.Header.Get("content-type") == "application/grpc" {
 		// check authorization
 		authHeader := r.Header.Get("Authorization")
@@ -211,6 +211,17 @@ func (m *Module) UnmarshalCaddyfile(d *caddyfile.Dispenser) (err error) {
 				default:
 					return d.Errf("development_mode must be true/false, on/off, or yes/no, got: %s", mode)
 				}
+			case "max_cache_size":
+				var sizeStr string
+				if !d.Args(&sizeStr) {
+					return d.ArgErr()
+				}
+				// Parse size with units (e.g., "1GB", "512MB", "2048")
+				size, err := parseSize(sizeStr)
+				if err != nil {
+					return d.Errf("max_cache_size: invalid size format: %v", err)
+				}
+				options.CurrentOptions.MaxCacheSize = size
 			default:
 				return d.Errf("unknown option: %s", d.Val())
 			}
@@ -273,7 +284,7 @@ func init() {
 
 			ready:
 
-				options.Logger.Info("🌐 Atlas Client Started")
+				//options.Logger.Info("🌐 Atlas Client Started")
 
 				rl, err := readline.New("> ")
 				if err != nil {
@@ -340,6 +351,50 @@ func init() {
 			})
 		},
 	})
+}
+
+// parseSize parses a size string with optional unit suffix (e.g., "1GB", "512MB", "2048")
+func parseSize(s string) (uint64, error) {
+	s = strings.TrimSpace(strings.ToUpper(s))
+	if s == "" {
+		return 0, fmt.Errorf("empty size string")
+	}
+
+	multiplier := uint64(1)
+	suffix := ""
+
+	// Check for unit suffix
+	if len(s) >= 2 {
+		lastTwo := s[len(s)-2:]
+		if lastTwo == "KB" || lastTwo == "MB" || lastTwo == "GB" || lastTwo == "TB" {
+			suffix = lastTwo
+			s = s[:len(s)-2]
+		} else if last := s[len(s)-1:]; last == "K" || last == "M" || last == "G" || last == "T" {
+			suffix = last + "B"
+			s = s[:len(s)-1]
+		}
+	}
+
+	// Parse the numeric value
+	var val uint64
+	_, err := fmt.Sscanf(s, "%d", &val)
+	if err != nil {
+		return 0, fmt.Errorf("invalid size format: %v", err)
+	}
+
+	// Apply multiplier based on suffix
+	switch suffix {
+	case "KB":
+		multiplier = 1024
+	case "MB":
+		multiplier = 1024 * 1024
+	case "GB":
+		multiplier = 1024 * 1024 * 1024
+	case "TB":
+		multiplier = 1024 * 1024 * 1024 * 1024
+	}
+
+	return val * multiplier, nil
 }
 
 // Interface guards

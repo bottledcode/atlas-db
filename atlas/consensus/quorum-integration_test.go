@@ -35,11 +35,9 @@ func TestQuorumManagerFilterHealthyNodes(t *testing.T) {
 	options.Logger = zaptest.NewLogger(t)
 
 	// Create mock connection manager
-	mockRepo := NewMockNodeRepository()
 	connectionManager := &NodeConnectionManager{
-		nodes:       make(map[int64]*ManagedNode),
+		nodes:       make(map[uint64]*ManagedNode),
 		activeNodes: make(map[string][]*ManagedNode),
-		storage:     mockRepo,
 	}
 
 	// Create quorum manager with connection manager
@@ -74,10 +72,10 @@ func TestQuorumManagerFilterHealthyNodes(t *testing.T) {
 
 	// Should only contain healthy nodes
 	assert.Len(t, filteredNodes[RegionName("us-east-1")], 1, "Only node1 should be healthy in us-east-1")
-	assert.Equal(t, int64(1), filteredNodes[RegionName("us-east-1")][0].Id)
+	assert.Equal(t, uint64(1), filteredNodes[RegionName("us-east-1")][0].Id)
 
 	assert.Len(t, filteredNodes[RegionName("us-west-2")], 1, "Node3 should be healthy in us-west-2")
-	assert.Equal(t, int64(3), filteredNodes[RegionName("us-west-2")][0].Id)
+	assert.Equal(t, uint64(3), filteredNodes[RegionName("us-west-2")][0].Id)
 }
 
 // TestDescribeQuorum_ThreadSafety tests that DescribeQuorum handles concurrent
@@ -273,11 +271,9 @@ func TestQuorumManagerConcurrentAccess(t *testing.T) {
 	options.Logger = zaptest.NewLogger(t)
 
 	// Create a quorum manager with some test data
-	mockRepo := NewMockNodeRepository()
 	connectionManager := &NodeConnectionManager{
-		nodes:       make(map[int64]*ManagedNode),
+		nodes:       make(map[uint64]*ManagedNode),
 		activeNodes: make(map[string][]*ManagedNode),
-		storage:     mockRepo,
 	}
 
 	qm := &defaultQuorumManager{

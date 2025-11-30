@@ -116,7 +116,7 @@ func (hc *HealthChecker) checkAllNodes(ctx context.Context) {
 	hc.manager.mu.RUnlock()
 
 	options.Logger.Debug("Health check evaluation",
-		zap.Int64("current_node_id", currentNodeId),
+		zap.Uint64("current_node_id", currentNodeId),
 		zap.Int("skipped_self", skipped),
 		zap.Int("needs_ping", needsPing),
 		zap.Int("total_nodes", totalNodes))
@@ -146,7 +146,7 @@ func (hc *HealthChecker) checkNode(ctx context.Context, node *ManagedNode) {
 
 	// Add more detailed logging for debugging
 	options.Logger.Debug("Starting health check for node",
-		zap.Int64("node_id", node.Id),
+		zap.Uint64("node_id", node.Id),
 		zap.String("address", node.GetAddress()),
 		zap.Int64("port", node.GetPort()),
 		zap.String("full_address", node.GetAddress()+":"+strconv.Itoa(int(node.GetPort()))),
@@ -158,7 +158,7 @@ func (hc *HealthChecker) checkNode(ctx context.Context, node *ManagedNode) {
 
 	if err != nil {
 		options.Logger.Debug("Health check failed with details",
-			zap.Int64("node_id", node.Id),
+			zap.Uint64("node_id", node.Id),
 			zap.String("address", node.GetAddress()),
 			zap.Duration("elapsed", rtt),
 			zap.Error(err),
@@ -166,7 +166,7 @@ func (hc *HealthChecker) checkNode(ctx context.Context, node *ManagedNode) {
 		hc.handleNodeFailure(ctx, node, err)
 	} else {
 		options.Logger.Debug("Health check succeeded, calling handleNodeSuccess",
-			zap.Int64("node_id", node.Id),
+			zap.Uint64("node_id", node.Id),
 			zap.String("address", node.GetAddress()),
 			zap.Duration("rtt", rtt))
 		hc.handleNodeSuccess(ctx, node, rtt)
@@ -188,7 +188,7 @@ func (hc *HealthChecker) handleNodeFailure(ctx context.Context, node *ManagedNod
 
 	failures := node.GetFailures()
 	options.Logger.Warn("Node health check failed",
-		zap.Int64("node_id", node.Id),
+		zap.Uint64("node_id", node.Id),
 		zap.String("address", node.GetAddress()),
 		zap.Error(err),
 		zap.Int64("failures", failures))
@@ -196,7 +196,7 @@ func (hc *HealthChecker) handleNodeFailure(ctx context.Context, node *ManagedNod
 	// If we've exceeded max failures, remove from quorum permanently
 	if failures >= hc.maxFailures {
 		options.Logger.Info("Node exceeded max failures, removing from quorum permanently",
-			zap.Int64("node_id", node.Id),
+			zap.Uint64("node_id", node.Id),
 			zap.String("address", node.GetAddress()),
 			zap.Int64("max_failures", hc.maxFailures))
 
@@ -206,7 +206,7 @@ func (hc *HealthChecker) handleNodeFailure(ctx context.Context, node *ManagedNod
 			err := quorumManager.RemoveNode(node.Id)
 			if err != nil {
 				options.Logger.Warn("Failed to remove node from quorum manager",
-					zap.Int64("node_id", node.Id),
+					zap.Uint64("node_id", node.Id),
 					zap.Error(err))
 			}
 		}
@@ -229,7 +229,7 @@ func (hc *HealthChecker) handleNodeSuccess(ctx context.Context, node *ManagedNod
 
 	if currentStatus != NodeStatusActive {
 		options.Logger.Info("Node recovered",
-			zap.Int64("node_id", node.Id),
+			zap.Uint64("node_id", node.Id),
 			zap.String("address", node.GetAddress()),
 			zap.Duration("rtt", rtt))
 
@@ -242,11 +242,11 @@ func (hc *HealthChecker) handleNodeSuccess(ctx context.Context, node *ManagedNod
 			err := quorumManager.AddNode(ctx, node.Node)
 			if err != nil {
 				options.Logger.Warn("Failed to re-add recovered node to quorum manager",
-					zap.Int64("node_id", node.Id),
+					zap.Uint64("node_id", node.Id),
 					zap.Error(err))
 			} else {
 				options.Logger.Info("Successfully re-added recovered node to quorum manager",
-					zap.Int64("node_id", node.Id),
+					zap.Uint64("node_id", node.Id),
 					zap.String("address", node.GetAddress()))
 			}
 		}

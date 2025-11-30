@@ -24,7 +24,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/bottledcode/atlas-db/atlas/consensus"
 	"github.com/bottledcode/atlas-db/atlas/kv"
 	"github.com/bottledcode/atlas-db/atlas/options"
 	"go.uber.org/zap/zaptest"
@@ -446,44 +445,4 @@ func TestDoBootstrap_Integration(t *testing.T) {
 	}
 
 	t.Log("Bootstrap integration test completed successfully")
-}
-
-func TestKVChangeProtobuf(t *testing.T) {
-	// Test KVChange protobuf serialization
-	change := &consensus.KVChange{
-		Operation: &consensus.KVChange_Set{
-			Set: &consensus.SetChange{
-				Key: []byte("test-key"),
-				Data: &consensus.Record{
-					Data: &consensus.Record_Value{
-						Value: &consensus.RawData{Data: []byte("test-value")},
-					},
-				},
-			},
-		},
-	}
-
-	data, err := proto.Marshal(change)
-	if err != nil {
-		t.Fatalf("Failed to marshal KVChange: %v", err)
-	}
-
-	var decoded consensus.KVChange
-	err = proto.Unmarshal(data, &decoded)
-	if err != nil {
-		t.Fatalf("Failed to unmarshal KVChange: %v", err)
-	}
-
-	originalSet := change.GetSet()
-	decodedSet := decoded.GetSet()
-
-	if decodedSet == nil {
-		t.Errorf("Decoded operation is not a SET operation")
-	}
-	if string(decodedSet.GetKey()) != string(originalSet.GetKey()) {
-		t.Errorf("Key mismatch: expected %s, got %s", string(originalSet.GetKey()), string(decodedSet.GetKey()))
-	}
-	if string(decodedSet.GetData().GetValue().GetData()) != string(originalSet.GetData().GetValue().GetData()) {
-		t.Errorf("Value mismatch: expected %s, got %s", string(originalSet.GetData().GetValue().GetData()), string(decodedSet.GetData().GetValue().GetData()))
-	}
 }

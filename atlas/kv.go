@@ -20,280 +20,144 @@ package atlas
 
 import (
 	"context"
-	"fmt"
 
+	"github.com/bottledcode/atlas-db/atlas/cas"
 	"github.com/bottledcode/atlas-db/atlas/consensus"
-	"github.com/bottledcode/atlas-db/atlas/kv"
 )
 
-func WriteKey(ctx context.Context, builder *kv.KeyBuilder, value []byte) error {
-	op := &consensus.KVChange{
-		Operation: &consensus.KVChange_Set{
-			Set: &consensus.SetChange{
-				Key: builder.Build(),
-				Data: &consensus.Record{
-					Data: &consensus.Record_Value{
-						Value: &consensus.RawData{
-							Data: value,
-						},
-					},
-					AccessControl: nil,
-				},
-			},
-		},
-	}
-
-	return sendWrite(ctx, builder, op)
-}
-
-func sendWrite(ctx context.Context, builder *kv.KeyBuilder, change *consensus.KVChange) error {
+func WriteKey(ctx context.Context, key []byte, value []byte) error {
+	// 1. Store value in CAS (content-addressable storage)
 	qm := consensus.GetDefaultQuorumManager(ctx)
+	store := cas.NewStore(qm)
 
-	key := builder.Build()
-	keyString := string(key)
-	tableName, ok := builder.TableName()
-	if !ok || tableName == "" {
-		if t, _, valid := kv.ParseTableRowKey(key); valid {
-			tableName = t
-		} else {
-			tableName = keyString
-		}
-	}
-
-	q, err := qm.GetQuorum(ctx, tableName)
+	address, err := store.Put(ctx, key, value)
 	if err != nil {
 		return err
 	}
 
-	resp, err := q.WriteKey(ctx, &consensus.WriteKeyRequest{
-		Sender: nil,
-		Table:  tableName,
-		Value:  change,
+	// 2. Write mutation through consensus (handles Phase 1/2/3 internally)
+	return consensus.WriteMutation(ctx, key, &consensus.RecordMutation{
+		Message: &consensus.RecordMutation_ValueAddress{
+			ValueAddress: &consensus.DataReference{
+				Address: address,
+			},
+		},
 	})
-	if err != nil {
-		return err
-	}
-	if resp.Success {
-		return nil
-	}
-	return fmt.Errorf("write failed: %s", resp.Error)
 }
 
-func AddOwner(ctx context.Context, builder *kv.KeyBuilder, owner string) error {
-	op := &consensus.KVChange{
-		Operation: &consensus.KVChange_Acl{
-			Acl: &consensus.AclChange{
-				Key: builder.Build(),
-				Change: &consensus.AclChange_Addition{
-					Addition: &consensus.ACL{
-						Owners: &consensus.ACLData{
-							Principals: []string{owner},
-						},
-					},
-				},
+func AddOwner(ctx context.Context, key []byte, owner string) error {
+	return consensus.WriteMutation(ctx, key, &consensus.RecordMutation{
+		Message: &consensus.RecordMutation_AddPrincipal{
+			AddPrincipal: &consensus.AddPrincipal{
+				Role:      consensus.AclRole_OWNER,
+				Principal: &consensus.Principal{Name: "user", Value: owner},
 			},
 		},
-	}
-	return sendWrite(ctx, builder, op)
+	})
 }
 
-func RevokeOwner(ctx context.Context, builder *kv.KeyBuilder, owner string) error {
-	op := &consensus.KVChange{
-		Operation: &consensus.KVChange_Acl{
-			Acl: &consensus.AclChange{
-				Key: builder.Build(),
-				Change: &consensus.AclChange_Deletion{
-					Deletion: &consensus.ACL{
-						Owners: &consensus.ACLData{
-							Principals: []string{owner},
-						},
-					},
-				},
+func RevokeOwner(ctx context.Context, key []byte, owner string) error {
+	return consensus.WriteMutation(ctx, key, &consensus.RecordMutation{
+		Message: &consensus.RecordMutation_RemovePrincipal{
+			RemovePrincipal: &consensus.RemovePrincipal{
+				Role:      consensus.AclRole_OWNER,
+				Principal: &consensus.Principal{Name: "user", Value: owner},
 			},
 		},
-	}
-	return sendWrite(ctx, builder, op)
+	})
 }
 
-func AddWriter(ctx context.Context, builder *kv.KeyBuilder, writer string) error {
-	op := &consensus.KVChange{
-		Operation: &consensus.KVChange_Acl{
-			Acl: &consensus.AclChange{
-				Key: builder.Build(),
-				Change: &consensus.AclChange_Addition{
-					Addition: &consensus.ACL{
-						Writers: &consensus.ACLData{
-							Principals: []string{writer},
-						},
-					},
-				},
+func AddWriter(ctx context.Context, key []byte, writer string) error {
+	return consensus.WriteMutation(ctx, key, &consensus.RecordMutation{
+		Message: &consensus.RecordMutation_AddPrincipal{
+			AddPrincipal: &consensus.AddPrincipal{
+				Role:      consensus.AclRole_WRITER,
+				Principal: &consensus.Principal{Name: "user", Value: writer},
 			},
 		},
-	}
-	return sendWrite(ctx, builder, op)
+	})
 }
 
-func RevokeWriter(ctx context.Context, builder *kv.KeyBuilder, writer string) error {
-	op := &consensus.KVChange{
-		Operation: &consensus.KVChange_Acl{
-			Acl: &consensus.AclChange{
-				Key: builder.Build(),
-				Change: &consensus.AclChange_Deletion{
-					Deletion: &consensus.ACL{
-						Writers: &consensus.ACLData{
-							Principals: []string{writer},
-						},
-					},
-				},
+func RevokeWriter(ctx context.Context, key []byte, writer string) error {
+	return consensus.WriteMutation(ctx, key, &consensus.RecordMutation{
+		Message: &consensus.RecordMutation_RemovePrincipal{
+			RemovePrincipal: &consensus.RemovePrincipal{
+				Role:      consensus.AclRole_WRITER,
+				Principal: &consensus.Principal{Name: "user", Value: writer},
 			},
 		},
-	}
-
-	return sendWrite(ctx, builder, op)
+	})
 }
 
-func AddReader(ctx context.Context, builder *kv.KeyBuilder, reader string) error {
-	op := &consensus.KVChange{
-		Operation: &consensus.KVChange_Acl{
-			Acl: &consensus.AclChange{
-				Key: builder.Build(),
-				Change: &consensus.AclChange_Addition{
-					Addition: &consensus.ACL{
-						Readers: &consensus.ACLData{
-							Principals: []string{reader},
-						},
-					},
-				},
+func AddReader(ctx context.Context, key []byte, reader string) error {
+	return consensus.WriteMutation(ctx, key, &consensus.RecordMutation{
+		Message: &consensus.RecordMutation_AddPrincipal{
+			AddPrincipal: &consensus.AddPrincipal{
+				Role:      consensus.AclRole_READER,
+				Principal: &consensus.Principal{Name: "user", Value: reader},
 			},
 		},
-	}
-
-	return sendWrite(ctx, builder, op)
+	})
 }
 
-func RevokeReader(ctx context.Context, builder *kv.KeyBuilder, reader string) error {
-	op := &consensus.KVChange{
-		Operation: &consensus.KVChange_Acl{
-			Acl: &consensus.AclChange{
-				Key: builder.Build(),
-				Change: &consensus.AclChange_Deletion{
-					Deletion: &consensus.ACL{
-						Readers: &consensus.ACLData{
-							Principals: []string{reader},
-						},
-					},
-				},
+func RevokeReader(ctx context.Context, key []byte, reader string) error {
+	return consensus.WriteMutation(ctx, key, &consensus.RecordMutation{
+		Message: &consensus.RecordMutation_RemovePrincipal{
+			RemovePrincipal: &consensus.RemovePrincipal{
+				Role:      consensus.AclRole_READER,
+				Principal: &consensus.Principal{Name: "user", Value: reader},
 			},
 		},
-	}
-
-	return sendWrite(ctx, builder, op)
+	})
 }
 
-func GetKey(ctx context.Context, builder *kv.KeyBuilder) ([]byte, error) {
-	qm := consensus.GetDefaultQuorumManager(ctx)
-
-	key := builder.Build()
-	keyString := string(key)
-	tableName, ok := builder.TableName()
-	if !ok || tableName == "" {
-		if t, _, valid := kv.ParseTableRowKey(key); valid {
-			tableName = t
-		} else {
-			tableName = keyString
-		}
-	}
-
-	q, err := qm.GetQuorum(ctx, tableName)
+func GetKey(ctx context.Context, key []byte) ([]byte, error) {
+	// 1. Read the Record from consensus (contains DataReference/CAS address)
+	record, err := consensus.ReadKey(ctx, key)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := q.ReadKey(ctx, &consensus.ReadKeyRequest{
-		Sender: nil,
-		Key:    keyString,
-		Table:  tableName,
-	})
+
+	// Check if record has data
+	if record == nil || record.Data == nil {
+		return nil, nil // Key exists but has no value (deleted?)
+	}
+
+	// 2. Dereference the CAS address to get the actual value
+	qm := consensus.GetDefaultQuorumManager(ctx)
+	store := cas.NewStore(qm)
+
+	value, err := store.Get(ctx, record.Data.Address)
 	if err != nil {
 		return nil, err
 	}
-	if resp.Success {
-		return resp.Value, nil
-	}
-	return nil, nil
-}
 
-// DeleteKey performs a distributed delete of the provided key using the
-// same migration-based consensus path used for writes.
-func DeleteKey(ctx context.Context, builder *kv.KeyBuilder) error {
-	qm := consensus.GetDefaultQuorumManager(ctx)
-
-	key := builder.Build()
-	keyString := string(key)
-	tableName, ok := builder.TableName()
-	if !ok || tableName == "" {
-		if t, _, valid := kv.ParseTableRowKey(key); valid {
-			tableName = t
-		} else {
-			tableName = keyString
-		}
-	}
-
-	q, err := qm.GetQuorum(ctx, tableName)
-	if err != nil {
-		return err
-	}
-
-	// Reuse WriteKeyRequest shape for quorum-level delete operation
-	resp, err := q.DeleteKey(ctx, &consensus.WriteKeyRequest{
-		Sender: nil,
-		Table:  tableName,
-		Value: &consensus.KVChange{
-			Operation: &consensus.KVChange_Del{
-				Del: &consensus.DelChange{
-					Key: builder.Build(),
-				},
-			},
-		},
-	})
-	if err != nil {
-		return err
-	}
-	if resp.Success {
-		return nil
-	}
-	return fmt.Errorf("delete failed: %s", resp.Error)
+	return value, nil
 }
 
 // PrefixScan performs a distributed prefix scan across all nodes in the cluster.
 // It returns all keys matching the prefix that are owned by any node.
-func PrefixScan(ctx context.Context, tablePrefix, rowPrefix string) ([]string, error) {
-	// PrefixScan doesn't use table-based quorums since it scans across all keys/tables
-	// Instead, we need to directly call the majority quorum's PrefixScan which broadcasts to all nodes
-	// For now, use any table to get the quorum (it will use the majority quorum implementation)
+func PrefixScan(ctx context.Context, keyPrefix []byte) ([]string, error) {
+	// Get broadcast quorum to query all nodes
 	qm := consensus.GetDefaultQuorumManager(ctx)
-
-	// Use a non-empty table name to get a valid quorum object
-	// The majority quorum's PrefixScan will broadcast to all nodes regardless of table
-	q, err := qm.GetQuorum(ctx, "atlas.nodes")
+	bq, err := qm.GetBroadcastQuorum(ctx, keyPrefix)
 	if err != nil {
 		return nil, err
 	}
 
-	if tablePrefix == "" && rowPrefix != "" {
-		return nil, fmt.Errorf("row prefix specified without table prefix")
-	}
-
-	resp, err := q.PrefixScan(ctx, &consensus.PrefixScanRequest{
-		Sender:      nil,
-		TablePrefix: tablePrefix,
-		RowPrefix:   rowPrefix,
+	// Perform prefix scan across all nodes
+	resp, err := bq.PrefixScan(ctx, &consensus.PrefixScanRequest{
+		Prefix: keyPrefix,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	if resp.Success {
-		return resp.Keys, nil
+	// Convert [][]byte to []string
+	keys := make([]string, len(resp.Keys))
+	for i, k := range resp.Keys {
+		keys[i] = string(k)
 	}
-	return nil, fmt.Errorf("prefix scan failed: %s", resp.Error)
+
+	return keys, nil
 }

@@ -13,6 +13,7 @@
  *
  * You should have received a copy of the GNU Affero General Public License
  * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
+ *
  */
 
 package kv
@@ -20,6 +21,8 @@ package kv
 import (
 	"context"
 	"io"
+
+	"github.com/dgraph-io/badger/v4"
 )
 
 // Store defines the key-value storage interface for Atlas-DB
@@ -52,6 +55,8 @@ type Transaction interface {
 	Store
 	Commit() error
 	Discard()
+	IterateHistory(ctx context.Context, key []byte) *badger.Iterator
+	IterateHistoryReverse(ctx context.Context, key []byte) *badger.Iterator
 }
 
 // Batch provides atomic batch operations

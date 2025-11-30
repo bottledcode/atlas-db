@@ -20,6 +20,7 @@ package kv
 
 import (
 	"context"
+	"errors"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -34,8 +35,8 @@ func NewBadgerStore(path string) (*BadgerStore, error) {
 	opts := badger.DefaultOptions(path)
 
 	// Optimize for Atlas-DB use case
-	opts.Logger = nil      // Disable BadgerDB logging to avoid conflicts with zap
-	opts.SyncWrites = true // Ensure durability for consensus
+	opts.Logger = nil       // Disable BadgerDB logging to avoid conflicts with zap
+	opts.SyncWrites = false // Blobs can be re-replicated from other nodes if lost
 	opts.CompactL0OnClose = true
 
 	// Memory optimization for distributed edge deployment
@@ -57,7 +58,7 @@ func (s *BadgerStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 	err := s.db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(key)
 		if err != nil {
-			if err == badger.ErrKeyNotFound {
+			if errors.Is(err, badger.ErrKeyNotFound) {
 				return ErrKeyNotFound
 			}
 			return err
@@ -169,6 +170,26 @@ func (t *BadgerTransaction) Get(ctx context.Context, key []byte) ([]byte, error)
 	}
 
 	return item.ValueCopy(nil)
+}
+
+func (t *BadgerTransaction) IterateHistory(ctx context.Context, key []byte) *badger.Iterator {
+	opts := badger.DefaultIteratorOptions
+	opts.AllVersions = true
+	opts.PrefetchValues = true
+	opts.Prefix = key
+
+	return t.txn.NewIterator(opts)
+}
+
+func (t *BadgerTransaction) IterateHistoryReverse(ctx context.Context, key []byte) *badger.Iterator {
+	opts := badger.DefaultIteratorOptions
+	opts.AllVersions = true
+	opts.PrefetchValues = true
+
+	opts.Reverse = true
+	opts.Prefix = key
+
+	return t.txn.NewIterator(opts)
 }
 
 func (t *BadgerTransaction) Put(ctx context.Context, key, value []byte) error {

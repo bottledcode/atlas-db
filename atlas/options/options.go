@@ -32,13 +32,14 @@ type Options struct {
 	MetaFilename                 string
 	DoReset                      bool
 	BootstrapConnect             string
-	ServerId                     int64
+	ServerId                     uint64
 	Region                       string
 	AdvertiseAddress             string
 	AdvertisePort                uint
 	ApiKey                       string
 	SocketPath                   string
 	DevelopmentMode              bool
+	MaxCacheSize                 uint64 // Maximum cache size in bytes (0 = auto-detect)
 	toleratedZoneFailures        int64
 	toleratedNodePerZoneFailures int64
 	mu                           sync.RWMutex
@@ -84,6 +85,7 @@ func init() {
 		AdvertisePort:                8080,
 		SocketPath:                   "atlas.sock",
 		DevelopmentMode:              developmentMode,
+		MaxCacheSize:                 0, // 0 = auto-detect
 		toleratedZoneFailures:        1,
 		toleratedNodePerZoneFailures: 1,
 	}

@@ -36,10 +36,20 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
+// safeRttDuration returns the RTT duration, or max duration if RTT is nil.
+// This ensures unmeasured nodes sort last in RTT-based ordering.
+func safeRttDuration(node *QuorumNode) time.Duration {
+	if rtt := node.GetRtt(); rtt != nil {
+		return rtt.AsDuration()
+	}
+	return time.Duration(1<<63 - 1) // max duration
+}
+
 type QuorumManager interface {
 	GetQuorum(ctx context.Context, table string) (Quorum, error)
+	GetBroadcastQuorum(ctx context.Context, table []byte) (Quorum, error)
 	AddNode(ctx context.Context, node *Node) error
-	RemoveNode(nodeID int64) error
+	RemoveNode(nodeID uint64) error
 	Send(node *Node, do func(quorumNode *QuorumNode) (any, error)) (any, error)
 }
 
@@ -63,6 +73,18 @@ type defaultQuorumManager struct {
 	mu                sync.RWMutex
 	nodes             map[RegionName][]*QuorumNode
 	connectionManager *NodeConnectionManager
+}
+
+func (q *defaultQuorumManager) GetBroadcastQuorum(ctx context.Context, table []byte) (Quorum, error) {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+
+	nodes := make([]*QuorumNode, 0)
+	for _, list := range q.nodes {
+		nodes = append(nodes, list...)
+	}
+
+	return &broadcastQuorum{nodes: nodes}, nil
 }
 
 func (q *defaultQuorumManager) Send(node *Node, do func(quorumNode *QuorumNode) (any, error)) (any, error) {
@@ -105,7 +127,7 @@ func (q *defaultQuorumManager) AddNode(ctx context.Context, node *Node) error {
 		return nil
 	}
 
-	_, _ = qn.JoinCluster(ctx, node)
+	// Connection will be established lazily on first use
 	q.nodes[RegionName(node.GetRegion().GetName())] = append(q.nodes[RegionName(node.GetRegion().GetName())], qn)
 
 	// Also add to the connection manager for health monitoring
@@ -116,7 +138,7 @@ func (q *defaultQuorumManager) AddNode(ctx context.Context, node *Node) error {
 	return nil
 }
 
-func (q *defaultQuorumManager) RemoveNode(nodeID int64) error {
+func (q *defaultQuorumManager) RemoveNode(nodeID uint64) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -136,7 +158,7 @@ func (q *defaultQuorumManager) RemoveNode(nodeID int64) error {
 				}
 
 				options.Logger.Info("Removed node from quorum manager",
-					zap.Int64("node_id", nodeID),
+					zap.Uint64("node_id", nodeID),
 					zap.String("region", string(region)))
 
 				return nil
@@ -146,120 +168,105 @@ func (q *defaultQuorumManager) RemoveNode(nodeID int64) error {
 
 	// Node not found - this is not necessarily an error
 	options.Logger.Debug("Node not found in quorum manager for removal",
-		zap.Int64("node_id", nodeID))
+		zap.Uint64("node_id", nodeID))
 
 	return nil
 }
 
 type Quorum interface {
 	ConsensusClient
-	CurrentNodeInReplicationQuorum() bool
-	CurrentNodeInMigrationQuorum() bool
+	FriendlySteal(ctx context.Context, key []byte) (bool, *Ballot, error)
 }
 
 type QuorumNode struct {
 	*Node
-	closer func()
-	client ConsensusClient
+	closer     func()
+	client     ConsensusClient
+	clientOnce sync.Once
+	clientErr  error
+}
+
+// ensureClient lazily initializes the gRPC client with latency injection support.
+func (q *QuorumNode) ensureClient() error {
+	q.clientOnce.Do(func() {
+		q.client, q.closer, q.clientErr = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		if q.clientErr != nil {
+			return
+		}
+		// Wrap with latency injection for integration testing
+		q.client = WrapWithLatency(q.client, q.GetRegion().GetName())
+	})
+	return q.clientErr
+}
+
+func (q *QuorumNode) RequestSlots(ctx context.Context, in *SlotRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RecordMutation], error) {
+	if err := q.ensureClient(); err != nil {
+		return nil, err
+	}
+	return q.client.RequestSlots(ctx, in, opts...)
+}
+
+func (q *QuorumNode) Follow(ctx context.Context, in *SlotRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RecordMutation], error) {
+	if err := q.ensureClient(); err != nil {
+		return nil, err
+	}
+	return q.client.Follow(ctx, in, opts...)
+}
+
+func (q *QuorumNode) Replicate(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ReplicationRequest, ReplicationResponse], error) {
+	if err := q.ensureClient(); err != nil {
+		return nil, err
+	}
+	return q.client.Replicate(ctx, opts...)
+}
+
+func (q *QuorumNode) DeReference(ctx context.Context, in *DereferenceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DereferenceResponse], error) {
+	if err := q.ensureClient(); err != nil {
+		return nil, err
+	}
+	return q.client.DeReference(ctx, in, opts...)
 }
 
 func (q *QuorumNode) StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipResponse, error) {
-	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
+	if err := q.ensureClient(); err != nil {
+		return nil, err
 	}
 	return q.client.StealTableOwnership(ctx, in, opts...)
 }
 
 func (q *QuorumNode) WriteMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*WriteMigrationResponse, error) {
-	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
+	if err := q.ensureClient(); err != nil {
+		return nil, err
 	}
 	return q.client.WriteMigration(ctx, in, opts...)
 }
 
 func (q *QuorumNode) AcceptMigration(ctx context.Context, in *WriteMigrationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
+	if err := q.ensureClient(); err != nil {
+		return nil, err
 	}
 	return q.client.AcceptMigration(ctx, in, opts...)
 }
 
-func (q *QuorumNode) JoinCluster(ctx context.Context, in *Node, opts ...grpc.CallOption) (*JoinClusterResponse, error) {
-	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
-	}
-	return q.client.JoinCluster(ctx, in, opts...)
-}
-
-func (q *QuorumNode) Gossip(ctx context.Context, in *GossipMigration, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
-	}
-	return q.client.Gossip(ctx, in, opts...)
-}
-
 func (q *QuorumNode) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
-	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
+	if err := q.ensureClient(); err != nil {
+		return nil, err
 	}
 	return q.client.Ping(ctx, in, opts...)
 }
 
-func (q *QuorumNode) ReadKey(ctx context.Context, in *ReadKeyRequest, opts ...grpc.CallOption) (*ReadKeyResponse, error) {
-	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
-	}
-	return q.client.ReadKey(ctx, in, opts...)
-}
-
-func (q *QuorumNode) WriteKey(ctx context.Context, in *WriteKeyRequest, opts ...grpc.CallOption) (*WriteKeyResponse, error) {
-	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
-	}
-	return q.client.WriteKey(ctx, in, opts...)
-}
-
 func (q *QuorumNode) PrefixScan(ctx context.Context, in *PrefixScanRequest, opts ...grpc.CallOption) (*PrefixScanResponse, error) {
-	var err error
-	if q.client == nil {
-		q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-		if err != nil {
-			return nil, err
-		}
+	if err := q.ensureClient(); err != nil {
+		return nil, err
 	}
 	return q.client.PrefixScan(ctx, in, opts...)
+}
+
+func (q *QuorumNode) ReadRecord(ctx context.Context, in *ReadRecordRequest, opts ...grpc.CallOption) (*ReadRecordResponse, error) {
+	if err := q.ensureClient(); err != nil {
+		return nil, err
+	}
+	return q.client.ReadRecord(ctx, in, opts...)
 }
 
 func (q *QuorumNode) Close() {
@@ -349,10 +356,10 @@ func (q *defaultQuorumManager) getClosestRegions(nodes map[RegionName][]*QuorumN
 		iRtt := time.Duration(0)
 		jRtt := time.Duration(0)
 		for _, node := range nodes[regions[i]] {
-			iRtt += node.GetRtt().AsDuration()
+			iRtt += safeRttDuration(node)
 		}
 		for _, node := range nodes[regions[j]] {
-			jRtt += node.GetRtt().AsDuration()
+			jRtt += safeRttDuration(node)
 		}
 
 		return iRtt < jRtt
@@ -370,48 +377,9 @@ func (q *defaultQuorumManager) GetQuorum(ctx context.Context, table string) (Quo
 	Fz := options.CurrentOptions.GetFz()
 	Fn := options.CurrentOptions.GetFn()
 
-	kvPool := kv.GetPool()
-	if kvPool == nil {
-		return nil, fmt.Errorf("KV pool not initialized")
-	}
-
-	metaStore := kvPool.MetaStore()
-	if metaStore == nil {
-		return nil, fmt.Errorf("metaStore is closed")
-	}
-
-	tableRepo := NewTableRepositoryKV(ctx, metaStore)
-	tableConfig, err := tableRepo.GetTable(table)
-	if err != nil {
-		return nil, err
-	}
 	// Create a shallow copy of q.nodes to avoid mutating the original map
 	nodes := make(map[RegionName][]*QuorumNode)
 	maps.Copy(nodes, q.nodes)
-
-	if tableConfig != nil {
-		// allow regions allowed by the table config
-		if len(tableConfig.GetAllowedRegions()) > 0 {
-			filteredNodes := make(map[RegionName][]*QuorumNode)
-			for _, region := range tableConfig.GetAllowedRegions() {
-				if nodeSlice, ok := nodes[RegionName(region)]; ok {
-					filteredNodes[RegionName(region)] = nodeSlice
-				}
-			}
-			nodes = filteredNodes
-		} else {
-			if len(tableConfig.GetRestrictedRegions()) > 0 {
-				// restrict regions allowed by the table config
-				for region := range nodes {
-					for _, restricted := range tableConfig.GetRestrictedRegions() {
-						if string(region) == restricted {
-							delete(nodes, region)
-						}
-					}
-				}
-			}
-		}
-	}
 
 	// Filter nodes to only include healthy ones from connection manager
 	if q.connectionManager != nil {
@@ -525,8 +493,8 @@ recalculate:
 	}
 
 	return &majorityQuorum{
-		q1: q1,
-		q2: q2,
+		q1: &broadcastQuorum{nodes: q1},
+		q2: &broadcastQuorum{nodes: q2},
 	}, nil
 }
 
@@ -539,7 +507,7 @@ func (q *defaultQuorumManager) filterHealthyNodes(nodes map[RegionName][]*Quorum
 		activeInRegion, hasActiveNodes := activeNodes[string(region)]
 
 		// Create a map of active node IDs for quick lookup
-		activeNodeIDs := make(map[int64]bool)
+		activeNodeIDs := make(map[uint64]bool)
 		if hasActiveNodes {
 			for _, activeNode := range activeInRegion {
 				activeNodeIDs[activeNode.Id] = true
@@ -588,33 +556,6 @@ func (q *defaultQuorumManager) describeQuorumDiagnostic(ctx context.Context, tab
 	metaStore := kvPool.MetaStore()
 	if metaStore == nil {
 		return nil, nil, fmt.Errorf("metaStore is closed")
-	}
-
-	tableRepo := NewTableRepositoryKV(ctx, metaStore)
-	tableConfig, err := tableRepo.GetTable(table)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// Apply table region restrictions to our local copy
-	if tableConfig != nil {
-		if len(tableConfig.GetAllowedRegions()) > 0 {
-			filteredNodes := make(map[RegionName][]*QuorumNode)
-			for _, region := range tableConfig.GetAllowedRegions() {
-				if nodeSlice, ok := nodesCopy[RegionName(region)]; ok {
-					filteredNodes[RegionName(region)] = nodeSlice
-				}
-			}
-			nodesCopy = filteredNodes
-		} else if len(tableConfig.GetRestrictedRegions()) > 0 {
-			for region := range nodesCopy {
-				for _, restricted := range tableConfig.GetRestrictedRegions() {
-					if string(region) == restricted {
-						delete(nodesCopy, region)
-					}
-				}
-			}
-		}
 	}
 
 	// For diagnostic purposes, treat all nodes as healthy (no filtering by connection manager)
@@ -728,10 +669,10 @@ func (q *defaultQuorumManager) getClosestRegionsDiagnostic(nodes map[RegionName]
 		iRtt := time.Duration(0)
 		jRtt := time.Duration(0)
 		for _, node := range nodes[regions[i]] {
-			iRtt += node.GetRtt().AsDuration()
+			iRtt += safeRttDuration(node)
 		}
 		for _, node := range nodes[regions[j]] {
-			jRtt += node.GetRtt().AsDuration()
+			jRtt += safeRttDuration(node)
 		}
 		return iRtt < jRtt
 	})

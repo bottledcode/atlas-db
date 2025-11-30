@@ -19,11 +19,9 @@ package consensus
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/bottledcode/atlas-db/atlas/kv"
 	"github.com/bottledcode/atlas-db/atlas/options"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,182 +29,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
-// MockNodeRepository for testing
-type MockNodeRepository struct {
-	nodes   map[int64]*Node
-	regions map[string][]*Node
-	mu      sync.RWMutex
-}
-
-func NewMockNodeRepository() *MockNodeRepository {
-	return &MockNodeRepository{
-		nodes:   make(map[int64]*Node),
-		regions: make(map[string][]*Node),
-	}
-}
-
-func (m *MockNodeRepository) AddTestNode(node *Node) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// Check if node already exists and remove from old region
-	if existingNode, exists := m.nodes[node.Id]; exists {
-		oldRegion := existingNode.Region.Name
-		// Remove from old region slice
-		if nodes, ok := m.regions[oldRegion]; ok {
-			filtered := make([]*Node, 0, len(nodes)-1)
-			for _, n := range nodes {
-				if n.Id != node.Id {
-					filtered = append(filtered, n)
-				}
-			}
-			if len(filtered) == 0 {
-				delete(m.regions, oldRegion)
-			} else {
-				m.regions[oldRegion] = filtered
-			}
-		}
-	}
-
-	m.nodes[node.Id] = node
-	newRegion := node.Region.Name
-	if m.regions[newRegion] == nil {
-		m.regions[newRegion] = make([]*Node, 0, 1)
-	}
-	m.regions[newRegion] = append(m.regions[newRegion], node)
-}
-
-func (m *MockNodeRepository) GetNodeById(id int64) (*Node, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	node, exists := m.nodes[id]
-	if !exists {
-		return nil, nil
-	}
-	return node, nil
-}
-
-func (m *MockNodeRepository) GetNodeByAddress(address string, port uint) (*Node, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	for _, node := range m.nodes {
-		if node.Address == address && node.Port == int64(port) {
-			return node, nil
-		}
-	}
-	return nil, nil
-}
-
-func (m *MockNodeRepository) GetNodesByRegion(region string) ([]*Node, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	nodes := m.regions[region]
-	if nodes == nil {
-		return []*Node{}, nil
-	}
-
-	result := make([]*Node, len(nodes))
-	copy(result, nodes)
-	return result, nil
-}
-
-func (m *MockNodeRepository) GetRegions() ([]*Region, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	regions := make([]*Region, 0, len(m.regions))
-	for regionName := range m.regions {
-		regions = append(regions, &Region{Name: regionName})
-	}
-	return regions, nil
-}
-
-func (m *MockNodeRepository) Iterate(write bool, fn func(*Node, *kv.Transaction) error) error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	for _, node := range m.nodes {
-		if err := fn(node, nil); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (m *MockNodeRepository) TotalCount() (int64, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	return int64(len(m.nodes)), nil
-}
-
-func (m *MockNodeRepository) GetRandomNodes(num int64, excluding ...int64) ([]*Node, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	excludeMap := make(map[int64]bool)
-	for _, id := range excluding {
-		excludeMap[id] = true
-	}
-
-	var candidates []*Node
-	for _, node := range m.nodes {
-		if !excludeMap[node.Id] {
-			candidates = append(candidates, node)
-		}
-	}
-
-	if int64(len(candidates)) <= num {
-		return candidates, nil
-	}
-
-	return candidates[:num], nil
-}
-
-func (m *MockNodeRepository) AddNode(node *Node) error {
-	m.AddTestNode(node)
-	return nil
-}
-
-func (m *MockNodeRepository) UpdateNode(node *Node) error {
-	m.AddTestNode(node)
-	return nil
-}
-
-func (m *MockNodeRepository) DeleteNode(nodeID int64) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// Get the node to find its region before deleting
-	node, exists := m.nodes[nodeID]
-	if !exists {
-		return nil
-	}
-
-	// Remove from region slice
-	region := node.Region.Name
-	if nodes, ok := m.regions[region]; ok {
-		filtered := make([]*Node, 0, len(nodes)-1)
-		for _, n := range nodes {
-			if n.Id != nodeID {
-				filtered = append(filtered, n)
-			}
-		}
-		if len(filtered) == 0 {
-			delete(m.regions, region)
-		} else {
-			m.regions[region] = filtered
-		}
-	}
-
-	delete(m.nodes, nodeID)
-	return nil
-}
-
-func createTestNode(id int64, region string, address string, port int64) *Node {
+func createTestNode(id uint64, region string, address string, port int64) *Node {
 	return &Node{
 		Id:      id,
 		Address: address,
@@ -279,12 +102,9 @@ func TestNodeConnectionManager_AddNode(t *testing.T) {
 	// Initialize logger for testing
 	options.Logger = zaptest.NewLogger(t)
 
-	mockRepo := NewMockNodeRepository()
-
 	manager := &NodeConnectionManager{
-		nodes:       make(map[int64]*ManagedNode),
+		nodes:       make(map[uint64]*ManagedNode),
 		activeNodes: make(map[string][]*ManagedNode),
-		storage:     mockRepo,
 	}
 
 	node := createTestNode(1, "us-east-1", "localhost", 8080)
@@ -311,12 +131,9 @@ func TestNodeConnectionManager_AddNode(t *testing.T) {
 }
 
 func TestNodeConnectionManager_ActiveNodesTracking(t *testing.T) {
-	mockRepo := NewMockNodeRepository()
-
 	manager := &NodeConnectionManager{
-		nodes:       make(map[int64]*ManagedNode),
+		nodes:       make(map[uint64]*ManagedNode),
 		activeNodes: make(map[string][]*ManagedNode),
-		storage:     mockRepo,
 	}
 
 	// Add nodes to different regions
@@ -359,12 +176,9 @@ func TestNodeConnectionManager_ActiveNodesTracking(t *testing.T) {
 }
 
 func TestNodeConnectionManager_ExecuteOnNode(t *testing.T) {
-	mockRepo := NewMockNodeRepository()
-
 	manager := &NodeConnectionManager{
-		nodes:       make(map[int64]*ManagedNode),
+		nodes:       make(map[uint64]*ManagedNode),
 		activeNodes: make(map[string][]*ManagedNode),
-		storage:     mockRepo,
 	}
 
 	node := createTestNode(1, "us-east-1", "localhost", 8080)
@@ -406,12 +220,9 @@ func TestHealthChecker_NodeFailureHandling(t *testing.T) {
 	// Initialize logger for testing
 	options.Logger = zaptest.NewLogger(t)
 
-	mockRepo := NewMockNodeRepository()
-
 	manager := &NodeConnectionManager{
-		nodes:       make(map[int64]*ManagedNode),
+		nodes:       make(map[uint64]*ManagedNode),
 		activeNodes: make(map[string][]*ManagedNode),
-		storage:     mockRepo,
 	}
 
 	healthChecker := NewHealthChecker(manager)
@@ -448,15 +259,15 @@ func TestHealthChecker_NodeFailureHandling(t *testing.T) {
 	// Verify node added back to active list
 	activeNodes = manager.GetActiveNodesByRegion("us-east-1")
 	assert.Len(t, activeNodes, 1)
+
+	// Wait for background goroutines spawned by AddNode to finish
+	time.Sleep(100 * time.Millisecond)
 }
 
 func TestHealthChecker_GetHealthStats(t *testing.T) {
-	mockRepo := NewMockNodeRepository()
-
 	manager := &NodeConnectionManager{
-		nodes:       make(map[int64]*ManagedNode),
+		nodes:       make(map[uint64]*ManagedNode),
 		activeNodes: make(map[string][]*ManagedNode),
-		storage:     mockRepo,
 	}
 
 	healthChecker := NewHealthChecker(manager)
@@ -529,12 +340,9 @@ func TestHealthChecker_SkipsSelfHealthChecks(t *testing.T) {
 		options.CurrentOptions.ServerId = originalServerId
 	}()
 
-	mockRepo := NewMockNodeRepository()
-
 	manager := &NodeConnectionManager{
-		nodes:       make(map[int64]*ManagedNode),
+		nodes:       make(map[uint64]*ManagedNode),
 		activeNodes: make(map[string][]*ManagedNode),
-		storage:     mockRepo,
 	}
 
 	healthChecker := NewHealthCheckerForTesting(manager)

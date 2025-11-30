@@ -1,5 +1,4 @@
 //go:build integration
-// +build integration
 
 /*
  * This file is part of Atlas-DB.
@@ -63,10 +62,11 @@ func findCaddyBinary() string {
 }
 
 type ClusterConfig struct {
-	NumNodes    int
-	Regions     []string
-	BasePort    int
-	CaddyBinary string
+	NumNodes      int
+	Regions       []string
+	BasePort      int
+	CaddyBinary   string
+	LatencyPreset string // Latency injection preset for all nodes
 }
 
 func NewCluster(t *testing.T, cfg ClusterConfig) (*Cluster, error) {
@@ -111,6 +111,7 @@ func NewCluster(t *testing.T, cfg ClusterConfig) (*Cluster, error) {
 		}
 
 		nodeConfig := NewNodeConfig(i, cfg.BasePort, tempDir, region)
+		nodeConfig.LatencyPreset = cfg.LatencyPreset
 
 		if i > 0 {
 			bootstrapNode := cluster.nodes[0]

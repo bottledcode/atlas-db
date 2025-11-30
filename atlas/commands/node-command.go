@@ -1,3 +1,21 @@
+/*
+ * This file is part of Atlas-DB.
+ *
+ * Atlas-DB is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of
+ * the License, or (at your option) any later version.
+ *
+ * Atlas-DB is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with Atlas-DB. If not, see <https://www.gnu.org/licenses/>.
+ *
+ */
+
 package commands
 
 import (
@@ -11,7 +29,6 @@ import (
 	"github.com/bottledcode/atlas-db/atlas/consensus"
 	"github.com/bottledcode/atlas-db/atlas/kv"
 	"github.com/bottledcode/atlas-db/atlas/options"
-	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -48,15 +65,15 @@ func (n *NodeListCommand) Execute(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("meta store not available")
 	}
 
-	repo := consensus.NewNodeRepository(ctx, store)
+	//repo := consensus.NewNodeRepository(ctx, store)
 	var lines []string
-	err := repo.Iterate(false, func(node *consensus.Node, txn *kv.Transaction) error {
-		lines = append(lines, formatNodeSummary(node))
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
+	//err := repo.Iterate(false, func(node *consensus.Node, txn *kv.Transaction) error {
+	//	lines = append(lines, formatNodeSummary(node))
+	//	return nil
+	//})
+	//if err != nil {
+	//	return nil, err
+	//}
 	return []byte(strings.Join(lines, "\n")), nil
 }
 
@@ -68,28 +85,29 @@ func (n *NodeInfoCommand) Execute(ctx context.Context) ([]byte, error) {
 	if err := n.CheckExactLen(3); err != nil { // NODE INFO <id>
 		return nil, err
 	}
-	idStr, _ := n.SelectNormalizedCommand(2)
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("invalid node id: %s", idStr)
-	}
-	pool := kv.GetPool()
-	if pool == nil {
-		return nil, fmt.Errorf("kv pool not initialized")
-	}
-	store := pool.MetaStore()
-	if store == nil {
-		return nil, fmt.Errorf("meta store not available")
-	}
-	repo := consensus.NewNodeRepository(ctx, store)
-	node, err := repo.GetNodeById(id)
-	if err != nil {
-		return nil, err
-	}
-	if node == nil {
-		return nil, fmt.Errorf("node %d not found", id)
-	}
-	return []byte(formatNodeDetail(node)), nil
+	//idStr, _ := n.SelectNormalizedCommand(2)
+	//id, err := strconv.ParseInt(idStr, 10, 64)
+	//if err != nil {
+	//	return nil, fmt.Errorf("invalid node id: %s", idStr)
+	//}
+	//pool := kv.GetPool()
+	//if pool == nil {
+	//	return nil, fmt.Errorf("kv pool not initialized")
+	//}
+	//store := pool.MetaStore()
+	//if store == nil {
+	//	return nil, fmt.Errorf("meta store not available")
+	//}
+	//repo := consensus.NewNodeRepository(ctx, store)
+	//node, err := repo.GetNodeById(id)
+	//if err != nil {
+	//	return nil, err
+	//}
+	//if node == nil {
+	//	return nil, fmt.Errorf("node %d not found", id)
+	//}
+	//return []byte(formatNodeDetail(node)), nil
+	return nil, fmt.Errorf("node info not implemented")
 }
 
 // NodePingCommand pings a node and reports RTT
@@ -101,7 +119,7 @@ func (n *NodePingCommand) Execute(ctx context.Context) ([]byte, error) {
 		return nil, err
 	}
 	idStr, _ := n.SelectNormalizedCommand(2)
-	id, err := strconv.ParseInt(idStr, 10, 64)
+	id, err := strconv.ParseUint(idStr, 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("invalid node id: %s", idStr)
 	}
@@ -134,27 +152,4 @@ func (n *NodePingCommand) Execute(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("failed to ping node %d", id)
 	}
 	return resp, nil
-}
-
-func formatNodeSummary(n *consensus.Node) string {
-	status := "INACTIVE"
-	if n.GetActive() {
-		status = "ACTIVE"
-	}
-	rtt := n.GetRtt()
-	rttMs := int64(0)
-	if rtt != nil {
-		rttMs = rtt.AsDuration().Milliseconds()
-	}
-	return fmt.Sprintf("NODE id=%d region=%s status=%s rtt_ms=%d addr=%s port=%d",
-		n.GetId(), n.GetRegion().GetName(), status, rttMs, n.GetAddress(), n.GetPort())
-}
-
-func formatNodeDetail(n *consensus.Node) string {
-	// For now, include the same summary on one line. Future: multi-line with more fields.
-	// Ensure RTT is present even if missing in storage
-	if n.GetRtt() == nil {
-		n.Rtt = durationpb.New(0)
-	}
-	return formatNodeSummary(n)
 }

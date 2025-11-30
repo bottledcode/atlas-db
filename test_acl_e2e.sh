@@ -143,7 +143,7 @@ else
 fi
 
 echo "🔄 7. Testing ACL REVOKE..."
-run_command "ACL REVOKE users.alice alice PERMS OWNER"
+run_session_commands "principal assume alice" "ACL REVOKE users.alice alice PERMS OWNER"
 
 echo "🔓 8. Testing access after revoke (should become public again)..."
 result=$(run_command "KEY GET users.alice")
@@ -156,8 +156,8 @@ fi
 
 echo "📊 9. Testing multiple principals and permissions..."
 run_command "ACL GRANT users.bob alice PERMS OWNER"
-run_command "ACL GRANT users.bob alice PERMS READ"
-run_command "ACL GRANT users.bob bob PERMS WRITE"
+run_session_commands "principal assume alice" "ACL GRANT users.bob alice PERMS READ"
+run_session_commands "principal assume alice" "ACL GRANT users.bob bob PERMS WRITE"
 
 echo "🔐 10. Testing read access with permissions..."
 result=$(run_session_commands "PRINCIPAL ASSUME alice" "KEY GET users.bob")
@@ -205,7 +205,7 @@ else
 fi
 
 echo "🔄 12. Testing revoke from multiple principals..."
-run_command "ACL REVOKE users.bob alice PERMS READ"
+run_session_commands "principal assume alice" "ACL REVOKE users.bob alice PERMS READ"
 
 result=$(run_session_commands "PRINCIPAL ASSUME alice" "KEY GET users.bob")
 if echo "$result" | grep -q "VALUE:"; then
@@ -236,7 +236,7 @@ else
 fi
 
 # Add WRITE ACL for another principal and ensure OWNER still allowed to write
-run_command "ACL GRANT users.owner bob PERMS WRITE"
+run_session_commands "principal assume alice" "ACL GRANT users.owner bob PERMS WRITE"
 result=$(run_session_commands "PRINCIPAL ASSUME alice" "KEY PUT users.owner owner_write_after_write_acl")
 if echo "$result" | grep -qi "permission denied"; then
     echo "❌ OWNER write was denied after WRITE ACL added; should still be allowed"
@@ -246,7 +246,7 @@ else
 fi
 
 # Add READ ACL for another principal and ensure OWNER still allowed to read
-run_command "ACL GRANT users.owner charlie PERMS READ"
+run_session_commands "principal assume alice" "ACL GRANT users.owner charlie PERMS READ"
 result=$(run_session_commands "PRINCIPAL ASSUME alice" "KEY GET users.owner")
 if echo "$result" | grep -q "VALUE:"; then
     echo "✅ OWNER still allowed to read despite READ ACL present"

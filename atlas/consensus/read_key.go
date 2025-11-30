@@ -39,7 +39,7 @@ import (
 func ReadKey(ctx context.Context, key []byte) (*Record, error) {
 	// Fast path: if we own the key, read locally
 	if IsOwned(key) {
-		return readLocal(key)
+		return readLocal(ctx, key)
 	}
 
 	// Get quorum manager
@@ -72,7 +72,7 @@ func ReadKey(ctx context.Context, key []byte) (*Record, error) {
 
 	// If we are the leader (or there's no leader yet), read locally
 	if leaderNodeID == options.CurrentOptions.ServerId || leaderNodeID == 0 {
-		return readLocal(key)
+		return readLocal(ctx, key)
 	}
 
 	// We're not the leader - forward the read to the specific leader node
@@ -132,14 +132,18 @@ func ReadKey(ctx context.Context, key []byte) (*Record, error) {
 	owned.mu.Unlock()
 
 	// Now we own it, read locally
-	return readLocal(key)
+	return readLocal(ctx, key)
 }
 
 // readLocal reads a key from the local state machine
-func readLocal(key []byte) (*Record, error) {
+func readLocal(ctx context.Context, key []byte) (*Record, error) {
 	// Try to get from cache first
 	if record, ok := stateMachine.Get(key); ok {
-		return record, nil
+		if canRead(ctx, record) {
+			return record, nil
+		}
+
+		return nil, nil
 	}
 
 	// Not in cache, need to recover from log
@@ -155,5 +159,9 @@ func readLocal(key []byte) (*Record, error) {
 		return nil, fmt.Errorf("key not found")
 	}
 
-	return record, nil
+	if canRead(ctx, record) {
+		return record, nil
+	}
+
+	return nil, nil
 }

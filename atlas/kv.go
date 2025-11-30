@@ -119,7 +119,7 @@ func GetKey(ctx context.Context, key []byte) ([]byte, error) {
 	}
 
 	// Check if record has data
-	if record.Data == nil {
+	if record == nil || record.Data == nil {
 		return nil, nil // Key exists but has no value (deleted?)
 	}
 

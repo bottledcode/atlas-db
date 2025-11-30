@@ -292,6 +292,10 @@ func (s *Server) applyMutation(obj *Record, mutation *RecordMutation) *Record {
 			case AclRole_WRITER:
 				updated.Acl.Writers = removePrincipalFromList(updated.Acl.Writers, principal)
 			}
+			if updated.Acl.Owners == nil {
+				//todo: removing all owners deletes all permissions, is this correct?
+				updated.Acl = nil
+			}
 		}
 	}
 	return updated
@@ -304,6 +308,9 @@ func removePrincipalFromList(list []*Principal, toRemove *Principal) []*Principa
 		if p.Name != toRemove.Name || p.Value != toRemove.Value {
 			result = append(result, p)
 		}
+	}
+	if len(result) == 0 {
+		return nil
 	}
 	return result
 }
@@ -448,6 +455,12 @@ func (s *Server) WriteMigration(ctx context.Context, req *WriteMigrationRequest)
 		return &WriteMigrationResponse{Accepted: false}, nil
 	}
 
+	// we need to verify the caller has the authority to propose the migration
+	cached, ok := stateMachine.Get(key)
+	if ok && !canWrite(ctx, cached) {
+		return nil, status.Errorf(codes.PermissionDenied, "permission denied")
+	}
+
 	migration, err := proto.Marshal(record)
 	if err != nil {
 		return nil, err
@@ -553,11 +566,10 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 	return &emptypb.Empty{}, nil
 }
 
-// Ping implements a simple health check endpoint
 func (s *Server) ReadRecord(ctx context.Context, req *ReadRecordRequest) (*ReadRecordResponse, error) {
 	// Read the record from the local state machine
 	// This RPC should only be called on the leader/owner of the key
-	record, err := readLocal(req.GetKey())
+	record, err := readLocal(ctx, req.GetKey())
 	if err != nil {
 		return &ReadRecordResponse{Success: false}, err
 	}
@@ -568,6 +580,7 @@ func (s *Server) ReadRecord(ctx context.Context, req *ReadRecordRequest) (*ReadR
 	}, nil
 }
 
+// Ping implements a simple health check endpoint
 func (s *Server) Ping(ctx context.Context, req *PingRequest) (*PingResponse, error) {
 	// Add mutual node discovery - when we receive a ping, add the sender to our node list
 	connectionManager := GetNodeConnectionManager(ctx)

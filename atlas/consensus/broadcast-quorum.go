@@ -136,7 +136,12 @@ func (b *broadcastQuorum) StealTableOwnership(ctx context.Context, in *StealTabl
 	}
 
 	slices.SortFunc(mergedResult.MissingRecords, func(a, b *RecordMutation) int {
-		return int(a.Slot.Id - b.Slot.Id)
+		if a.Slot.Id < b.Slot.Id {
+			return -1
+		} else if a.Slot.Id > b.Slot.Id {
+			return 1
+		}
+		return 0
 	})
 
 	return mergedResult, nil

@@ -513,8 +513,10 @@ func (s *Server) AcceptMigration(ctx context.Context, req *WriteMigrationRequest
 		}
 	} else {
 		// Cache hit - apply only new mutations
+		// Clone the current record before reassigning to avoid circular reference
+		snapshot := proto.Clone(record).(*Record)
 		record = record.BaseRecord
-		record.BaseRecord = proto.Clone(record).(*Record)
+		record.BaseRecord = snapshot
 
 		err = log.IterateCommitted(func(entry *faster.LogEntry) error {
 			mu := &RecordMutation{}

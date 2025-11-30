@@ -222,67 +222,50 @@ type broadcastClientStreamingClient[Req any, Res any] struct {
 }
 
 func (b *broadcastClientStreamingClient[Req, Res]) Send(req *Req) error {
-	errs := sync.Map{}
-	var wg sync.WaitGroup
+	var localErr error
+	localId := options.CurrentOptions.ServerId
 
 	b.clients.Range(func(key, value any) bool {
-		wg.Add(1)
-		go func(id uint64, client grpc.ClientStreamingClient[Req, Res]) {
-			defer wg.Done()
-			err := client.Send(req)
-			if err != nil {
-				errs.Store(id, err)
-			}
-		}(key.(uint64), value.(grpc.ClientStreamingClient[Req, Res]))
+		id := key.(uint64)
+		client := value.(grpc.ClientStreamingClient[Req, Res])
+
+		if id == localId {
+			// Local node: send synchronously
+			localErr = client.Send(req)
+		} else {
+			// Remote nodes: fire-and-forget
+			go func() {
+				_ = client.Send(req)
+			}()
+		}
 		return true
 	})
 
-	wg.Wait()
-
-	err := make([]error, 0)
-	errs.Range(func(key, value any) bool {
-		err = append(err, value.(error))
-		return true
-	})
-	return errors.Join(err...)
+	return localErr
 }
 
 func (b *broadcastClientStreamingClient[Req, Res]) CloseAndRecv() (*Res, error) {
-	errs := sync.Map{}
-	var wg sync.WaitGroup
-	responses := sync.Map{}
+	var localResp *Res
+	var localErr error
+	localId := options.CurrentOptions.ServerId
 
 	b.clients.Range(func(key, value any) bool {
-		wg.Add(1)
-		go func(id uint64, client grpc.ClientStreamingClient[Req, Res]) {
-			defer wg.Done()
-			resp, err := client.CloseAndRecv()
-			if err != nil {
-				errs.Store(id, err)
-			}
-			responses.Store(id, resp)
-		}(key.(uint64), value.(grpc.ClientStreamingClient[Req, Res]))
+		id := key.(uint64)
+		client := value.(grpc.ClientStreamingClient[Req, Res])
+
+		if id == localId {
+			// Local node: close synchronously and get response
+			localResp, localErr = client.CloseAndRecv()
+		} else {
+			// Remote nodes: fire-and-forget
+			go func() {
+				_, _ = client.CloseAndRecv()
+			}()
+		}
 		return true
 	})
 
-	wg.Wait()
-
-	err := make([]error, 0)
-	errs.Range(func(key, value any) bool {
-		err = append(err, value.(error))
-		return true
-	})
-	if len(err) > 0 {
-		return nil, errors.Join(err...)
-	}
-
-	// For simplicity, return the response from the first client
-	var firstResp *Res
-	responses.Range(func(key, value any) bool {
-		firstResp = value.(*Res)
-		return false
-	})
-	return firstResp, nil
+	return localResp, localErr
 }
 
 func (b *broadcastClientStreamingClient[Req, Res]) Header() (metadata.MD, error) {
@@ -294,29 +277,24 @@ func (b *broadcastClientStreamingClient[Req, Res]) Trailer() metadata.MD {
 }
 
 func (b *broadcastClientStreamingClient[Req, Res]) CloseSend() error {
-	errs := sync.Map{}
-	var wg sync.WaitGroup
+	var localErr error
+	localId := options.CurrentOptions.ServerId
 
 	b.clients.Range(func(key, value any) bool {
-		wg.Add(1)
-		go func(id uint64, client grpc.ClientStreamingClient[Req, Res]) {
-			defer wg.Done()
-			err := client.CloseSend()
-			if err != nil {
-				errs.Store(id, err)
-			}
-		}(key.(uint64), value.(grpc.ClientStreamingClient[Req, Res]))
+		id := key.(uint64)
+		client := value.(grpc.ClientStreamingClient[Req, Res])
+
+		if id == localId {
+			localErr = client.CloseSend()
+		} else {
+			go func() {
+				_ = client.CloseSend()
+			}()
+		}
 		return true
 	})
 
-	wg.Wait()
-
-	err := make([]error, 0)
-	errs.Range(func(key, value any) bool {
-		err = append(err, value.(error))
-		return true
-	})
-	return errors.Join(err...)
+	return localErr
 }
 
 func (b *broadcastClientStreamingClient[Req, Res]) Context() context.Context {
@@ -324,29 +302,24 @@ func (b *broadcastClientStreamingClient[Req, Res]) Context() context.Context {
 }
 
 func (b *broadcastClientStreamingClient[Req, Res]) SendMsg(m any) error {
-	errs := sync.Map{}
-	var wg sync.WaitGroup
+	var localErr error
+	localId := options.CurrentOptions.ServerId
 
 	b.clients.Range(func(key, value any) bool {
-		wg.Add(1)
-		go func(id uint64, client grpc.ClientStreamingClient[Req, Res]) {
-			defer wg.Done()
-			err := client.SendMsg(m)
-			if err != nil {
-				errs.Store(id, err)
-			}
-		}(key.(uint64), value.(grpc.ClientStreamingClient[Req, Res]))
+		id := key.(uint64)
+		client := value.(grpc.ClientStreamingClient[Req, Res])
+
+		if id == localId {
+			localErr = client.SendMsg(m)
+		} else {
+			go func() {
+				_ = client.SendMsg(m)
+			}()
+		}
 		return true
 	})
 
-	wg.Wait()
-
-	err := make([]error, 0)
-	errs.Range(func(key, value any) bool {
-		err = append(err, value.(error))
-		return true
-	})
-	return errors.Join(err...)
+	return localErr
 }
 
 func (b *broadcastClientStreamingClient[Req, Res]) RecvMsg(m any) error {

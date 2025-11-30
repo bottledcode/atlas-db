@@ -23,6 +23,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/bottledcode/atlas-db/atlas/consensus"
 )
@@ -63,21 +64,31 @@ func (s *Store) Put(ctx context.Context, key []byte, data []byte) (hash []byte, 
 
 	stream, err := bq.Replicate(ctx)
 	if err != nil {
-		return hash, fmt.Errorf("failed to create replication stream: %w", err)
+		return hash, fmt.Errorf("failed to create a replication stream: %w", err)
 	}
 
 	// Split into chunks and send directly to server
 	chunks := s.splitIntoChunks(data)
+	errs := make(chan error, len(chunks))
+	wg := sync.WaitGroup{}
 	for i, chunk := range chunks {
-		err = stream.Send(&consensus.ReplicationRequest{
-			Data: &consensus.Data{
-				Key:   hash, // Use hash as the key for CAS
-				Value: chunk,
-				Chunk: uint64(i),
-			},
-		})
+		wg.Add(1)
+		go func(i int, chunk []byte) {
+			errs <- stream.Send(&consensus.ReplicationRequest{
+				Data: &consensus.Data{
+					Key:   hash,
+					Value: chunk,
+					Chunk: uint64(i),
+				}})
+			wg.Done()
+		}(i, chunk)
+	}
+	wg.Wait()
+	close(errs)
+	for err = range errs {
+		// todo: conflicts are not an error
 		if err != nil {
-			return hash, fmt.Errorf("failed to send chunk %d: %w", i, err)
+			return hash, fmt.Errorf("replication failed: %w", err)
 		}
 	}
 

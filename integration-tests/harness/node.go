@@ -28,6 +28,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -123,8 +124,23 @@ func (n *Node) stopLocked() {
 	}
 
 	if n.cmd != nil && n.cmd.Process != nil {
-		_ = n.cmd.Process.Kill()
-		_ = n.cmd.Wait()
+		// Try graceful shutdown with SIGTERM first
+		_ = n.cmd.Process.Signal(syscall.SIGTERM)
+
+		// Wait for process to exit gracefully
+		done := make(chan error, 1)
+		go func() {
+			done <- n.cmd.Wait()
+		}()
+
+		select {
+		case <-done:
+			// Process exited gracefully
+		case <-time.After(5 * time.Second):
+			// Force kill if it doesn't exit in time
+			_ = n.cmd.Process.Kill()
+			<-done
+		}
 	}
 
 	if n.logFile != nil {

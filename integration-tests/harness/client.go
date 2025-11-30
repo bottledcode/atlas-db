@@ -320,14 +320,21 @@ func (sc *SocketClient) RevokeACL(key, principal, perms string) error {
 
 func (sc *SocketClient) WaitForValue(key string, expectedValue string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+	var lastErr error
+	var lastVal string
 
 	for time.Now().Before(deadline) {
 		val, err := sc.KeyGet(key)
 		if err == nil && val == expectedValue {
 			return nil
 		}
+		lastErr = err
+		lastVal = val
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	return fmt.Errorf("timeout waiting for key %s to have value %s", key, expectedValue)
+	if lastErr != nil {
+		return fmt.Errorf("timeout waiting for key %s to have value %s (last error: %v)", key, expectedValue, lastErr)
+	}
+	return fmt.Errorf("timeout waiting for key %s to have value %s (got: %q)", key, expectedValue, lastVal)
 }

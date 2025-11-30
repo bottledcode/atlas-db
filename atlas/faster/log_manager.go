@@ -92,13 +92,14 @@ func (h *logHandle) canClose() bool {
 // LogManager manages FASTER logs with LRU eviction and reference counting
 // This ensures logs are never closed while in use, preventing use-after-free bugs
 type LogManager struct {
-	handles  sync.Map   // string -> *logHandle (concurrent map for fast lookup)
-	lru      *list.List // LRU list of *logHandle (front = oldest, back = newest)
-	lruMu    sync.Mutex // Protects LRU list operations
-	maxOpen  int        // Maximum number of open logs
-	baseDir  string     // Base directory for log files (empty = use global options)
-	closed   atomic.Bool
-	registry *KeyRegistry // Persistent key registry for enumeration
+	handles      sync.Map   // string -> *logHandle (concurrent map for fast lookup)
+	lru          *list.List // LRU list of *logHandle (front = oldest, back = newest)
+	lruMu        sync.Mutex // Protects LRU list operations
+	maxOpen      int        // Maximum number of open logs
+	baseDir      string     // Base directory for log files (empty = use global options)
+	closed       atomic.Bool
+	registry     *KeyRegistry // Persistent key registry for enumeration
+	registryOnce sync.Once    // Ensures registry is initialized only once
 }
 
 // NewLogManager creates a new LogManager with LRU eviction
@@ -126,35 +127,25 @@ func NewLogManagerWithDir(dir string) *LogManager {
 
 // getRegistry returns the key registry, initializing it lazily if needed
 func (l *LogManager) getRegistry() *KeyRegistry {
-	if l.registry != nil {
-		return l.registry
-	}
+	l.registryOnce.Do(func() {
+		// Determine registry path
+		var registryPath string
+		if l.baseDir != "" {
+			registryPath = l.baseDir + "/keys.registry"
+		} else {
+			registryPath = options.CurrentOptions.DbFilename + ".keys.registry"
+		}
 
-	l.lruMu.Lock()
-	defer l.lruMu.Unlock()
+		registry, err := NewKeyRegistry(registryPath)
+		if err != nil {
+			// Log error but continue - we'll operate without persistence
+			// This shouldn't happen in normal operation
+			return
+		}
 
-	// Double-check after lock
-	if l.registry != nil {
-		return l.registry
-	}
-
-	// Determine registry path
-	var registryPath string
-	if l.baseDir != "" {
-		registryPath = l.baseDir + "/keys.registry"
-	} else {
-		registryPath = options.CurrentOptions.DbFilename + ".keys.registry"
-	}
-
-	registry, err := NewKeyRegistry(registryPath)
-	if err != nil {
-		// Log error but continue - we'll operate without persistence
-		// This shouldn't happen in normal operation
-		return nil
-	}
-
-	l.registry = registry
-	return registry
+		l.registry = registry
+	})
+	return l.registry
 }
 
 // GetLog returns a log handle with acquired reference

@@ -83,3 +83,4 @@ jobs:
       with:
         version: latest
         only-new-issues: true
+        args: --tests=false

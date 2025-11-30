@@ -442,7 +442,7 @@ func DoBootstrap(ctx context.Context, seedURL string, dataPath string, metaPath 
 	if err != nil {
 		return fmt.Errorf("failed to connect to seed node: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	client := consensus.NewConsensusClient(conn)
 
@@ -664,49 +664,4 @@ func dialNode(ctx context.Context, addr string) (*grpc.ClientConn, error) {
 			return streamer(ctx, desc, cc, method, opts...)
 		}),
 	)
-}
-
-// applySnapshotEntries applies KV entries to a store
-func applySnapshotEntries(ctx context.Context, store kv.Store, entries []*KVEntry, storeType string) error {
-	options.Logger.Info("Applying snapshot entries",
-		zap.String("store_type", storeType),
-		zap.Int("entry_count", len(entries)))
-
-	// Use batch operations for better performance
-	batch := store.NewBatch()
-	defer batch.Reset()
-
-	batchSize := 0
-	const maxBatchSize = 1000
-
-	for i, entry := range entries {
-		err := batch.Set(entry.Key, entry.Value)
-		if err != nil {
-			return fmt.Errorf("failed to set key %s in batch: %w", string(entry.Key), err)
-		}
-
-		batchSize++
-
-		// Flush batch periodically to avoid memory issues
-		if batchSize >= maxBatchSize || i == len(entries)-1 {
-			err = batch.Flush()
-			if err != nil {
-				return fmt.Errorf("failed to flush %s batch: %w", storeType, err)
-			}
-
-			batch.Reset()
-			batchSize = 0
-
-			options.Logger.Debug("Applied batch of entries",
-				zap.String("store_type", storeType),
-				zap.Int("entries_applied", i+1),
-				zap.Int("total_entries", len(entries)))
-		}
-	}
-
-	options.Logger.Info("Successfully applied all snapshot entries",
-		zap.String("store_type", storeType),
-		zap.Int("total_entries", len(entries)))
-
-	return nil
 }

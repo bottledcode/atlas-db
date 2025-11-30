@@ -19,10 +19,11 @@
 package bootstrap
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/bottledcode/atlas-db/atlas/faster"
 	"google.golang.org/protobuf/proto"
@@ -36,6 +37,8 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 )
+
+var configKey = []byte("atlas:cluster_config")
 
 func JoinCluster(ctx context.Context) error {
 	options.Logger.Info("Starting cluster join process")
@@ -166,11 +169,11 @@ func BootstrapAndJoin(ctx context.Context, bootstrapURL string, dataPath string,
 	}
 
 	// Step 2: Join the cluster as a new node
-	options.Logger.Info("Phase 2: Registering as new node in cluster")
-	err = JoinCluster(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to join cluster: %w", err)
-	}
+	//options.Logger.Info("Phase 2: Registering as new node in cluster")
+	//err = JoinCluster(ctx)
+	//if err != nil {
+	//	return fmt.Errorf("failed to join cluster: %w", err)
+	//}
 
 	options.Logger.Info("Bootstrap process completed successfully - node is now part of the cluster")
 	return nil
@@ -288,6 +291,8 @@ func InitializeMaybe(ctx context.Context) error {
 			}
 			// ensure we do not reference the memory of the log entry
 			currentConfig = proto.Clone(currentConfig).(*consensus.ClusterConfig)
+		case *consensus.RecordMutation_Config:
+			currentConfig = proto.Clone(payload.Config).(*consensus.ClusterConfig)
 		default:
 			return fmt.Errorf("unexpected cluster config mutation type: %T", payload)
 		}
@@ -307,9 +312,19 @@ func InitializeMaybe(ctx context.Context) error {
 		options.Logger.Info("Initialized new cluster configuration with first node", zap.Uint64("node_id", node.Id))
 		// add to the log
 		mutation := &consensus.RecordMutation{
+			Slot: &consensus.Slot{
+				Key:  configKey,
+				Id:   slot + 1,
+				Node: node.Id,
+			},
+			Ballot: &consensus.Ballot{
+				Id:   ballot.ID,
+				Node: node.Id,
+			},
 			Message: &consensus.RecordMutation_Config{
 				Config: currentConfig,
 			},
+			Committed: true,
 		}
 		options.CurrentOptions.ServerId = node.Id
 		data, err := proto.Marshal(mutation)
@@ -333,6 +348,10 @@ func InitializeMaybe(ctx context.Context) error {
 		}
 	} else {
 		for _, n := range currentConfig.Nodes {
+			// determine if this node is us, possibly with a different ID
+			if options.CurrentOptions.ServerId == 0 && n.Address == options.CurrentOptions.AdvertiseAddress && n.Port == int64(options.CurrentOptions.AdvertisePort) {
+				options.CurrentOptions.ServerId = n.Id
+			}
 			err = qm.AddNode(ctx, n)
 			if err != nil {
 				return fmt.Errorf("failed to add existing node to quorum manager: %w", err)
@@ -346,123 +365,305 @@ func InitializeMaybe(ctx context.Context) error {
 	return nil
 }
 
-// DoBootstrap connects to the bootstrap server and receives the complete database state
-func DoBootstrap(ctx context.Context, url string, dataPath string, metaPath string) error {
-	options.Logger.Info("Connecting to bootstrap server for database state transfer", zap.String("url", url))
+// DoBootstrap connects to a seed node, follows cluster config, proposes adding self,
+// and waits until we see ourselves in the committed config.
+func DoBootstrap(ctx context.Context, seedURL string, dataPath string, metaPath string) error {
+	options.Logger.Info("Starting bootstrap process", zap.String("seed_url", seedURL))
 
-	tlsConfig, err := options.GetTLSConfig("https://" + url)
-	if err != nil {
-		return fmt.Errorf("failed to create TLS config: %w", err)
-	}
-
-	creds := credentials.NewTLS(tlsConfig)
-
-	conn, err := grpc.NewClient(url, grpc.WithTransportCredentials(creds), grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-		ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", "Bearer "+options.CurrentOptions.ApiKey)
-		ctx = metadata.AppendToOutgoingContext(ctx, "Atlas-Service", "Bootstrap")
-		return invoker(ctx, method, req, reply, cc, opts...)
-	}), grpc.WithStreamInterceptor(func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
-		ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", "Bearer "+options.CurrentOptions.ApiKey)
-		ctx = metadata.AppendToOutgoingContext(ctx, "Atlas-Service", "Bootstrap")
-		return streamer(ctx, desc, cc, method, opts...)
-	}))
-	if err != nil {
-		return err
-	}
-	defer func() { _ = conn.Close() }()
-
-	client := NewBootstrapClient(conn)
-	resp, err := client.GetBootstrapData(ctx, &BootstrapRequest{
-		Version: 1,
-	})
-	if err != nil {
-		return err
-	}
-
-	// Collect all chunks into a buffer
-	var completeData bytes.Buffer
-
-	for {
-		chunk, err := resp.Recv()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("failed to receive bootstrap chunk: %w", err)
-		}
-
-		if chunk.GetIncompatibleVersion() != nil {
-			return fmt.Errorf("incompatible version: needs version %d", chunk.GetIncompatibleVersion().NeedsVersion)
-		}
-
-		data := chunk.GetBootstrapData().GetData()
-		if len(data) == 0 {
-			// Empty chunk signals end of stream
-			break
-		}
-
-		_, err = completeData.Write(data)
-		if err != nil {
-			return fmt.Errorf("failed to buffer bootstrap data: %w", err)
-		}
-	}
-
-	// Parse the complete database snapshot
-	var snapshot DatabaseSnapshot
-	err = proto.Unmarshal(completeData.Bytes(), &snapshot)
-	if err != nil {
-		return fmt.Errorf("failed to unmarshal database snapshot: %w", err)
-	}
-
-	options.Logger.Info("Received database snapshot",
-		zap.Int("meta_entries", len(snapshot.MetaEntries)),
-		zap.Int("data_entries", len(snapshot.DataEntries)))
-
-	// Initialize the KV pool with clean stores
-	err = kv.CreatePool(dataPath, metaPath)
+	// Initialize the KV pool
+	err := kv.CreatePool(dataPath, metaPath)
 	if err != nil {
 		return fmt.Errorf("failed to create KV pool: %w", err)
 	}
 
-	kvPool := kv.GetPool()
-	if kvPool == nil {
-		return fmt.Errorf("KV pool not initialized after creation")
+	// Define ourselves (ID will be assigned later if needed)
+	self := &consensus.Node{
+		Address: options.CurrentOptions.AdvertiseAddress,
+		Region:  &consensus.Region{Name: options.CurrentOptions.Region},
+		Port:    int64(options.CurrentOptions.AdvertisePort),
+		Active:  true,
+		Rtt:     durationpb.New(0),
 	}
 
-	// Apply metadata entries to metadata store
-	if len(snapshot.MetaEntries) > 0 {
-		metaStore := kvPool.MetaStore()
-		if metaStore == nil {
-			return fmt.Errorf("metadata store not available")
-		}
+	// Load existing config from local storage (snapshot + log entries)
+	var currentConfig *consensus.ClusterConfig
+	var currentSlot uint64
+	var configMu sync.Mutex
+	alreadyInCluster := false
 
-		err = applySnapshotEntries(ctx, metaStore, snapshot.MetaEntries, "metadata")
-		if err != nil {
-			return fmt.Errorf("failed to apply metadata entries: %w", err)
+	mgr := faster.NewLogManager()
+	log, release, err := mgr.InitKey(configKey, func(snapshot *faster.Snapshot) error {
+		// Load from snapshot
+		cfg := &consensus.ClusterConfig{}
+		if err := proto.Unmarshal(snapshot.Data, cfg); err != nil {
+			return fmt.Errorf("failed to unmarshal config snapshot: %w", err)
 		}
-	}
-
-	// Apply data entries to data store
-	if len(snapshot.DataEntries) > 0 {
-		dataStore := kvPool.DataStore()
-		if dataStore == nil {
-			return fmt.Errorf("data store not available")
+		currentConfig = cfg
+		currentSlot = snapshot.Slot
+		return nil
+	}, func(entry *faster.LogEntry) error {
+		// Replay log entry
+		record := &consensus.RecordMutation{}
+		if err := proto.Unmarshal(entry.Value, record); err != nil {
+			return fmt.Errorf("failed to unmarshal config entry: %w", err)
 		}
-
-		err = applySnapshotEntries(ctx, dataStore, snapshot.DataEntries, "data")
-		if err != nil {
-			return fmt.Errorf("failed to apply data entries: %w", err)
+		if cfg, ok := record.Message.(*consensus.RecordMutation_Config); ok {
+			currentConfig = proto.Clone(cfg.Config).(*consensus.ClusterConfig)
+			currentSlot = entry.Slot
 		}
-	}
-
-	// Sync stores to ensure persistence
-	err = kvPool.Sync()
+		return nil
+	})
 	if err != nil {
-		return fmt.Errorf("failed to sync KV stores: %w", err)
+		return fmt.Errorf("failed to initialize cluster config log: %w", err)
+	}
+	defer release()
+
+	// Check if we're already in the locally stored config
+	if currentConfig != nil {
+		for _, node := range currentConfig.Nodes {
+			if node.Address == self.Address && node.Port == self.Port {
+				self.Id = node.Id
+				options.CurrentOptions.ServerId = self.Id
+				alreadyInCluster = true
+				options.Logger.Info("Found ourselves in local config", zap.Uint64("node_id", self.Id))
+				break
+			}
+		}
 	}
 
-	options.Logger.Info("Bootstrap completed successfully - database state transferred and applied")
+	// If we're already in the cluster, just need to catch up - no need to propose
+	if alreadyInCluster {
+		options.Logger.Info("Already part of cluster, bootstrap complete")
+		return nil
+	}
+
+	// Connect to seed node
+	conn, err := dialNode(ctx, seedURL)
+	if err != nil {
+		return fmt.Errorf("failed to connect to seed node: %w", err)
+	}
+	defer conn.Close()
+
+	client := consensus.NewConsensusClient(conn)
+
+	// Start following cluster config from seed node
+	stream, err := client.Follow(ctx, &consensus.SlotRequest{
+		Key:       configKey,
+		StartSlot: currentSlot,
+		EndSlot:   0,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to start follow stream: %w", err)
+	}
+
+	// Channel to signal when we see ourselves in config
+	sawSelf := make(chan struct{})
+	errChan := make(chan error, 1)
+	configReady := make(chan struct{})
+	var configReadyOnce sync.Once
+
+	// Follow goroutine
+	go func() {
+		for {
+			resp, err := stream.Recv()
+			if errors.Is(err, io.EOF) {
+				errChan <- fmt.Errorf("follow stream closed unexpectedly")
+				return
+			}
+			if err != nil {
+				errChan <- fmt.Errorf("follow stream error: %w", err)
+				return
+			}
+
+			switch c := resp.Message.(type) {
+			case *consensus.RecordMutation_Config:
+				// Apply to local log
+				data, err := proto.Marshal(resp)
+				if err != nil {
+					options.Logger.Error("failed to marshal config", zap.Error(err))
+					continue
+				}
+
+				ballot := faster.Ballot{
+					ID:     resp.Ballot.Id,
+					NodeID: resp.Ballot.Node,
+				}
+
+				if err := log.Accept(resp.Slot.Id, ballot, data); err != nil {
+					options.Logger.Error("failed to accept config", zap.Error(err))
+					continue
+				}
+
+				if err := log.Commit(resp.Slot.Id); err != nil {
+					options.Logger.Error("failed to commit config", zap.Error(err))
+					continue
+				}
+
+				// Update current config
+				configMu.Lock()
+				currentConfig = proto.Clone(c.Config).(*consensus.ClusterConfig)
+				currentSlot = resp.Slot.Id
+				configMu.Unlock()
+
+				// Signal that we have initial config
+				configReadyOnce.Do(func() {
+					close(configReady)
+				})
+
+				// Check if we see ourselves
+				for _, n := range c.Config.Nodes {
+					if n.Id == self.Id && self.Id != 0 {
+						close(sawSelf)
+						return
+					}
+				}
+			}
+		}
+	}()
+
+	// Wait for initial config from remote (or use what we already have)
+	if currentConfig == nil {
+		select {
+		case <-configReady:
+			options.Logger.Info("Received initial cluster config from seed")
+		case err := <-errChan:
+			return err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	} else {
+		// We have local config but aren't in it yet - signal ready
+		configReadyOnce.Do(func() {
+			close(configReady)
+		})
+	}
+
+	// Assign ourselves the next node ID
+	configMu.Lock()
+	maxID := uint64(0)
+	for _, node := range currentConfig.Nodes {
+		if node.Id > maxID {
+			maxID = node.Id
+		}
+		// Double-check if we're in the remote config
+		if node.Address == self.Address && node.Port == self.Port {
+			self.Id = node.Id
+			options.CurrentOptions.ServerId = self.Id
+			configMu.Unlock()
+			options.Logger.Info("Found ourselves in remote config", zap.Uint64("node_id", self.Id))
+			return nil
+		}
+	}
+	self.Id = maxID + 1
+	options.CurrentOptions.ServerId = self.Id
+	configSnapshot := proto.Clone(currentConfig).(*consensus.ClusterConfig)
+	slotSnapshot := currentSlot
+	configMu.Unlock()
+
+	options.Logger.Info("Assigned new node ID", zap.Uint64("node_id", self.Id))
+
+	// Propose adding ourselves
+	options.Logger.Info("Proposing self to cluster")
+	err = proposeAddNode(ctx, configSnapshot, self, slotSnapshot)
+	if err != nil {
+		return fmt.Errorf("failed to propose adding self: %w", err)
+	}
+
+	// Wait until we see ourselves in config
+	select {
+	case <-sawSelf:
+		options.Logger.Info("Successfully joined cluster")
+	case err := <-errChan:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
 	return nil
+}
+
+// proposeAddNode proposes adding a new node to the cluster config via broadcast quorum
+func proposeAddNode(ctx context.Context, currentConfig *consensus.ClusterConfig, self *consensus.Node, currentSlot uint64) error {
+	// Create new config with self added
+	newConfig := proto.Clone(currentConfig).(*consensus.ClusterConfig)
+	newConfig.ClusterVersion++
+	newConfig.Nodes = append(newConfig.Nodes, self)
+
+	// Build the mutation
+	mutation := &consensus.RecordMutation{
+		Slot: &consensus.Slot{
+			Key:  configKey,
+			Id:   currentSlot + 1,
+			Node: self.Id,
+		},
+		Ballot: &consensus.Ballot{
+			Id:   currentConfig.ClusterVersion + 1,
+			Node: self.Id,
+		},
+		Message: &consensus.RecordMutation_Config{
+			Config: newConfig,
+		},
+		Committed: false,
+	}
+
+	// Get quorum manager and add all existing nodes
+	qm := consensus.GetDefaultQuorumManager(ctx)
+	for _, node := range currentConfig.Nodes {
+		if err := qm.AddNode(ctx, node); err != nil {
+			options.Logger.Warn("failed to add node to quorum manager", zap.Error(err))
+		}
+	}
+
+	quorum, err := qm.GetBroadcastQuorum(ctx, configKey)
+	if err != nil {
+		return fmt.Errorf("failed to get broadcast quorum: %w", err)
+	}
+
+	// Phase 2: Accept
+	acceptResp, err := quorum.WriteMigration(ctx, &consensus.WriteMigrationRequest{
+		Record: mutation,
+	})
+	if err != nil {
+		return fmt.Errorf("write migration failed: %w", err)
+	}
+	if !acceptResp.Accepted {
+		return fmt.Errorf("write migration not accepted")
+	}
+
+	// Phase 3: Commit
+	mutation.Committed = true
+	_, err = quorum.AcceptMigration(ctx, &consensus.WriteMigrationRequest{
+		Record: mutation,
+	})
+	if err != nil {
+		return fmt.Errorf("accept migration failed: %w", err)
+	}
+
+	return nil
+}
+
+// dialNode creates a gRPC connection to a node
+func dialNode(ctx context.Context, addr string) (*grpc.ClientConn, error) {
+	tlsConfig, err := options.GetTLSConfig("https://" + addr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create TLS config: %w", err)
+	}
+
+	creds := credentials.NewTLS(tlsConfig)
+
+	return grpc.NewClient(addr,
+		grpc.WithTransportCredentials(creds),
+		grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+			ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", "Bearer "+options.CurrentOptions.ApiKey)
+			ctx = metadata.AppendToOutgoingContext(ctx, "Atlas-Service", "Bootstrap")
+			return invoker(ctx, method, req, reply, cc, opts...)
+		}),
+		grpc.WithStreamInterceptor(func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+			ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", "Bearer "+options.CurrentOptions.ApiKey)
+			ctx = metadata.AppendToOutgoingContext(ctx, "Atlas-Service", "Bootstrap")
+			return streamer(ctx, desc, cc, method, opts...)
+		}),
+	)
 }
 
 // applySnapshotEntries applies KV entries to a store

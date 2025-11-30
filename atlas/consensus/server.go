@@ -47,10 +47,18 @@ var stateMachine *cache.CloxCache[*Record] // Cache of Records
 var ownership sync.Map                     // map[string]OwnershipState
 
 func IsOwned(key []byte) bool {
+	if IsOwnerlessKey(key) {
+		return true
+	}
+
 	own := getCurrentOwnershipState(key)
 	own.mu.RLock()
 	defer own.mu.RUnlock()
 	return own.owned
+}
+
+func IsOwnerlessKey(key []byte) bool {
+	return bytes.HasPrefix(key, []byte("atlas:"))
 }
 
 type OwnershipState struct {
@@ -154,7 +162,7 @@ func (s *Server) Follow(req *SlotRequest, stream grpc.ServerStreamingServer[Reco
 	// catch up the node
 	own := getCurrentOwnershipState(req.Key)
 	own.mu.Lock()
-	if !own.owned {
+	if !IsOwnerlessKey(req.Key) && !own.owned {
 		own.mu.Unlock()
 		return status.Errorf(codes.FailedPrecondition, "not currently the owner of %v", req.Key)
 	}

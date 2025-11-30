@@ -85,3 +85,76 @@ jobs:
         version: latest
         only-new-issues: false
         args: --tests=false
+
+  benchmark:
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version: '1.25.1'
+        cache: true
+
+    - name: Install benchstat
+      run: go install golang.org/x/perf/cmd/benchstat@latest
+
+    - name: Run benchmarks
+      run: |
+        go test -bench=. -benchmem -count=5 ./atlas/faster/... ./atlas/cache/... 2>&1 | tee benchmark-results.txt
+
+    - name: Download main branch benchmark results
+      id: cache-main
+      if: github.event_name == 'pull_request'
+      uses: actions/cache/restore@v4
+      with:
+        path: main-benchmark-results.txt
+        key: benchmark-main-${{ runner.os }}-dummy
+        restore-keys: |
+          benchmark-main-${{ runner.os }}-
+
+    - name: Compare benchmarks
+      if: github.event_name == 'pull_request' && steps.cache-main.outputs.cache-hit != ''
+      run: |
+        echo "## Benchmark Comparison" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Comparing current branch against main:" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        benchstat main-benchmark-results.txt benchmark-results.txt >> $GITHUB_STEP_SUMMARY 2>&1 || true
+        echo '```' >> $GITHUB_STEP_SUMMARY
+
+    - name: Show benchmark results (no comparison available)
+      if: github.event_name == 'pull_request' && steps.cache-main.outputs.cache-hit == ''
+      run: |
+        echo "## Benchmark Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "No main branch baseline available for comparison." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        cat benchmark-results.txt >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+
+    - name: Show benchmark results (main branch)
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      run: |
+        echo "## Benchmark Results (Main Branch)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        cat benchmark-results.txt >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+
+    - name: Prepare main branch benchmark results for caching
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      run: cp benchmark-results.txt main-benchmark-results.txt
+
+    - name: Save main branch benchmark results
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: actions/cache/save@v4
+      with:
+        path: main-benchmark-results.txt
+        key: benchmark-main-${{ runner.os }}-${{ github.sha }}

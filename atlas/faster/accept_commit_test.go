@@ -214,13 +214,13 @@ func TestResetOnlyWhenTrulyEmpty(t *testing.T) {
 // TestResetPublishRaceCondition tests the specific race condition from the code review:
 //
 // The race scenario:
-// 1. Buffer state: reserved=X, published=X, tail=X (fully drained)
-// 2. Thread A (resetter): reserved.CompareAndSwap(X, 0) succeeds → reserved=0
-// 3. Thread B (writer): enters Append, sees reserved=0, CAS claims space → reserved=dataLen
-// 4. Thread B: copies data, tries published.CompareAndSwap(0, dataLen)
-//    BUT published is still X! CAS fails, Thread B spins waiting.
-// 5. Thread A: published.Store(0) → published=0
-// 6. Thread B: CAS(0, dataLen) succeeds → published=dataLen
+//  1. Buffer state: reserved=X, published=X, tail=X (fully drained)
+//  2. Thread A (resetter): reserved.CompareAndSwap(X, 0) succeeds → reserved=0
+//  3. Thread B (writer): enters Append, sees reserved=0, CAS claims space → reserved=dataLen
+//  4. Thread B: copies data, tries published.CompareAndSwap(0, dataLen)
+//     BUT published is still X! CAS fails, Thread B spins waiting.
+//  5. Thread A: published.Store(0) → published=0
+//  6. Thread B: CAS(0, dataLen) succeeds → published=dataLen
 //
 // This test verifies Thread B doesn't deadlock permanently - it should recover
 // once Thread A completes the reset sequence.
@@ -230,7 +230,7 @@ func TestResetPublishRaceCondition(t *testing.T) {
 	// Phase 1: Fill and drain the buffer to get to a "reset-able" state
 	value := make([]byte, 100)
 	entriesWritten := 0
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		entry := &LogEntry{
 			Slot:      uint64(i),
 			Ballot:    Ballot{ID: 1, NodeID: 1},
@@ -265,32 +265,28 @@ func TestResetPublishRaceCondition(t *testing.T) {
 	var drainerWg sync.WaitGroup
 
 	// Background drainer - prevents buffer exhaustion
-	drainerWg.Add(1)
-	go func() {
-		defer drainerWg.Done()
+	drainerWg.Go(func() {
 		for !stopFlag.Load() {
 			rb.TryAdvanceTail(func(slot uint64) bool {
 				return false // All entries considered flushed
 			})
 			time.Sleep(1 * time.Millisecond)
 		}
-	}()
+	})
 
 	// Goroutines that aggressively call resetIfDrained
-	for r := 0; r < 2; r++ {
-		workersWg.Add(1)
-		go func() {
-			defer workersWg.Done()
+	for range 2 {
+		workersWg.Go(func() {
 			for i := 0; i < 10000 && !stopFlag.Load(); i++ {
 				if rb.resetIfDrained() {
 					successfulResets.Add(1)
 				}
 			}
-		}()
+		})
 	}
 
 	// Goroutines that aggressively write
-	for w := 0; w < 4; w++ {
+	for w := range 4 {
 		workersWg.Add(1)
 		go func(workerID int) {
 			defer workersWg.Done()
@@ -347,12 +343,12 @@ func TestResetPublishRaceCondition(t *testing.T) {
 // careful coordination. This is a more targeted version of the above test.
 func TestResetRaceWithManualTiming(t *testing.T) {
 	// We'll run many iterations since the race window is small
-	for iteration := 0; iteration < 100; iteration++ {
+	for iteration := range 100 {
 		rb := NewRingBuffer(10 * 1024)
 
 		// Fill buffer to ~75% to trigger reset conditions
 		value := make([]byte, 50)
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			entry := &LogEntry{
 				Slot:      uint64(i),
 				Ballot:    Ballot{ID: 1, NodeID: 1},
@@ -396,7 +392,7 @@ func TestResetRaceWithManualTiming(t *testing.T) {
 		}()
 
 		// Wait for both with timeout
-		for i := 0; i < 2; i++ {
+		for range 2 {
 			select {
 			case <-done:
 				// One operation completed

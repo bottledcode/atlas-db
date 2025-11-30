@@ -240,7 +240,7 @@ ready:
 		select {
 		case <-ctx.Done():
 			return
-		case err = <-errs:
+		case <-errs:
 			//options.Logger.Error("Error reading from client connection", zap.Error(err))
 			return
 		case cmd := <-cmds:

@@ -22,7 +22,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"strings"
 	"sync"
 	"time"
 
@@ -620,18 +619,21 @@ func (s *Server) Ping(ctx context.Context, req *PingRequest) (*PingResponse, err
 }
 
 func (s *Server) PrefixScan(ctx context.Context, req *PrefixScanRequest) (*PrefixScanResponse, error) {
-	ownedKeys := make([][]byte, 0)
 	prefixStr := string(req.Prefix)
-	ownership.Range(func(key, value any) bool {
-		keyStr := key.(string)
-		if strings.HasPrefix(keyStr, prefixStr) {
-			ownedKeys = append(ownedKeys, []byte(keyStr))
-		}
-		return true
-	})
+
+	// Use the persistent key registry for enumeration
+	// This survives restarts unlike the in-memory ownership map
+	pattern := prefixStr + "*"
+	keys := logs.Glob(pattern)
+
+	// Convert to [][]byte
+	result := make([][]byte, len(keys))
+	for i, key := range keys {
+		result[i] = []byte(key)
+	}
 
 	return &PrefixScanResponse{
 		Success: true,
-		Keys:    ownedKeys,
+		Keys:    result,
 	}, nil
 }

@@ -92,31 +92,69 @@ func (h *logHandle) canClose() bool {
 // LogManager manages FASTER logs with LRU eviction and reference counting
 // This ensures logs are never closed while in use, preventing use-after-free bugs
 type LogManager struct {
-	handles sync.Map   // string -> *logHandle (concurrent map for fast lookup)
-	lru     *list.List // LRU list of *logHandle (front = oldest, back = newest)
-	lruMu   sync.Mutex // Protects LRU list operations
-	maxOpen int        // Maximum number of open logs
-	baseDir string     // Base directory for log files (empty = use global options)
-	closed  atomic.Bool
+	handles  sync.Map   // string -> *logHandle (concurrent map for fast lookup)
+	lru      *list.List // LRU list of *logHandle (front = oldest, back = newest)
+	lruMu    sync.Mutex // Protects LRU list operations
+	maxOpen  int        // Maximum number of open logs
+	baseDir  string     // Base directory for log files (empty = use global options)
+	closed   atomic.Bool
+	registry *KeyRegistry // Persistent key registry for enumeration
 }
 
 // NewLogManager creates a new LogManager with LRU eviction
 func NewLogManager() *LogManager {
-	return &LogManager{
+	lm := &LogManager{
 		lru:     list.New(),
 		maxOpen: MaxHotKeys,
 		baseDir: "", // Use global options
 	}
+	// Registry will be initialized lazily on first use via getRegistry()
+	return lm
 }
 
 // NewLogManagerWithDir creates a LogManager with a specific base directory
 // This is useful for tests/benchmarks that need isolated storage
 func NewLogManagerWithDir(dir string) *LogManager {
-	return &LogManager{
+	lm := &LogManager{
 		lru:     list.New(),
 		maxOpen: MaxHotKeys,
 		baseDir: dir,
 	}
+	// Registry will be initialized lazily on first use via getRegistry()
+	return lm
+}
+
+// getRegistry returns the key registry, initializing it lazily if needed
+func (l *LogManager) getRegistry() *KeyRegistry {
+	if l.registry != nil {
+		return l.registry
+	}
+
+	l.lruMu.Lock()
+	defer l.lruMu.Unlock()
+
+	// Double-check after lock
+	if l.registry != nil {
+		return l.registry
+	}
+
+	// Determine registry path
+	var registryPath string
+	if l.baseDir != "" {
+		registryPath = l.baseDir + "/keys.registry"
+	} else {
+		registryPath = options.CurrentOptions.DbFilename + ".keys.registry"
+	}
+
+	registry, err := NewKeyRegistry(registryPath)
+	if err != nil {
+		// Log error but continue - we'll operate without persistence
+		// This shouldn't happen in normal operation
+		return nil
+	}
+
+	l.registry = registry
+	return registry
 }
 
 // GetLog returns a log handle with acquired reference
@@ -197,8 +235,36 @@ func (l *LogManager) GetLog(key []byte) (*FasterLog, func(), error) {
 	// Add to map
 	l.handles.Store(keyStr, handle)
 
+	// Register key in persistent registry (ignore errors - registry is best-effort)
+	if registry := l.getRegistryUnlocked(); registry != nil {
+		_ = registry.Register(keyStr)
+	}
+
 	release := l.makeReleaseFunc(handle)
 	return log, release, nil
+}
+
+// getRegistryUnlocked returns the registry without acquiring lruMu (caller must hold it)
+func (l *LogManager) getRegistryUnlocked() *KeyRegistry {
+	if l.registry != nil {
+		return l.registry
+	}
+
+	// Determine registry path
+	var registryPath string
+	if l.baseDir != "" {
+		registryPath = l.baseDir + "/keys.registry"
+	} else {
+		registryPath = options.CurrentOptions.DbFilename + ".keys.registry"
+	}
+
+	registry, err := NewKeyRegistry(registryPath)
+	if err != nil {
+		return nil
+	}
+
+	l.registry = registry
+	return registry
 }
 
 // makeReleaseFunc creates a release function that's safe to call multiple times
@@ -414,6 +480,14 @@ func (l *LogManager) CloseAll() error {
 	})
 
 	wg.Wait()
+
+	// Close the registry
+	if l.registry != nil {
+		if err := l.registry.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
 	return firstErr
 }
 
@@ -445,4 +519,45 @@ func (l *LogManager) Stats() LogManagerStats {
 		OpenLogs:   openLogs,
 		ActiveRefs: activeRefs,
 	}
+}
+
+// Glob returns all keys matching the given glob pattern.
+// Supports: * (any chars), ? (single char), [abc] (char class), [a-z] (range)
+// Returns nil if registry is not available.
+func (l *LogManager) Glob(pattern string) []string {
+	registry := l.getRegistry()
+	if registry == nil {
+		return nil
+	}
+	return registry.Glob(pattern)
+}
+
+// ListKeys returns all registered keys.
+// Returns nil if registry is not available.
+func (l *LogManager) ListKeys() []string {
+	registry := l.getRegistry()
+	if registry == nil {
+		return nil
+	}
+	return registry.List()
+}
+
+// KeyCount returns the number of registered keys.
+// Returns 0 if registry is not available.
+func (l *LogManager) KeyCount() int {
+	registry := l.getRegistry()
+	if registry == nil {
+		return 0
+	}
+	return registry.Count()
+}
+
+// HasKey checks if a key exists in the registry.
+// Returns false if registry is not available.
+func (l *LogManager) HasKey(key string) bool {
+	registry := l.getRegistry()
+	if registry == nil {
+		return false
+	}
+	return registry.Contains(key)
 }

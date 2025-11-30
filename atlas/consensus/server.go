@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -620,9 +621,11 @@ func (s *Server) Ping(ctx context.Context, req *PingRequest) (*PingResponse, err
 
 func (s *Server) PrefixScan(ctx context.Context, req *PrefixScanRequest) (*PrefixScanResponse, error) {
 	ownedKeys := make([][]byte, 0)
+	prefixStr := string(req.Prefix)
 	ownership.Range(func(key, value any) bool {
-		if bytes.HasPrefix(key.([]byte), req.Prefix) {
-			ownedKeys = append(ownedKeys, key.([]byte))
+		keyStr := key.(string)
+		if strings.HasPrefix(keyStr, prefixStr) {
+			ownedKeys = append(ownedKeys, []byte(keyStr))
 		}
 		return true
 	})

@@ -520,7 +520,8 @@ func (b *broadcastQuorum) PrefixScan(ctx context.Context, in *PrefixScanRequest,
 			return err
 		}
 		for _, v := range resp.Keys {
-			keys.Store(v, nil)
+			// Store as string since []byte is not hashable
+			keys.Store(string(v), nil)
 		}
 		return nil
 	})
@@ -530,7 +531,7 @@ func (b *broadcastQuorum) PrefixScan(ctx context.Context, in *PrefixScanRequest,
 
 	result := &PrefixScanResponse{Keys: make([][]byte, 0)}
 	keys.Range(func(key, value any) bool {
-		result.Keys = append(result.Keys, key.([]byte))
+		result.Keys = append(result.Keys, []byte(key.(string)))
 		return true
 	})
 

@@ -138,5 +138,26 @@ func GetKey(ctx context.Context, key []byte) ([]byte, error) {
 // PrefixScan performs a distributed prefix scan across all nodes in the cluster.
 // It returns all keys matching the prefix that are owned by any node.
 func PrefixScan(ctx context.Context, keyPrefix []byte) ([]string, error) {
-	return nil, nil
+	// Get broadcast quorum to query all nodes
+	qm := consensus.GetDefaultQuorumManager(ctx)
+	bq, err := qm.GetBroadcastQuorum(ctx, keyPrefix)
+	if err != nil {
+		return nil, err
+	}
+
+	// Perform prefix scan across all nodes
+	resp, err := bq.PrefixScan(ctx, &consensus.PrefixScanRequest{
+		Prefix: keyPrefix,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert [][]byte to []string
+	keys := make([]string, len(resp.Keys))
+	for i, k := range resp.Keys {
+		keys[i] = string(k)
+	}
+
+	return keys, nil
 }

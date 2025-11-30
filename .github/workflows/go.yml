@@ -18,7 +18,7 @@ permissions:
 jobs:
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
     - uses: actions/checkout@v6
 
@@ -36,7 +36,7 @@ jobs:
       run: make test-go
 
   integration-test:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
     - uses: actions/checkout@v6
 
@@ -64,7 +64,7 @@ jobs:
       run: go test -v -timeout 5m -tags=integration ./integration-tests/...
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
     - uses: actions/checkout@v6
 

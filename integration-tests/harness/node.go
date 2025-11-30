@@ -83,6 +83,8 @@ func (n *Node) Start() error {
 	n.cmd = exec.Command(n.caddyBinary, "run", "--config", n.caddyfile)
 	n.cmd.Dir = n.Config.DBPath
 	n.cmd.Env = os.Environ()
+	// Create new process group so we can kill all children on timeout
+	n.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if n.Config.LatencyPreset != "" {
 		n.cmd.Env = append(n.cmd.Env, "ATLAS_LATENCY_PRESET="+n.Config.LatencyPreset)
 	}
@@ -124,8 +126,10 @@ func (n *Node) stopLocked() {
 	}
 
 	if n.cmd != nil && n.cmd.Process != nil {
-		// Try graceful shutdown with SIGTERM first
-		_ = n.cmd.Process.Signal(syscall.SIGTERM)
+		pgid := n.cmd.Process.Pid
+
+		// Try graceful shutdown with SIGTERM to the process group
+		_ = syscall.Kill(-pgid, syscall.SIGTERM)
 
 		// Wait for process to exit gracefully
 		done := make(chan error, 1)
@@ -137,8 +141,8 @@ func (n *Node) stopLocked() {
 		case <-done:
 			// Process exited gracefully
 		case <-time.After(5 * time.Second):
-			// Force kill if it doesn't exit in time
-			_ = n.cmd.Process.Kill()
+			// Force kill the entire process group if it doesn't exit in time
+			_ = syscall.Kill(-pgid, syscall.SIGKILL)
 			<-done
 		}
 	}
@@ -190,6 +194,12 @@ func (n *Node) Stop() error {
 
 func (n *Node) Client() *SocketClient {
 	return n.client
+}
+
+// NewClient creates a new independent socket connection to this node.
+// Use this for concurrent access - each goroutine should have its own client.
+func (n *Node) NewClient() *SocketClient {
+	return NewSocketClient(n.Config.SocketPath)
 }
 
 func (n *Node) IsRunning() bool {

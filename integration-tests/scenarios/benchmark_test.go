@@ -558,7 +558,9 @@ func runConcurrentWriteBenchmark(t *testing.T, cfg BenchmarkConfig, name string)
 				return
 			}
 
-			client := node.Client()
+			// Each worker needs its own connection - sockets aren't thread-safe
+			client := node.NewClient()
+			defer client.Close()
 
 			for i := 0; i < opsPerWorker; i++ {
 				key := fmt.Sprintf("bench-w%d-key-%d", workerID, i)

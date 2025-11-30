@@ -1,5 +1,4 @@
 //go:build integration
-// +build integration
 
 /*
  * This file is part of Atlas-DB.

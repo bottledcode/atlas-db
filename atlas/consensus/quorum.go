@@ -36,6 +36,15 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
+// safeRttDuration returns the RTT duration, or max duration if RTT is nil.
+// This ensures unmeasured nodes sort last in RTT-based ordering.
+func safeRttDuration(node *QuorumNode) time.Duration {
+	if rtt := node.GetRtt(); rtt != nil {
+		return rtt.AsDuration()
+	}
+	return time.Duration(1<<63 - 1) // max duration
+}
+
 type QuorumManager interface {
 	GetQuorum(ctx context.Context, table string) (Quorum, error)
 	GetBroadcastQuorum(ctx context.Context, table []byte) (Quorum, error)
@@ -171,23 +180,23 @@ type Quorum interface {
 
 type QuorumNode struct {
 	*Node
-	closer func()
-	client ConsensusClient
+	closer     func()
+	client     ConsensusClient
+	clientOnce sync.Once
+	clientErr  error
 }
 
 // ensureClient lazily initializes the gRPC client with latency injection support.
 func (q *QuorumNode) ensureClient() error {
-	if q.client != nil {
-		return nil
-	}
-	var err error
-	q.client, q.closer, err = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
-	if err != nil {
-		return err
-	}
-	// Wrap with latency injection for integration testing
-	q.client = WrapWithLatency(q.client, q.GetRegion().GetName())
-	return nil
+	q.clientOnce.Do(func() {
+		q.client, q.closer, q.clientErr = getNewClient(q.GetAddress() + ":" + strconv.Itoa(int(q.GetPort())))
+		if q.clientErr != nil {
+			return
+		}
+		// Wrap with latency injection for integration testing
+		q.client = WrapWithLatency(q.client, q.GetRegion().GetName())
+	})
+	return q.clientErr
 }
 
 func (q *QuorumNode) RequestSlots(ctx context.Context, in *SlotRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RecordMutation], error) {
@@ -347,10 +356,10 @@ func (q *defaultQuorumManager) getClosestRegions(nodes map[RegionName][]*QuorumN
 		iRtt := time.Duration(0)
 		jRtt := time.Duration(0)
 		for _, node := range nodes[regions[i]] {
-			iRtt += node.GetRtt().AsDuration()
+			iRtt += safeRttDuration(node)
 		}
 		for _, node := range nodes[regions[j]] {
-			jRtt += node.GetRtt().AsDuration()
+			jRtt += safeRttDuration(node)
 		}
 
 		return iRtt < jRtt
@@ -660,10 +669,10 @@ func (q *defaultQuorumManager) getClosestRegionsDiagnostic(nodes map[RegionName]
 		iRtt := time.Duration(0)
 		jRtt := time.Duration(0)
 		for _, node := range nodes[regions[i]] {
-			iRtt += node.GetRtt().AsDuration()
+			iRtt += safeRttDuration(node)
 		}
 		for _, node := range nodes[regions[j]] {
-			jRtt += node.GetRtt().AsDuration()
+			jRtt += safeRttDuration(node)
 		}
 		return iRtt < jRtt
 	})

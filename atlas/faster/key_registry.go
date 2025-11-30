@@ -439,15 +439,17 @@ func (kr *KeyRegistry) Compact() error {
 	}
 	_ = tempFile.Close()
 
-	// Close old file
-	_ = kr.file.Close()
-
-	// Rename temp to main
+	// Rename temp to main BEFORE closing old file
+	// If rename fails, old file is still valid and usable
 	if err := os.Rename(tempPath, kr.filePath); err != nil {
+		_ = os.Remove(tempPath)
 		return err
 	}
 
-	// Reopen
+	// Close old file handle (file was renamed over, but handle still valid until closed)
+	_ = kr.file.Close()
+
+	// Reopen with new file
 	kr.file, err = os.OpenFile(kr.filePath, os.O_RDWR|os.O_APPEND, 0644)
 	return err
 }

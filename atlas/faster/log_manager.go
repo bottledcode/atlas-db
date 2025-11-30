@@ -370,13 +370,14 @@ func (l *LogManager) InitKey(key []byte, fromSnapshot func(*Snapshot) error, rep
 		l.lruMu.Unlock()
 		return l.GetLog(key)
 	}
+	l.lruMu.Unlock()
 
+	// Compaction does disk I/O - don't hold global lock
+	// Duplicate compaction by concurrent InitKey is harmless (idempotent)
 	truncatedSlot, err := CompactOnStartup(logPath, snapPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to compact log on startup: %w", err)
 	}
-
-	l.lruMu.Unlock()
 
 	log, release, err := l.GetLog(key)
 	if err != nil {
@@ -428,7 +429,16 @@ func (l *LogManager) CloseAll() error {
 	defer l.lruMu.Unlock()
 
 	var firstErr error
+	var errMu sync.Mutex
 	var wg sync.WaitGroup
+
+	setErr := func(err error) {
+		errMu.Lock()
+		if firstErr == nil {
+			firstErr = err
+		}
+		errMu.Unlock()
+	}
 
 	l.handles.Range(func(key, value any) bool {
 		handle := value.(*logHandle)
@@ -445,8 +455,8 @@ func (l *LogManager) CloseAll() error {
 			for {
 				if h.canClose() {
 					// Safe to close
-					if err := h.log.Close(); err != nil && firstErr == nil {
-						firstErr = err
+					if err := h.log.Close(); err != nil {
+						setErr(err)
 					}
 					return
 				}
@@ -455,10 +465,8 @@ func (l *LogManager) CloseAll() error {
 				case <-timeout:
 					// Timeout reached, but don't force close!
 					// Log the leak but leave the file open
-					if firstErr == nil {
-						firstErr = fmt.Errorf("timeout waiting for references to drain on log %q (refcount=%d)",
-							h.key, h.refCount.Load())
-					}
+					setErr(fmt.Errorf("timeout waiting for references to drain on log %q (refcount=%d)",
+						h.key, h.refCount.Load()))
 					return
 				case <-ticker.C:
 					// Check again
@@ -474,8 +482,8 @@ func (l *LogManager) CloseAll() error {
 
 	// Close the registry
 	if l.registry != nil {
-		if err := l.registry.Close(); err != nil && firstErr == nil {
-			firstErr = err
+		if err := l.registry.Close(); err != nil {
+			setErr(err)
 		}
 	}
 

@@ -319,8 +319,8 @@ func (b *broadcastQuorum) DeReference(ctx context.Context, in *DereferenceReques
 	copy(sortedNodes, b.nodes)
 
 	slices.SortFunc(sortedNodes, func(a, b *QuorumNode) int {
-		aRtt := a.GetRtt().AsDuration()
-		bRtt := b.GetRtt().AsDuration()
+		aRtt := safeRttDuration(a)
+		bRtt := safeRttDuration(b)
 		if aRtt < bRtt {
 			return -1
 		}

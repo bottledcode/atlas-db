@@ -124,7 +124,6 @@ func (m *Module) Provision(ctx caddy.Context) (err error) {
 }
 
 func (m *Module) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-	fmt.Println("ServeHTTP called")
 	if r.ProtoMajor == 2 && r.Header.Get("content-type") == "application/grpc" {
 		// check authorization
 		authHeader := r.Header.Get("Authorization")
@@ -285,7 +284,7 @@ func init() {
 
 			ready:
 
-				options.Logger.Info("🌐 Atlas Client Started")
+				//options.Logger.Info("🌐 Atlas Client Started")
 
 				rl, err := readline.New("> ")
 				if err != nil {

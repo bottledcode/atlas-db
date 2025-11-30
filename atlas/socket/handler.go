@@ -241,7 +241,7 @@ ready:
 		case <-ctx.Done():
 			return
 		case err = <-errs:
-			options.Logger.Error("Error reading from client connection", zap.Error(err))
+			//options.Logger.Error("Error reading from client connection", zap.Error(err))
 			return
 		case cmd := <-cmds:
 			if cmd == nil {

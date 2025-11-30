@@ -76,7 +76,7 @@ echo "🔍 Testing ACL commands..."
 # Function to run a command via the REPL
 run_command() {
     local cmd="$1"
-    echo "  → Running: $cmd"
+    echo "  → Running: $cmd" >&2
     echo "$cmd" | timeout 5s ./caddy atlas /tmp/atlas2/socket 2>&1 | sed '/^Error: EOF$/d' || {
         #echo "❌ Command failed or timed out: $cmd"
         return 0
@@ -86,7 +86,7 @@ run_command() {
 # Function to run multiple commands in a single session
 run_session_commands() {
     local commands=("$@")
-    echo "  → Running session with commands: ${commands[*]}"
+    echo "  → Running session with commands: ${commands[*]}" >&2
     (
         for cmd in "${commands[@]}"; do
             echo "$cmd"

@@ -68,19 +68,6 @@ func (b *broadcastQuorum) broadcast(f func(node *QuorumNode) error) error {
 	return errors.Join(errs...)
 }
 
-func (b *broadcastQuorum) localThenBroadcast(f func(node *QuorumNode) error) (err error) {
-	for i, node := range b.nodes {
-		if node.Id == options.CurrentOptions.ServerId {
-			err = f(node)
-		} else {
-			go func(i int, node *QuorumNode) {
-				_ = f(node)
-			}(i, node)
-		}
-	}
-	return err
-}
-
 func (b *broadcastQuorum) StealTableOwnership(ctx context.Context, in *StealTableOwnershipRequest, opts ...grpc.CallOption) (*StealTableOwnershipResponse, error) {
 	var successCount atomic.Int32
 	results := sync.Map{}

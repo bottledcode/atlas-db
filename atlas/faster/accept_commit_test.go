@@ -515,10 +515,12 @@ func TestResetPublishRaceWithoutRecovery(t *testing.T) {
 	// Wait a bit and verify writer is stuck
 	select {
 	case <-writerDone:
-		// If we get here, the writer completed despite the inconsistent state
-		// This would be unexpected behavior
-		t.Log("Writer completed despite incomplete reset - investigating...")
-		t.Logf("State: reserved=%d, published=%d, tail=%d",
+		// If we get here, the writer completed despite the inconsistent state.
+		// This is unexpected and indicates a bug or change in behavior that
+		// needs investigation - the writer should be spinning on published CAS.
+		t.Fatalf("UNEXPECTED: Writer completed despite incomplete reset! "+
+			"State: reserved=%d, published=%d, tail=%d. "+
+			"Expected writer to spin waiting for published to become 0.",
 			rb.reserved.Load(), rb.published.Load(), rb.tail.Load())
 	case <-time.After(100 * time.Millisecond):
 		// Expected: writer is stuck in spin loop

@@ -44,4 +44,7 @@ var (
 
 	// ErrCorruptedSnapshot is returned when a snapshot fails checksum validation
 	ErrCorruptedSnapshot = errors.New("corrupted snapshot")
+
+	// ErrEntryTooLarge is returned when an entry value exceeds the maximum allowed size
+	ErrEntryTooLarge = errors.New("entry value too large")
 )

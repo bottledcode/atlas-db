@@ -81,10 +81,21 @@ const (
 
 	// mutableFlag is set in the high bit of offset to indicate mutable region
 	mutableFlag uint64 = 1 << 63
+
+	// maxEntryValueSize is the maximum allowed size for an entry value (64MB)
+	// This prevents potential integer overflow or excessive memory allocation
+	// during serialization. Consistent with typical mutable buffer sizes.
+	maxEntryValueSize = 64 * 1024 * 1024
 )
 
 // serializeEntry serializes a log entry to bytes
 func serializeEntry(entry *LogEntry) ([]byte, error) {
+	// Guard against excessively large values that could cause integer overflow
+	// or excessive memory allocation
+	if len(entry.Value) > maxEntryValueSize {
+		return nil, ErrEntryTooLarge
+	}
+
 	// Calculate total size: header + value + checksum
 	totalSize := entryHeaderSize + len(entry.Value) + checksumSize
 	buf := make([]byte, totalSize)

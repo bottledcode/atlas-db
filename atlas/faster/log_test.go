@@ -19,6 +19,7 @@
 package faster
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -424,4 +425,33 @@ func TestSlotNotFound(t *testing.T) {
 	if err != ErrSlotNotFound {
 		t.Errorf("Expected ErrSlotNotFound, got %v", err)
 	}
+}
+
+func TestEntryTooLarge(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "test.log")
+
+	cfg := Config{
+		Path:         logPath,
+		MutableSize:  1024 * 1024, // 1MB mutable buffer
+		SyncOnCommit: false,
+	}
+
+	log, err := NewFasterLog(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create log: %v", err)
+	}
+	defer log.Close()
+
+	// Try to accept an entry that exceeds maxEntryValueSize (64MB)
+	hugeValue := make([]byte, 65*1024*1024) // 65MB
+	err = log.Accept(1, Ballot{ID: 1, NodeID: 1}, hugeValue)
+	if !errors.Is(err, ErrEntryTooLarge) {
+		t.Errorf("Expected ErrEntryTooLarge for 65MB value, got %v", err)
+	}
+
+	// Verify that entries at the limit still work
+	// Note: This would require a much larger mutable buffer in practice
+	// so we just verify the error check works
+	t.Log("Entry size limit check works correctly")
 }

@@ -481,7 +481,9 @@ func DoBootstrap(ctx context.Context, seedURL string, dataPath string, metaPath 
 				data, err := proto.Marshal(resp)
 				if err != nil {
 					options.Logger.Error("failed to marshal config", zap.Error(err))
-					continue
+					// Config mutations are critical - node would diverge from cluster if skipped
+					errChan <- fmt.Errorf("failed to marshal config slot %d: %w", resp.Slot.Id, err)
+					return
 				}
 
 				ballot := faster.Ballot{
@@ -491,12 +493,16 @@ func DoBootstrap(ctx context.Context, seedURL string, dataPath string, metaPath 
 
 				if err := log.Accept(resp.Slot.Id, ballot, data); err != nil {
 					options.Logger.Error("failed to accept config", zap.Error(err))
-					continue
+					// Config mutations are critical - node would diverge from cluster if skipped
+					errChan <- fmt.Errorf("failed to accept config slot %d: %w", resp.Slot.Id, err)
+					return
 				}
 
 				if err := log.Commit(resp.Slot.Id); err != nil {
 					options.Logger.Error("failed to commit config", zap.Error(err))
-					continue
+					// Config mutations are critical - node would diverge from cluster if skipped
+					errChan <- fmt.Errorf("failed to commit config slot %d: %w", resp.Slot.Id, err)
+					return
 				}
 
 				// Update current config

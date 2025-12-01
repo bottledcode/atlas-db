@@ -105,7 +105,8 @@ jobs:
 
     - name: Run benchmarks
       run: |
-        go test -bench=. -benchmem -count=6 -timeout 10m ./atlas/faster/... ./atlas/cache/... 2>&1 | tee benchmark-results.txt
+        # Pin to 12 CPUs for consistent results across different machines
+        taskset -c 0-11 go test -bench=. -benchmem -count=6 -timeout 10m ./atlas/faster/... ./atlas/cache/... 2>&1 | tee benchmark-results.txt
 
     - name: Download main branch benchmark results
       id: cache-main

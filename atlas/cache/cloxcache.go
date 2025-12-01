@@ -29,10 +29,15 @@ const (
 	decayInterval = 1 * time.Second
 )
 
+// Key is a type constraint for cache keys (string or []byte)
+type Key interface {
+	~string | ~[]byte
+}
+
 // CloxCache is a lock-free adaptive in-memory cache with CLOCK-Pro eviction.
-// It stores generic values of type T.
-type CloxCache[T any] struct {
-	shards    []shard[T]
+// It stores generic keys of type K (string or []byte) and values of type V.
+type CloxCache[K Key, V any] struct {
+	shards    []shard[K, V]
 	numShards int
 	shardBits int
 
@@ -54,25 +59,23 @@ type CloxCache[T any] struct {
 }
 
 // shard contains a portion of the cache slots with minimal lock contention
-type shard[T any] struct {
-	slots []atomic.Pointer[recordNode[T]]
+type shard[K Key, V any] struct {
+	slots []atomic.Pointer[recordNode[K, V]]
 	mu    sync.Mutex // only for insertions and sweeper unlink
 }
 
 // recordNode is a cache entry with collision chaining
 // Layout optimized for cache-line efficiency
-// Note: For pointer types T, we can use atomic.Pointer. For value types, we use atomic.Value.
-type recordNode[T any] struct {
-	// Cache line 1: Hot fields accessed on every lookup
-	value   atomic.Value                  // value stored (generic type, atomic for race-safety)
-	next    atomic.Pointer[recordNode[T]] // 8 bytes - chain traversal
-	keyHash uint64                        // 8 bytes - fast comparison
-	freq    atomic.Uint32                 // 4 bytes - access frequency (0-15)
-	keyLen  uint16                        // 2 bytes - key length
-	_       [2]byte                       // 2 bytes - alignment padding
+// Note: For pointer types V, we can use atomic.Pointer. For value types, we use atomic.Value.
+type recordNode[K Key, V any] struct {
+	// Hot fields accessed on every lookup
+	value   atomic.Value                     // value stored (generic type, atomic for race-safety)
+	next    atomic.Pointer[recordNode[K, V]] // chain traversal
+	keyHash uint64                           // fast hash comparison
+	freq    atomic.Uint32                    // access frequency (0-15)
 
-	// Cache line 2 (bytes 32-95): Key data (only accessed on hash match)
-	key [64]byte // 64 bytes - full key (MAX 64 bytes!)
+	// Key stored as generic type (only compared on hash match)
+	key K
 }
 
 // Config holds CloxCache configuration
@@ -82,7 +85,7 @@ type Config struct {
 }
 
 // NewCloxCache creates a new cache with the given configuration
-func NewCloxCache[T any](cfg Config) *CloxCache[T] {
+func NewCloxCache[K Key, V any](cfg Config) *CloxCache[K, V] {
 	// Validate positive values
 	if cfg.NumShards <= 0 {
 		panic("NumShards must be positive")
@@ -99,17 +102,17 @@ func NewCloxCache[T any](cfg Config) *CloxCache[T] {
 		panic("SlotsPerShard must be a power of 2")
 	}
 
-	c := &CloxCache[T]{
+	c := &CloxCache[K, V]{
 		numShards:   cfg.NumShards,
 		shardBits:   bits.Len(uint(cfg.NumShards - 1)),
-		shards:      make([]shard[T], cfg.NumShards),
+		shards:      make([]shard[K, V], cfg.NumShards),
 		stopSweeper: make(chan struct{}),
 		stopDecay:   make(chan struct{}),
 	}
 
 	// Initialize shards
 	for i := range c.shards {
-		c.shards[i].slots = make([]atomic.Pointer[recordNode[T]], cfg.SlotsPerShard)
+		c.shards[i].slots = make([]atomic.Pointer[recordNode[K, V]], cfg.SlotsPerShard)
 	}
 
 	// Start with gentle decay
@@ -123,30 +126,41 @@ func NewCloxCache[T any](cfg Config) *CloxCache[T] {
 }
 
 // Close stops background goroutines
-func (c *CloxCache[T]) Close() {
+func (c *CloxCache[K, V]) Close() {
 	close(c.stopSweeper)
 	close(c.stopDecay)
 }
 
-// hashKey computes FNV-1a hash for the given key
-func hashKey(key []byte) uint64 {
+// hashKey computes FNV-1a hash for string or []byte keys
+func hashKey[K Key](key K) uint64 {
 	const offset64 = 14695981039346656037
 	const prime64 = 1099511628211
 
 	hash := uint64(offset64)
-	for _, b := range key {
-		hash ^= uint64(b)
+	// Works for both string and []byte due to Key constraint
+	for i := 0; i < len(key); i++ {
+		hash ^= uint64(key[i])
 		hash *= prime64
 	}
 	return hash
 }
 
-// Get retrieves a value from the cache (lock-free)
-func (c *CloxCache[T]) Get(key []byte) (T, bool) {
-	var zero T
-	if len(key) > 64 {
-		return zero, false // key too long
+// keysEqual compares two keys for equality
+func keysEqual[K Key](a, b K) bool {
+	if len(a) != len(b) {
+		return false
 	}
+	for i := 0; i < len(a); i++ {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// Get retrieves a value from the cache (lock-free)
+func (c *CloxCache[K, V]) Get(key K) (V, bool) {
+	var zero V
 
 	hash := hashKey(key)
 	shardID := hash & uint64(c.numShards-1)
@@ -158,9 +172,9 @@ func (c *CloxCache[T]) Get(key []byte) (T, bool) {
 	// Lock-free chain walk
 	node := slot.Load()
 	for node != nil {
-		if node.keyHash == hash && node.keyLen == uint16(len(key)) {
-			// Compare full key (second cache line - only on hash match)
-			if bytesEqual(node.key[:node.keyLen], key) {
+		if node.keyHash == hash {
+			// Compare full key (only on hash match)
+			if keysEqual(node.key, key) {
 				// Atomic saturating increment (0-15)
 				for {
 					f := node.freq.Load()
@@ -179,7 +193,7 @@ func (c *CloxCache[T]) Get(key []byte) (T, bool) {
 					c.misses.Add(1)
 					return zero, false
 				}
-				return val.(T), true
+				return val.(V), true
 			}
 		}
 		node = node.next.Load()
@@ -190,11 +204,7 @@ func (c *CloxCache[T]) Get(key []byte) (T, bool) {
 }
 
 // Put inserts or updates a value in the cache
-func (c *CloxCache[T]) Put(key []byte, value T) bool {
-	if len(key) > 64 {
-		return false // key too long
-	}
-
+func (c *CloxCache[K, V]) Put(key K, value V) bool {
 	hash := hashKey(key)
 	shardID := hash & uint64(c.numShards-1)
 	slotID := (hash >> c.shardBits) & uint64(len(c.shards[0].slots)-1)
@@ -205,8 +215,8 @@ func (c *CloxCache[T]) Put(key []byte, value T) bool {
 	// First, try to update existing key (lock-free)
 	node := slot.Load()
 	for node != nil {
-		if node.keyHash == hash && node.keyLen == uint16(len(key)) {
-			if bytesEqual(node.key[:node.keyLen], key) {
+		if node.keyHash == hash {
+			if keysEqual(node.key, key) {
 				// Update existing value atomically
 				node.value.Store(value)
 				// Bump frequency
@@ -232,12 +242,11 @@ func (c *CloxCache[T]) Put(key []byte, value T) bool {
 	}
 
 	// Allocate new node
-	newNode := &recordNode[T]{
+	newNode := &recordNode[K, V]{
 		keyHash: hash,
-		keyLen:  uint16(len(key)),
+		key:     key,
 	}
 	newNode.value.Store(value)
-	copy(newNode.key[:], key)
 	newNode.freq.Store(initialFreq)
 
 	// Try CAS onto head
@@ -247,8 +256,8 @@ func (c *CloxCache[T]) Put(key []byte, value T) bool {
 	// Re-check for existing key under lock
 	node = slot.Load()
 	for node != nil {
-		if node.keyHash == hash && node.keyLen == uint16(len(key)) {
-			if bytesEqual(node.key[:node.keyLen], key) {
+		if node.keyHash == hash {
+			if keysEqual(node.key, key) {
 				// Someone else inserted it
 				node.value.Store(value)
 				return true
@@ -266,7 +275,7 @@ func (c *CloxCache[T]) Put(key []byte, value T) bool {
 }
 
 // shouldAdmit implements TinyLFU-style admission gate
-func (c *CloxCache[T]) shouldAdmit() bool {
+func (c *CloxCache[K, V]) shouldAdmit() bool {
 	// Simple policy: always admit if under pressure threshold
 	// More sophisticated: probe victim slots
 	totalSlots := uint64(c.numShards * len(c.shards[0].slots))
@@ -300,7 +309,7 @@ func (c *CloxCache[T]) shouldAdmit() bool {
 }
 
 // sweeper is the background CLOCK hand that ages and evicts entries
-func (c *CloxCache[T]) sweeper(slotsPerShard int) {
+func (c *CloxCache[K, V]) sweeper(slotsPerShard int) {
 	hand := uint64(0)
 	totalSlots := uint64(c.numShards * slotsPerShard)
 
@@ -336,7 +345,7 @@ func (c *CloxCache[T]) sweeper(slotsPerShard int) {
 }
 
 // sweepSlot processes a single slot's chain
-func (c *CloxCache[T]) sweepSlot(shardID, slotID int, dec uint32) {
+func (c *CloxCache[K, V]) sweepSlot(shardID, slotID int, dec uint32) {
 	shard := &c.shards[shardID]
 	slot := &shard.slots[slotID]
 
@@ -344,7 +353,7 @@ func (c *CloxCache[T]) sweepSlot(shardID, slotID int, dec uint32) {
 	defer shard.mu.Unlock()
 
 	node := slot.Load()
-	var prev *recordNode[T]
+	var prev *recordNode[K, V]
 
 	for node != nil {
 		f := node.freq.Load()
@@ -388,7 +397,7 @@ func (c *CloxCache[T]) sweepSlot(shardID, slotID int, dec uint32) {
 }
 
 // retargetDecayLoop periodically adjusts the decay step based on metrics
-func (c *CloxCache[T]) retargetDecayLoop() {
+func (c *CloxCache[K, V]) retargetDecayLoop() {
 	ticker := time.NewTicker(decayInterval)
 	defer ticker.Stop()
 
@@ -403,7 +412,7 @@ func (c *CloxCache[T]) retargetDecayLoop() {
 }
 
 // retargetDecay adjusts the decay step based on hit rate and pressure
-func (c *CloxCache[T]) retargetDecay() {
+func (c *CloxCache[K, V]) retargetDecay() {
 	hits := c.hits.Load()
 	misses := c.misses.Load()
 	pressure := c.pressure.Load()
@@ -434,19 +443,6 @@ func (c *CloxCache[T]) retargetDecay() {
 }
 
 // Stats returns cache statistics
-func (c *CloxCache[T]) Stats() (hits, misses, evictions uint64) {
+func (c *CloxCache[K, V]) Stats() (hits, misses, evictions uint64) {
 	return c.hits.Load(), c.misses.Load(), c.evictions.Load()
-}
-
-// bytesEqual compares two byte slices without bounds checking
-func bytesEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

@@ -12,7 +12,7 @@ func TestCloxCacheBasicOperations(t *testing.T) {
 		NumShards:     16,
 		SlotsPerShard: 256,
 	}
-	cache := NewCloxCache[string](cfg)
+	cache := NewCloxCache[[]byte, string](cfg)
 	defer cache.Close()
 
 	// Test Put and Get
@@ -43,7 +43,7 @@ func TestCloxCacheUpdate(t *testing.T) {
 		NumShards:     16,
 		SlotsPerShard: 256,
 	}
-	cache := NewCloxCache[int](cfg)
+	cache := NewCloxCache[[]byte, int](cfg)
 	defer cache.Close()
 
 	key := []byte("counter")
@@ -70,7 +70,7 @@ func TestCloxCacheConcurrentAccess(t *testing.T) {
 		NumShards:     64,
 		SlotsPerShard: 1024,
 	}
-	cache := NewCloxCache[int](cfg)
+	cache := NewCloxCache[[]byte, int](cfg)
 	defer cache.Close()
 
 	const numGoroutines = 100
@@ -112,7 +112,7 @@ func TestCloxCacheConcurrentReadWrite(t *testing.T) {
 		NumShards:     32,
 		SlotsPerShard: 512,
 	}
-	cache := NewCloxCache[string](cfg)
+	cache := NewCloxCache[[]byte, string](cfg)
 	defer cache.Close()
 
 	const numKeys = 100
@@ -185,7 +185,7 @@ func TestCloxCacheFrequencyIncrement(t *testing.T) {
 		NumShards:     4,
 		SlotsPerShard: 16,
 	}
-	cache := NewCloxCache[int](cfg)
+	cache := NewCloxCache[[]byte, int](cfg)
 	defer cache.Close()
 
 	key := []byte("hot-key")
@@ -211,7 +211,7 @@ func TestCloxCacheEviction(t *testing.T) {
 		NumShards:     4,
 		SlotsPerShard: 16, // Small cache
 	}
-	cache := NewCloxCache[int](cfg)
+	cache := NewCloxCache[[]byte, int](cfg)
 	defer cache.Close()
 
 	// Fill cache beyond capacity
@@ -238,27 +238,30 @@ func TestCloxCacheEviction(t *testing.T) {
 	}
 }
 
-func TestCloxCacheKeyTooLong(t *testing.T) {
+func TestCloxCacheLongKey(t *testing.T) {
 	cfg := Config{
 		NumShards:     4,
 		SlotsPerShard: 16,
 	}
-	cache := NewCloxCache[int](cfg)
+	cache := NewCloxCache[[]byte, int](cfg)
 	defer cache.Close()
 
-	// Key longer than 64 bytes
-	longKey := make([]byte, 65)
+	// Long keys should now work (no 64-byte limit)
+	longKey := make([]byte, 256)
 	for i := range longKey {
 		longKey[i] = byte(i)
 	}
 
-	if cache.Put(longKey, 42) {
-		t.Fatal("Put succeeded with key longer than 64 bytes")
+	if !cache.Put(longKey, 42) {
+		t.Fatal("Put failed with long key")
 	}
 
-	_, ok := cache.Get(longKey)
-	if ok {
-		t.Fatal("Get succeeded with key longer than 64 bytes")
+	val, ok := cache.Get(longKey)
+	if !ok {
+		t.Fatal("Get failed with long key")
+	}
+	if val != 42 {
+		t.Fatalf("Wrong value: got %d, want 42", val)
 	}
 }
 
@@ -267,7 +270,7 @@ func TestCloxCacheStats(t *testing.T) {
 		NumShards:     8,
 		SlotsPerShard: 64,
 	}
-	cache := NewCloxCache[string](cfg)
+	cache := NewCloxCache[[]byte, string](cfg)
 	defer cache.Close()
 
 	// Generate some hits and misses
@@ -298,7 +301,7 @@ func TestCloxCachePointerTypes(t *testing.T) {
 		NumShards:     16,
 		SlotsPerShard: 256,
 	}
-	cache := NewCloxCache[*Record](cfg)
+	cache := NewCloxCache[[]byte, *Record](cfg)
 	defer cache.Close()
 
 	key := []byte("record-1")
@@ -326,7 +329,7 @@ func TestCloxCacheAdaptiveDecay(t *testing.T) {
 		NumShards:     8,
 		SlotsPerShard: 32,
 	}
-	cache := NewCloxCache[int](cfg)
+	cache := NewCloxCache[[]byte, int](cfg)
 	defer cache.Close()
 
 	// Generate high pressure by filling cache and rejecting admissions
@@ -353,7 +356,7 @@ func TestCloxCacheHashCollisions(t *testing.T) {
 		NumShards:     2,
 		SlotsPerShard: 4, // Very small to force collisions
 	}
-	cache := NewCloxCache[int](cfg)
+	cache := NewCloxCache[[]byte, int](cfg)
 	defer cache.Close()
 
 	// Insert many keys (will likely collide in such a small cache)
@@ -439,7 +442,48 @@ func TestCloxCacheInvalidConfig(t *testing.T) {
 			}()
 
 			// This should panic
-			_ = NewCloxCache[int](tt.cfg)
+			_ = NewCloxCache[[]byte, int](tt.cfg)
 		})
+	}
+}
+
+func TestCloxCacheStringKeys(t *testing.T) {
+	cfg := Config{
+		NumShards:     16,
+		SlotsPerShard: 256,
+	}
+	cache := NewCloxCache[string, int](cfg)
+	defer cache.Close()
+
+	// Test Put and Get with string keys
+	key := "test-key"
+	value := 42
+
+	if !cache.Put(key, value) {
+		t.Fatal("Put failed")
+	}
+
+	got, ok := cache.Get(key)
+	if !ok {
+		t.Fatal("Get failed: key not found")
+	}
+	if got != value {
+		t.Fatalf("Get returned wrong value: got %d, want %d", got, value)
+	}
+
+	// Test Get on non-existent key
+	_, ok = cache.Get("non-existent")
+	if ok {
+		t.Fatal("Get succeeded on non-existent key")
+	}
+
+	// Test update
+	cache.Put(key, 100)
+	got, ok = cache.Get(key)
+	if !ok {
+		t.Fatal("Get failed after update")
+	}
+	if got != 100 {
+		t.Fatalf("Get returned wrong value after update: got %d, want 100", got)
 	}
 }

@@ -43,8 +43,8 @@ type Server struct {
 }
 
 var logs *faster.LogManager
-var stateMachine *cache.CloxCache[*Record] // Cache of Records
-var ownership sync.Map                     // map[string]OwnershipState
+var stateMachine *cache.CloxCache[[]byte, *Record] // Cache of Records
+var ownership sync.Map                             // map[string]OwnershipState
 
 func IsOwned(key []byte) bool {
 	if IsOwnerlessKey(key) {
@@ -96,7 +96,7 @@ func init() {
 		}
 	}
 
-	stateMachine = cache.NewCloxCache[*Record](cfg)
+	stateMachine = cache.NewCloxCache[[]byte, *Record](cfg)
 	ownership = sync.Map{}
 }
 

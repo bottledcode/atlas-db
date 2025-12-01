@@ -63,7 +63,7 @@ func BenchmarkCloxCacheGet(b *testing.B) {
 		NumShards:     128,
 		SlotsPerShard: 4096,
 	}
-	cache := NewCloxCache[int](cfg)
+	cache := NewCloxCache[[]byte, int](cfg)
 	defer cache.Close()
 
 	// Pre-populate cache
@@ -116,7 +116,7 @@ func BenchmarkCloxCachePut(b *testing.B) {
 		NumShards:     128,
 		SlotsPerShard: 4096,
 	}
-	cache := NewCloxCache[int](cfg)
+	cache := NewCloxCache[[]byte, int](cfg)
 	defer cache.Close()
 
 	b.ResetTimer()
@@ -155,7 +155,7 @@ func BenchmarkCloxCacheMixed(b *testing.B) {
 		NumShards:     128,
 		SlotsPerShard: 4096,
 	}
-	cache := NewCloxCache[int](cfg)
+	cache := NewCloxCache[[]byte, int](cfg)
 	defer cache.Close()
 
 	// Pre-populate cache
@@ -227,7 +227,7 @@ func BenchmarkCloxCacheZipf(b *testing.B) {
 		NumShards:     128,
 		SlotsPerShard: 4096,
 	}
-	cache := NewCloxCache[int](cfg)
+	cache := NewCloxCache[[]byte, int](cfg)
 	defer cache.Close()
 
 	const numKeys = 100000
@@ -303,7 +303,7 @@ func BenchmarkCloxCacheContention(b *testing.B) {
 		NumShards:     128,
 		SlotsPerShard: 4096,
 	}
-	cache := NewCloxCache[int](cfg)
+	cache := NewCloxCache[[]byte, int](cfg)
 	defer cache.Close()
 
 	// Pre-populate with hot keys
@@ -377,7 +377,7 @@ func BenchmarkCloxCacheSizes(b *testing.B) {
 				NumShards:     size.numShards,
 				SlotsPerShard: size.slotsPerShard,
 			}
-			cache := NewCloxCache[int](cfg)
+			cache := NewCloxCache[[]byte, int](cfg)
 			defer cache.Close()
 
 			// Pre-populate
@@ -418,7 +418,7 @@ func BenchmarkCloxCachePointers(b *testing.B) {
 		NumShards:     128,
 		SlotsPerShard: 4096,
 	}
-	cache := NewCloxCache[*Record](cfg)
+	cache := NewCloxCache[[]byte, *Record](cfg)
 	defer cache.Close()
 
 	// Pre-populate

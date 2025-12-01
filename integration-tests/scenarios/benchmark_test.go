@@ -50,9 +50,18 @@ type BenchmarkSummaryEntry struct {
 }
 
 // WriteBenchmarkSummary writes collected results to GITHUB_STEP_SUMMARY if available
+// and also writes benchstat-compatible output to integration-benchmark-results.txt
 func WriteBenchmarkSummary() {
+	if len(benchmarkSummary) == 0 {
+		return
+	}
+
+	// Write benchstat-compatible output (always, for local use too)
+	writeBenchstatOutput()
+
+	// Write markdown summary for GitHub Actions
 	summaryPath := os.Getenv("GITHUB_STEP_SUMMARY")
-	if summaryPath == "" || len(benchmarkSummary) == 0 {
+	if summaryPath == "" {
 		return
 	}
 
@@ -63,7 +72,7 @@ func WriteBenchmarkSummary() {
 	defer f.Close()
 
 	// Write markdown table
-	fmt.Fprintln(f, "## Benchmark Results")
+	fmt.Fprintln(f, "## Integration Benchmark Results")
 	fmt.Fprintln(f, "")
 	fmt.Fprintln(f, "| Benchmark | Throughput | Avg Latency | P50 | P95 | P99 | Errors |")
 	fmt.Fprintln(f, "|-----------|------------|-------------|-----|-----|-----|--------|")
@@ -80,6 +89,44 @@ func WriteBenchmarkSummary() {
 		)
 	}
 	fmt.Fprintln(f, "")
+}
+
+// writeBenchstatOutput writes results in Go benchmark format for benchstat comparison
+func writeBenchstatOutput() {
+	f, err := os.Create("integration-benchmark-results.txt")
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	// Write in Go benchmark format:
+	// BenchmarkName-N    iterations    ns/op    custom metrics
+	for _, entry := range benchmarkSummary {
+		// Use average latency as the primary metric (ns/op)
+		// benchstat expects: BenchmarkName-N \t iterations \t ns/op
+		nsPerOp := entry.AvgLatency.Nanoseconds()
+		if nsPerOp == 0 {
+			nsPerOp = 1 // Avoid division by zero in benchstat
+		}
+
+		// Calculate iterations from throughput if available
+		iterations := int64(1)
+		if entry.Throughput > 0 {
+			iterations = int64(entry.Throughput) // ops/sec as proxy for iterations
+		}
+
+		// Primary benchmark line (avg latency)
+		fmt.Fprintf(f, "BenchmarkIntegration%s-12\t%d\t%d ns/op\n",
+			entry.Name, iterations, nsPerOp)
+
+		// Additional metrics as separate benchmark lines for tracking
+		fmt.Fprintf(f, "BenchmarkIntegration%s_P50-12\t%d\t%d ns/op\n",
+			entry.Name, iterations, entry.P50Latency.Nanoseconds())
+		fmt.Fprintf(f, "BenchmarkIntegration%s_P95-12\t%d\t%d ns/op\n",
+			entry.Name, iterations, entry.P95Latency.Nanoseconds())
+		fmt.Fprintf(f, "BenchmarkIntegration%s_P99-12\t%d\t%d ns/op\n",
+			entry.Name, iterations, entry.P99Latency.Nanoseconds())
+	}
 }
 
 func addToSummary(name string, result BenchmarkResult, concurrency int, regions []string, preset string) {

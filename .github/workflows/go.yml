@@ -105,7 +105,7 @@ jobs:
 
     - name: Run benchmarks
       run: |
-        go test -bench=. -benchmem -count=5 -timeout 10m ./atlas/faster/... ./atlas/cache/... 2>&1 | tee benchmark-results.txt
+        go test -bench=. -benchmem -count=6 -timeout 10m ./atlas/faster/... ./atlas/cache/... 2>&1 | tee benchmark-results.txt
 
     - name: Download main branch benchmark results
       id: cache-main

@@ -487,3 +487,41 @@ func TestCloxCacheStringKeys(t *testing.T) {
 		t.Fatalf("Get returned wrong value after update: got %d, want 100", got)
 	}
 }
+
+func TestCloxCacheKeyBufferReuse(t *testing.T) {
+	cfg := Config{
+		NumShards:     16,
+		SlotsPerShard: 256,
+	}
+	cache := NewCloxCache[[]byte, int](cfg)
+	defer cache.Close()
+
+	// Use a reusable buffer for keys (common pattern)
+	keyBuf := make([]byte, 32)
+
+	// Insert multiple keys using the same buffer
+	for i := range 100 {
+		// Build key in reusable buffer
+		copy(keyBuf, fmt.Appendf(keyBuf[:0], "key-%d", i))
+		keyLen := len(fmt.Appendf(nil, "key-%d", i))
+
+		if !cache.Put(keyBuf[:keyLen], i) {
+			t.Fatalf("Put failed for key-%d", i)
+		}
+	}
+
+	// Mutate the buffer (simulating reuse)
+	copy(keyBuf, "garbage-data-that-overwrites")
+
+	// Verify all keys are still retrievable with fresh lookups
+	for i := range 100 {
+		lookupKey := fmt.Appendf(nil, "key-%d", i)
+		got, ok := cache.Get(lookupKey)
+		if !ok {
+			t.Fatalf("Get failed for key-%d after buffer mutation", i)
+		}
+		if got != i {
+			t.Fatalf("Wrong value for key-%d: got %d, want %d", i, got, i)
+		}
+	}
+}

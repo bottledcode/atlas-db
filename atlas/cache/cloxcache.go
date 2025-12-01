@@ -158,6 +158,21 @@ func keysEqual[K Key](a, b K) bool {
 	return true
 }
 
+// copyKey creates a copy of the key to prevent caller mutations from affecting stored data.
+// For []byte keys, this allocates a new slice and copies the data.
+// For string keys, this is a no-op since strings are immutable.
+func copyKey[K Key](key K) K {
+	switch k := any(key).(type) {
+	case []byte:
+		cp := make([]byte, len(k))
+		copy(cp, k)
+		return any(cp).(K)
+	default:
+		// string and other ~string types are immutable, no copy needed
+		return key
+	}
+}
+
 // Get retrieves a value from the cache (lock-free)
 func (c *CloxCache[K, V]) Get(key K) (V, bool) {
 	var zero V
@@ -241,10 +256,10 @@ func (c *CloxCache[K, V]) Put(key K, value V) bool {
 		return false
 	}
 
-	// Allocate new node
+	// Allocate new node with copied key to prevent caller mutations
 	newNode := &recordNode[K, V]{
 		keyHash: hash,
-		key:     key,
+		key:     copyKey(key),
 	}
 	newNode.value.Store(value)
 	newNode.freq.Store(initialFreq)

@@ -89,41 +89,6 @@ OK
 All socket commands, their responses, and binary framing rules are documented in `docs/reference/protocol.md` and
 `docs/reference/commands.md`.
 
-## Working with keys and tables
-Atlas uses dotted keys to determine data placement. The segment before the first dot is the table name, everything
-after it belongs to the row (and any optional suffix). Tables are the unit of ownership the consensus layer migrates,
-so every key that shares a table name is guaranteed to live together.
-
-- `KEY PUT users.alice profile-json` writes the `alice` row in the `users` table.
-- `KEY PUT users.bob profile-json` lands in the same `users` table, so the two records always co-migrate.
-- `SCAN users` returns every row in the `users` table; `SCAN users.al` would restrict the results to rows prefixed by
-  `al`.
-
-Because the table is indivisible, you can cluster related keys (per-customer data, per-tenant settings, session state)
-and rely on Atlas to move them together when the write hotspot changes. This makes features such as colocated chat
-conversations or sharded document stores practical without having to manually coordinate rebalancing.
-
-### Multi-tenant session example
-```sh
-./caddy atlas /tmp/atlas2/socket
-> PRINCIPAL ASSUME alice
-OK
-> KEY PUT users.alice {"session":"s1"}
-OK
-> PRINCIPAL ASSUME bob
-OK
-> KEY PUT users.bob {"session":"s2"}
-OK
-> SCAN users
-KEYS:2
-users.alice
-users.bob
-OK
-```
-
-Both user records share the same table and therefore follow each other around the cluster. Downstream services (such as
-authorization hooks or analytics pipelines) can rely on that property when scheduling work or caching.
-
 ## Testing
 Run the full validation suite (unit tests, race detector, integration tests, and ACL end-to-end script) with:
 

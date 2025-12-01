@@ -131,21 +131,6 @@ func (c *CloxCache[K, V]) Close() {
 	close(c.stopDecay)
 }
 
-// hashKey computes FNV-1a hash for string or []byte keys
-func hashKey[K Key](key K) uint64 {
-	const offset64 = 14695981039346656037
-	const prime64 = 1099511628211
-
-	hash := uint64(offset64)
-	// Works for both string and []byte due to Key constraint
-	for i := 0; i < len(key); i++ {
-		hash ^= uint64(key[i])
-		hash *= prime64
-	}
-	return hash
-}
-
-// keysEqual compares two keys for equality
 func keysEqual[K Key](a, b K) bool {
 	if len(a) != len(b) {
 		return false
@@ -158,9 +143,6 @@ func keysEqual[K Key](a, b K) bool {
 	return true
 }
 
-// copyKey creates a copy of the key to prevent caller mutations from affecting stored data.
-// For []byte keys, this allocates a new slice and copies the data.
-// For string keys, this is a no-op since strings are immutable.
 func copyKey[K Key](key K) K {
 	switch k := any(key).(type) {
 	case []byte:
@@ -168,7 +150,6 @@ func copyKey[K Key](key K) K {
 		copy(cp, k)
 		return any(cp).(K)
 	default:
-		// string and other ~string types are immutable, no copy needed
 		return key
 	}
 }

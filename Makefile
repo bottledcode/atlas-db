@@ -55,8 +55,11 @@ release: caddy tools/bin/upx
 .PHONY: test test-go test-e2e-acl test-integration
 test: test-go test-e2e-acl test-integration
 
-test-go:
+test-go: test-go-no-race
 	@go test -v -race ./...
+
+test-go-no-race:
+	@go test -v ./...
 
 # End-to-end ACL test using the local caddy binary and socket REPL
 test-e2e-acl: caddy

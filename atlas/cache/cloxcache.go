@@ -53,9 +53,10 @@ type CloxCache[K Key, V any] struct {
 	// Adaptive decay step (1-4)
 	decayStep atomic.Uint32
 
-	// Control channels
-	stopSweeper chan struct{}
-	stopDecay   chan struct{}
+	// Lifecycle management
+	stop     chan struct{}
+	wg       sync.WaitGroup
+	closeOnce sync.Once
 }
 
 // shard contains a portion of the cache slots with minimal lock contention
@@ -103,11 +104,10 @@ func NewCloxCache[K Key, V any](cfg Config) *CloxCache[K, V] {
 	}
 
 	c := &CloxCache[K, V]{
-		numShards:   cfg.NumShards,
-		shardBits:   bits.Len(uint(cfg.NumShards - 1)),
-		shards:      make([]shard[K, V], cfg.NumShards),
-		stopSweeper: make(chan struct{}),
-		stopDecay:   make(chan struct{}),
+		numShards: cfg.NumShards,
+		shardBits: bits.Len(uint(cfg.NumShards - 1)),
+		shards:    make([]shard[K, V], cfg.NumShards),
+		stop:      make(chan struct{}),
 	}
 
 	// Initialize shards
@@ -119,16 +119,20 @@ func NewCloxCache[K Key, V any](cfg Config) *CloxCache[K, V] {
 	c.decayStep.Store(1)
 
 	// Start background goroutines
+	c.wg.Add(2)
 	go c.sweeper(cfg.SlotsPerShard)
 	go c.retargetDecayLoop()
 
 	return c
 }
 
-// Close stops background goroutines
+// Close stops background goroutines and waits for them to exit.
+// Safe to call multiple times.
 func (c *CloxCache[K, V]) Close() {
-	close(c.stopSweeper)
-	close(c.stopDecay)
+	c.closeOnce.Do(func() {
+		close(c.stop)
+	})
+	c.wg.Wait()
 }
 
 func keysEqual[K Key](a, b K) bool {
@@ -306,6 +310,7 @@ func (c *CloxCache[K, V]) shouldAdmit() bool {
 
 // sweeper is the background CLOCK hand that ages and evicts entries
 func (c *CloxCache[K, V]) sweeper(slotsPerShard int) {
+	defer c.wg.Done()
 	hand := uint64(0)
 	totalSlots := uint64(c.numShards * slotsPerShard)
 
@@ -314,7 +319,7 @@ func (c *CloxCache[K, V]) sweeper(slotsPerShard int) {
 
 	for {
 		select {
-		case <-c.stopSweeper:
+		case <-c.stop:
 			return
 		case <-ticker.C:
 			// Process a batch of slots
@@ -394,12 +399,13 @@ func (c *CloxCache[K, V]) sweepSlot(shardID, slotID int, dec uint32) {
 
 // retargetDecayLoop periodically adjusts the decay step based on metrics
 func (c *CloxCache[K, V]) retargetDecayLoop() {
+	defer c.wg.Done()
 	ticker := time.NewTicker(decayInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-c.stopDecay:
+		case <-c.stop:
 			return
 		case <-ticker.C:
 			c.retargetDecay()

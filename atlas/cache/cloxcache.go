@@ -44,7 +44,10 @@ type CloxCache[K Key, V any] struct {
 	// CLOCK hand position
 	hand atomic.Uint64
 
-	// Metrics for adaptive behavior
+	// Configuration
+	collectStats bool
+
+	// Metrics (only updated when collectStats is true)
 	hits      atomic.Uint64
 	misses    atomic.Uint64
 	evictions atomic.Uint64
@@ -54,8 +57,8 @@ type CloxCache[K Key, V any] struct {
 	decayStep atomic.Uint32
 
 	// Lifecycle management
-	stop     chan struct{}
-	wg       sync.WaitGroup
+	stop      chan struct{}
+	wg        sync.WaitGroup
 	closeOnce sync.Once
 }
 
@@ -81,8 +84,10 @@ type recordNode[K Key, V any] struct {
 
 // Config holds CloxCache configuration
 type Config struct {
-	NumShards     int // Must be power of 2
-	SlotsPerShard int // Must be power of 2
+	NumShards     int  // Must be power of 2
+	SlotsPerShard int  // Must be power of 2
+	CollectStats  bool // Enable hit/miss/eviction counters (default: false for performance)
+	AdaptiveDecay bool // Enable adaptive decay tuning (implies CollectStats)
 }
 
 // NewCloxCache creates a new cache with the given configuration
@@ -103,11 +108,15 @@ func NewCloxCache[K Key, V any](cfg Config) *CloxCache[K, V] {
 		panic("SlotsPerShard must be a power of 2")
 	}
 
+	// AdaptiveDecay implies CollectStats
+	collectStats := cfg.CollectStats || cfg.AdaptiveDecay
+
 	c := &CloxCache[K, V]{
-		numShards: cfg.NumShards,
-		shardBits: bits.Len(uint(cfg.NumShards - 1)),
-		shards:    make([]shard[K, V], cfg.NumShards),
-		stop:      make(chan struct{}),
+		numShards:    cfg.NumShards,
+		shardBits:    bits.Len(uint(cfg.NumShards - 1)),
+		shards:       make([]shard[K, V], cfg.NumShards),
+		stop:         make(chan struct{}),
+		collectStats: collectStats,
 	}
 
 	// Initialize shards
@@ -119,9 +128,13 @@ func NewCloxCache[K Key, V any](cfg Config) *CloxCache[K, V] {
 	c.decayStep.Store(1)
 
 	// Start background goroutines
-	c.wg.Add(2)
-	go c.sweeper(cfg.SlotsPerShard)
-	go c.retargetDecayLoop()
+	c.wg.Add(1)
+	go c.sweeper(cfg.SlotsPerShard, cfg.AdaptiveDecay)
+
+	if cfg.AdaptiveDecay {
+		c.wg.Add(1)
+		go c.retargetDecayLoop()
+	}
 
 	return c
 }
@@ -186,11 +199,15 @@ func (c *CloxCache[K, V]) Get(key K) (V, bool) {
 					}
 				}
 
-				c.hits.Add(1)
+				if c.collectStats {
+					c.hits.Add(1)
+				}
 				val := node.value.Load()
 				if val == nil {
 					// Value was nil, treat as miss
-					c.misses.Add(1)
+					if c.collectStats {
+						c.misses.Add(1)
+					}
 					return zero, false
 				}
 				return val.(V), true
@@ -199,7 +216,9 @@ func (c *CloxCache[K, V]) Get(key K) (V, bool) {
 		node = node.next.Load()
 	}
 
-	c.misses.Add(1)
+	if c.collectStats {
+		c.misses.Add(1)
+	}
 	return zero, false
 }
 
@@ -237,7 +256,9 @@ func (c *CloxCache[K, V]) Put(key K, value V) bool {
 
 	// New key - check admission policy
 	if !c.shouldAdmit() {
-		c.pressure.Add(1)
+		if c.collectStats {
+			c.pressure.Add(1)
+		}
 		return false
 	}
 
@@ -309,7 +330,7 @@ func (c *CloxCache[K, V]) shouldAdmit() bool {
 }
 
 // sweeper is the background CLOCK hand that ages and evicts entries
-func (c *CloxCache[K, V]) sweeper(slotsPerShard int) {
+func (c *CloxCache[K, V]) sweeper(slotsPerShard int, adaptiveDecay bool) {
 	defer c.wg.Done()
 	hand := uint64(0)
 	totalSlots := uint64(c.numShards * slotsPerShard)
@@ -323,7 +344,10 @@ func (c *CloxCache[K, V]) sweeper(slotsPerShard int) {
 			return
 		case <-ticker.C:
 			// Process a batch of slots
-			dec := c.decayStep.Load()
+			var dec uint32 = 1
+			if adaptiveDecay {
+				dec = c.decayStep.Load()
+			}
 
 			for range slotsPerTick {
 				slotIdx := hand % totalSlots
@@ -374,7 +398,9 @@ func (c *CloxCache[K, V]) sweepSlot(shardID, slotID int, dec uint32) {
 		}
 
 		// Evict: freq == 0
-		c.evictions.Add(1)
+		if c.collectStats {
+			c.evictions.Add(1)
+		}
 
 		next := node.next.Load()
 		if prev == nil {

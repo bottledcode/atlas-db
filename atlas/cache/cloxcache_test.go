@@ -111,6 +111,7 @@ func TestCloxCacheConcurrentReadWrite(t *testing.T) {
 	cfg := Config{
 		NumShards:     32,
 		SlotsPerShard: 512,
+		CollectStats:  true,
 	}
 	cache := NewCloxCache[[]byte, string](cfg)
 	defer cache.Close()
@@ -210,6 +211,7 @@ func TestCloxCacheEviction(t *testing.T) {
 	cfg := Config{
 		NumShards:     4,
 		SlotsPerShard: 16, // Small cache
+		CollectStats:  true,
 	}
 	cache := NewCloxCache[[]byte, int](cfg)
 	defer cache.Close()
@@ -269,6 +271,7 @@ func TestCloxCacheStats(t *testing.T) {
 	cfg := Config{
 		NumShards:     8,
 		SlotsPerShard: 64,
+		CollectStats:  true,
 	}
 	cache := NewCloxCache[[]byte, string](cfg)
 	defer cache.Close()
@@ -328,6 +331,7 @@ func TestCloxCacheAdaptiveDecay(t *testing.T) {
 	cfg := Config{
 		NumShards:     8,
 		SlotsPerShard: 32,
+		AdaptiveDecay: true,
 	}
 	cache := NewCloxCache[[]byte, int](cfg)
 	defer cache.Close()

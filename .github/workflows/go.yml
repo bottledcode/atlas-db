@@ -72,6 +72,14 @@ jobs:
         # Pin to 12 CPUs for consistent benchmark results
         taskset -c 0-11 go test -v -timeout 10m -tags=integration ./integration-tests/...
 
+    - name: Verify integration benchmark results were generated
+      run: |
+        if [ ! -f integration-benchmark-results.txt ]; then
+          echo "ERROR: integration-benchmark-results.txt not found - integration benchmarks did not produce results"
+          exit 1
+        fi
+        echo "Integration benchmark results file found"
+
     - name: Download main branch integration benchmark results
       id: cache-integration-main
       if: github.event_name == 'pull_request'

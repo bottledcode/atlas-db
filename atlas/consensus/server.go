@@ -95,6 +95,8 @@ func init() {
 				zap.Int("slots_per_shard", cfg.SlotsPerShard))
 		}
 	}
+	// Enable adaptive decay for automatic cache tuning based on hit rate and pressure
+	cfg.AdaptiveDecay = true
 
 	stateMachine = cache.NewCloxCache[[]byte, *Record](cfg)
 	ownership = sync.Map{}

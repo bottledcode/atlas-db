@@ -25,7 +25,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bottledcode/atlas-db/atlas/cache"
+	"github.com/bottledcode/cloxcache/cache"
 	"github.com/bottledcode/atlas-db/atlas/faster"
 	"github.com/bottledcode/atlas-db/atlas/kv"
 	"github.com/bottledcode/atlas-db/atlas/options"

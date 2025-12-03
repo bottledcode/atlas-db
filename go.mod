@@ -3,12 +3,12 @@ module github.com/bottledcode/atlas-db
 go 1.25.1
 
 require (
+	github.com/bottledcode/cloxcache v0.1.1
 	github.com/caddyserver/caddy/v2 v2.10.2
 	github.com/chzyer/readline v1.5.1
 	github.com/dgraph-io/badger/v4 v4.8.0
 	github.com/spf13/cobra v1.10.1
 	github.com/stretchr/testify v1.11.1
-	github.com/zeebo/xxh3 v1.0.2
 	go.uber.org/zap v1.27.1
 	google.golang.org/grpc v1.77.0
 	google.golang.org/protobuf v1.36.10
@@ -121,6 +121,7 @@ require (
 	github.com/yuin/goldmark v1.7.13 // indirect
 	github.com/yuin/goldmark-highlighting/v2 v2.0.0-20230729083705-37449abec8cc // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect
+	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.etcd.io/bbolt v1.4.3 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.63.0 // indirect

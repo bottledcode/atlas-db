@@ -83,15 +83,23 @@ jobs:
           integration-benchmark-main-${{ runner.os }}-
 
     - name: Compare integration benchmarks
-      if: github.event_name == 'pull_request' && steps.cache-integration-main.outputs.cache-hit != ''
+      if: github.event_name == 'pull_request'
       run: |
-        if [ -f integration-benchmark-results.txt ]; then
+        if [ -f main-integration-benchmark-results.txt ] && [ -f integration-benchmark-results.txt ]; then
           echo "## Integration Benchmark Comparison" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Comparing current branch against main:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           benchstat main-integration-benchmark-results.txt integration-benchmark-results.txt >> $GITHUB_STEP_SUMMARY 2>&1 || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        elif [ -f integration-benchmark-results.txt ]; then
+          echo "## Integration Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "No main branch baseline available for comparison." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat integration-benchmark-results.txt >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
         fi
 

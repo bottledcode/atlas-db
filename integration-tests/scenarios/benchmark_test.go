@@ -23,6 +23,7 @@ package scenarios
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -98,6 +99,11 @@ func writeBenchstatOutput() {
 		return
 	}
 	defer f.Close()
+
+	// Write standard Go benchmark header for benchstat compatibility
+	fmt.Fprintf(f, "goos: %s\n", runtime.GOOS)
+	fmt.Fprintf(f, "goarch: %s\n", runtime.GOARCH)
+	fmt.Fprintln(f, "pkg: github.com/bottledcode/atlas-db/integration-tests/scenarios")
 
 	// Write in Go benchmark format:
 	// BenchmarkName-N    iterations    ns/op    custom metrics

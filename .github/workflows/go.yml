@@ -74,11 +74,12 @@ jobs:
 
     - name: Verify integration benchmark results were generated
       run: |
-        if [ ! -f integration-benchmark-results.txt ]; then
+        if [ ! -f integration-tests/scenarios/integration-benchmark-results.txt ]; then
           echo "ERROR: integration-benchmark-results.txt not found - integration benchmarks did not produce results"
           exit 1
         fi
-        echo "Integration benchmark results file found"
+        echo "Integration benchmark results file found:"
+        cat integration-tests/scenarios/integration-benchmark-results.txt
 
     - name: Download main branch integration benchmark results
       id: cache-integration-main
@@ -86,44 +87,43 @@ jobs:
       uses: actions/cache/restore@v4
       with:
         path: main-integration-benchmark-results.txt
-        key: integration-benchmark-main-${{ runner.os }}-dummy
+        key: main-integration-benchmark-results-dummy
         restore-keys: |
-          integration-benchmark-main-${{ runner.os }}-
+          main-integration-benchmark-results-
 
     - name: Compare integration benchmarks
       if: github.event_name == 'pull_request'
       run: |
-        if [ -f main-integration-benchmark-results.txt ] && [ -f integration-benchmark-results.txt ]; then
+        RESULTS_FILE="integration-tests/scenarios/integration-benchmark-results.txt"
+        if [ -f main-integration-benchmark-results.txt ] && [ -f "$RESULTS_FILE" ]; then
           echo "## Integration Benchmark Comparison" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Comparing current branch against main:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          benchstat main-integration-benchmark-results.txt integration-benchmark-results.txt >> $GITHUB_STEP_SUMMARY 2>&1 || true
+          benchstat main-integration-benchmark-results.txt "$RESULTS_FILE" >> $GITHUB_STEP_SUMMARY 2>&1 || true
           echo '```' >> $GITHUB_STEP_SUMMARY
-        elif [ -f integration-benchmark-results.txt ]; then
+        elif [ -f "$RESULTS_FILE" ]; then
           echo "## Integration Benchmark Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "No main branch baseline available for comparison." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          cat integration-benchmark-results.txt >> $GITHUB_STEP_SUMMARY
+          cat "$RESULTS_FILE" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
         fi
 
     - name: Prepare main branch integration benchmark results for caching
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       run: |
-        if [ -f integration-benchmark-results.txt ]; then
-          cp integration-benchmark-results.txt main-integration-benchmark-results.txt
-        fi
+        cp integration-tests/scenarios/integration-benchmark-results.txt main-integration-benchmark-results.txt
 
     - name: Save main branch integration benchmark results
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       uses: actions/cache/save@v4
       with:
         path: main-integration-benchmark-results.txt
-        key: integration-benchmark-main-${{ runner.os }}-${{ github.sha }}
+        key: main-integration-benchmark-results-${{ github.sha }}
 
   lint:
     runs-on: self-hosted

@@ -7,7 +7,7 @@ require (
 	github.com/caddyserver/caddy/v2 v2.10.2
 	github.com/chzyer/readline v1.5.1
 	github.com/dgraph-io/badger/v4 v4.8.0
-	github.com/spf13/cobra v1.10.1
+	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/zap v1.27.1
 	google.golang.org/grpc v1.77.0
@@ -142,6 +142,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap/exp v0.3.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
+	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto v0.45.0 // indirect
 	golang.org/x/crypto/x509roots/fallback v0.0.0-20251119195548-4e0068c0098b // indirect
 	golang.org/x/exp v0.0.0-20251125195548-87e1e737ad39 // indirect

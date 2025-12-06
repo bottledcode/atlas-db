@@ -25,10 +25,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bottledcode/cloxcache/cache"
 	"github.com/bottledcode/atlas-db/atlas/faster"
 	"github.com/bottledcode/atlas-db/atlas/kv"
 	"github.com/bottledcode/atlas-db/atlas/options"
+	"github.com/bottledcode/cloxcache/cache"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -95,8 +95,6 @@ func init() {
 				zap.Int("slots_per_shard", cfg.SlotsPerShard))
 		}
 	}
-	// Enable adaptive decay for automatic cache tuning based on hit rate and pressure
-	cfg.AdaptiveDecay = true
 
 	stateMachine = cache.NewCloxCache[[]byte, *Record](cfg)
 	ownership = sync.Map{}
